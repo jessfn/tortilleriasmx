@@ -1,0 +1,9 @@
+{
+  "name": "@tortillerias/shared",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": { "test": "vitest run", "dev": "echo shared" },
+  "dependencies": { "zod": "^3.23.8" },
+  "devDependencies": { "vitest": "^2.1.0" }
+}

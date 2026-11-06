@@ -1,0 +1,10 @@
+{
+  "name": "@tortillerias/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo \"web: pendiente (Epica 3, T-040)\"",
+    "build": "echo \"web: pendiente\"",
+    "test": "echo \"sin pruebas aun\""
+  }
+}
