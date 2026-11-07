@@ -24,6 +24,7 @@ export default function App() {
 
   useEffect(() => {
     guardar(CLAVES.vista, vista);
+    document.documentElement.dataset.vista = vista;
   }, [vista]);
 
   const salir = useCallback(() => {

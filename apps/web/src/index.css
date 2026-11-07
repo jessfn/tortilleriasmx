@@ -49,3 +49,7 @@ input, select, textarea { font-size: max(16px, 1em); }
 
 /* iOS: que la raíz siga el alto visible real y no deje una franja vacía abajo */
 #root { position: fixed; inset: 0; }
+/* iPhone instalado: si el navegador reporta menos alto que la pantalla, se fija el alto real (ver pantalla.ts) */
+html[data-alto] #root { bottom: auto; height: var(--alto); }
+/* Color de la página según la vista: cualquier resto de franja en el borde inferior se funde con la pantalla */
+@media (max-width: 767px) { html[data-vista="inicio"] body, html[data-vista="inicio"] { background-color: #611232; } }

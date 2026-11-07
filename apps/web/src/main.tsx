@@ -3,6 +3,10 @@ import { createRoot } from "react-dom/client";
 import { registerSW } from "virtual:pwa-register";
 import App from "./App";
 import "./index.css";
+import { activarDiagnostico, ajustarAltoReal } from "./pantalla";
+
+ajustarAltoReal();
+activarDiagnostico();
 
 // Actualización reactiva: la app busca versiones nuevas cada minuto y cada vez que vuelve a primer plano.
 // Al detectarla, se activa y la página se recarga sola (la captura a medias se restaura: ver persist.ts).

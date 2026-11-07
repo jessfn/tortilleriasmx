@@ -15,7 +15,7 @@ export default defineConfig({
         description: "Captura del precio de la tortilla",
         lang: "es-MX",
         theme_color: "#611232",
-        background_color: "#ffffff",
+        background_color: "#611232",
         display: "standalone",
         start_url: "/",
         icons: [
