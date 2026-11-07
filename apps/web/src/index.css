@@ -41,3 +41,7 @@ input, select, textarea { font-size: max(16px, 1em); }
     box-shadow: 0 30px 80px -20px rgba(0, 0, 0, .6), 0 0 0 1px rgba(255, 255, 255, .08);
   }
 }
+
+/* iOS: que la raíz siga el alto visible real y no deje una franja vacía abajo */
+html, body, #root { min-height: 100%; }
+@supports (height: 100dvh) { #root { height: 100dvh; } }

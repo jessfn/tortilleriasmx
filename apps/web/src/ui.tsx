@@ -212,7 +212,7 @@ export function PanelShell({
           <div className="mx-auto w-full max-w-3xl space-y-3">{children}</div>
         </div>
       </Hoja>
-      <nav className="shrink-0 border-t border-stone-200/70 bg-white pb-[max(.25rem,calc(env(safe-area-inset-bottom)*.6))] lg:col-start-1 lg:row-start-2 lg:border-r lg:border-t-0 lg:p-3" aria-label="Secciones">
+      <nav className="shrink-0 bg-stone-50 pb-[max(.25rem,calc(env(safe-area-inset-bottom)*.6))] shadow-[0_-10px_20px_-14px_rgba(0,0,0,.3)] lg:col-start-1 lg:row-start-2 lg:border-r lg:border-stone-200/70 lg:bg-white lg:p-3 lg:shadow-none" aria-label="Secciones">
         <ul className="mx-auto flex max-w-xl lg:max-w-none lg:flex-col lg:gap-1">
           {pestañas.map((p) => {
             const on = p.id === activa;
