@@ -19,7 +19,7 @@ export default function AuthLayout({
 }) {
   return (
     <div className="mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro">
-      <header className="shrink-0 bg-gradient-to-br from-guinda-oscuro via-guinda to-guinda-oscuro px-3 pb-7 pt-[max(.5rem,env(safe-area-inset-top))] text-white">
+      <header className="shrink-0 bg-gradient-to-b from-guinda-oscuro from-35% to-guinda px-3 pb-7 pt-[max(.5rem,env(safe-area-inset-top))] text-white">
         <button onClick={alVolver} aria-label="Volver al inicio" className="grid h-9 w-9 place-items-center rounded-full hover:bg-white/10">
           <ChevronLeft className="h-6 w-6" />
         </button>

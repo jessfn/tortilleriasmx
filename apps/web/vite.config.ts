@@ -14,7 +14,7 @@ export default defineConfig({
         short_name: "TortilleríasMX",
         description: "Captura del precio de la tortilla",
         lang: "es-MX",
-        theme_color: "#9D2449",
+        theme_color: "#611232",
         background_color: "#ffffff",
         display: "standalone",
         start_url: "/",
