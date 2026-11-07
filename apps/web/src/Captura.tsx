@@ -402,32 +402,41 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
       <Cabecera paso={paso + 1} total={pasos.length} titulo={m.titulo} subtitulo={m.sub} icono={m.icono} atras={paso > 0 ? () => ir(-1) : alSalir}>
         {buscaEn[id] && <Buscador value={filtro} onChange={setFiltro} placeholder={buscaEn[id]} cargando={id === "tortilleria" && cargandoLista} />}
         {id === "tortilleria" && (
-          <div className="-mx-3 mt-2 flex gap-1.5 overflow-x-auto px-3 pb-0.5 [scrollbar-width:none]" role="toolbar" aria-label="Filtros de cercanía">
-            <button
-              onClick={usarGps}
-              disabled={buscandoGps}
-              className={`flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-sm font-semibold ring-1 transition ${d.pos ? "bg-dorado text-guinda-oscuro ring-dorado" : "bg-white/15 text-white ring-white/25"}`}
-            >
-              {buscandoGps ? <Loader2 className="h-4 w-4 animate-spin" /> : <LocateFixed className="h-4 w-4" />}
-              {d.pos ? "Cerca de mí" : "Cerca de mí"}
-            </button>
-            {d.pos &&
-              [1, 5, 10, 20, 0].map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setKm(v)}
-                  aria-pressed={km === v}
-                  className={`h-9 shrink-0 rounded-full px-3 text-sm font-medium ring-1 transition ${km === v ? "bg-white text-guinda ring-white" : "bg-white/10 text-white/90 ring-white/25"}`}
-                >
-                  {v === 0 ? "Municipio" : `${v} km`}
-                </button>
-              ))}
-            <button
-              onClick={() => set({ nueva: true, tortilleria: undefined })}
-              className="ml-auto flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-white/15 px-3 text-sm font-semibold text-white ring-1 ring-white/25"
-            >
-              <Plus className="h-4 w-4" /> Agregar nueva
-            </button>
+          <div className="mt-2 space-y-2">
+            <div className="grid grid-cols-[1fr_auto] gap-2">
+              <button
+                onClick={usarGps}
+                disabled={buscandoGps}
+                className={`flex h-10 items-center justify-center gap-2 rounded-xl text-sm font-semibold ring-1 transition ${d.pos ? "bg-white/20 text-white ring-white/40" : "bg-white text-guinda ring-white"}`}
+              >
+                {buscandoGps ? <Loader2 className="h-4 w-4 animate-spin" /> : <LocateFixed className="h-4 w-4" />}
+                {buscandoGps ? "Buscando…" : d.pos ? "Ubicación activa · actualizar" : "Ver las más cercanas a mí"}
+              </button>
+              <button
+                onClick={() => {
+                  set({ nueva: true, tortilleria: undefined });
+                  setPaso((x) => x + 1);
+                }}
+                className="flex h-10 items-center gap-1.5 rounded-xl bg-dorado px-3.5 text-sm font-bold text-guinda-oscuro shadow-md active:scale-95"
+              >
+                <Plus className="h-4 w-4" strokeWidth={3} /> Nueva
+              </button>
+            </div>
+            {d.pos && (
+              <div className="grid grid-cols-5 gap-1 rounded-xl bg-black/20 p-1" role="radiogroup" aria-label="Distancia">
+                {[1, 5, 10, 20, 0].map((v) => (
+                  <button
+                    key={v}
+                    role="radio"
+                    aria-checked={km === v}
+                    onClick={() => setKm(v)}
+                    className={`h-8 rounded-lg text-xs font-semibold transition ${km === v ? "bg-white text-guinda shadow" : "text-white/85"}`}
+                  >
+                    {v === 0 ? "Muni." : `${v} km`}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {id === "ubicacion" && <BuscadorLugar onElegir={(l) => set({ pos: { lat: l.lat, lng: l.lng } })} />}
