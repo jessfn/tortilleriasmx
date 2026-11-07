@@ -197,7 +197,7 @@ export function PanelShell({
 }) {
   return (
     <div className="mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro">
-      <header className="relative z-20 shrink-0 bg-gradient-to-b from-guinda-oscuro from-35% to-guinda px-4 pb-6 pt-[max(.75rem,env(safe-area-inset-top))] text-white">
+      <header className="relative shrink-0 bg-gradient-to-b from-guinda-oscuro from-35% to-guinda px-4 pb-6 pt-[max(.75rem,env(safe-area-inset-top))] text-white">
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-semibold uppercase tracking-[.2em] text-dorado">TortilleríasMX</p>

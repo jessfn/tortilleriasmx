@@ -91,7 +91,7 @@ function VistaResumen({ r, alRevisar }: { r?: Resumen; alRevisar: () => void }) 
 
       <Tarjeta className="flex items-center gap-3 !py-2.5">
         <Landmark className="h-5 w-5 shrink-0 text-guinda" aria-hidden />
-        <p className="text-sm"><b>{r.catalogo.toLocaleString("es-MX")}</b> tortillerías en el catálogo DENUE para elegir al registrar.</p>
+        <p className="text-sm"><b>{(r.catalogo ?? 0).toLocaleString("es-MX")}</b> tortillerías en el catálogo DENUE para elegir al registrar.</p>
       </Tarjeta>
 
       {porRevisar > 0 && (
