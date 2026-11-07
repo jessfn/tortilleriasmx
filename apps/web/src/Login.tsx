@@ -35,8 +35,8 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
       icono={LogIn}
       alVolver={alVolver}
       pie={
-        <form onSubmit={entrar} className="space-y-2">
-          <Boton type="submit" disabled={cargando || !usuario || !password} icono={cargando ? Loader2 : LogIn}>
+        <div className="space-y-2">
+          <Boton type="submit" form="form-login" disabled={cargando || !usuario || !password} icono={cargando ? Loader2 : LogIn}>
             {cargando ? "Entrando…" : "Entrar"}
           </Boton>
           <p className="text-center text-sm text-stone-600">
@@ -45,10 +45,10 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
               Registrar mi tortillería
             </button>
           </p>
-        </form>
+        </div>
       }
     >
-      <form onSubmit={entrar} className="space-y-3">
+      <form id="form-login" onSubmit={entrar} className="space-y-3">
         <Campo
           etiqueta="Correo electrónico o usuario"
           icono={Mail}
@@ -57,7 +57,11 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
           autoCapitalize="none"
           autoCorrect="off"
           value={usuario}
-          onChange={(e) => setUsuario(e.target.value)}
+          onChange={(e) => { setUsuario(e.target.value); setError(""); }}
+          placeholder="Ej. tucorreo@ejemplo.com o tu usuario"
+          ayuda="El correo con el que te registraste"
+          valido={usuario.trim().length >= 3}
+          enterKeyHint="next"
         />
         <Campo
           etiqueta="Contraseña"
@@ -65,7 +69,9 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
           type={ver ? "text" : "password"}
           autoComplete="current-password"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={(e) => { setPassword(e.target.value); setError(""); }}
+          placeholder="Tu contraseña"
+          enterKeyHint="go"
           derecha={
             <button type="button" onClick={() => setVer(!ver)} aria-label={ver ? "Ocultar contraseña" : "Mostrar contraseña"} className="grid h-10 w-10 place-items-center rounded-full text-stone-400 hover:text-stone-700">
               {ver ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
