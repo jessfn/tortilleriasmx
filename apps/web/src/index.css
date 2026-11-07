@@ -3,8 +3,31 @@
 @tailwind utilities;
 
 :root { color-scheme: light; }
+html, body, #root { height: 100%; }
 html { -webkit-tap-highlight-color: transparent; }
-body { @apply bg-stone-50 text-stone-900 antialiased; }
+body { @apply bg-stone-50 text-stone-900 antialiased; overflow: hidden; overscroll-behavior: none; }
+
 @keyframes entrar { from { opacity: 0; transform: translateY(16px) scale(.99); } to { opacity: 1; transform: none; } }
 .paso { animation: entrar .35s cubic-bezier(.2,.8,.2,1); }
-@media (prefers-reduced-motion: reduce) { .paso { animation: none; } * { transition-duration: .01ms !important; } }
+
+/* Pantalla de bienvenida */
+@keyframes aparece { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: none; } }
+.a-entra { opacity: 0; animation: aparece .7s cubic-bezier(.2,.8,.2,1) forwards; }
+@keyframes cae { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+.a-toldo { transform-box: fill-box; transform-origin: top; animation: cae .8s .5s cubic-bezier(.3,1.4,.5,1) both; }
+@keyframes letrero { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+.a-letrero { animation: letrero .6s .9s ease-out both; }
+@keyframes vapor { 0% { opacity: 0; transform: translateY(8px); } 30% { opacity: .7; } 100% { opacity: 0; transform: translateY(-22px); } }
+.a-vapor { animation: vapor 2.1s ease-in-out infinite; }
+@keyframes volteo {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  40% { transform: translateY(-34px) scaleY(.15); }
+  50% { transform: translateY(-40px) scaleY(1); }
+  80% { transform: translateY(-4px) scaleY(1); }
+}
+.a-volteo { transform-box: fill-box; transform-origin: center; animation: volteo 2.6s 1.4s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .paso, .a-entra, .a-toldo, .a-letrero, .a-vapor, .a-volteo { animation: none !important; opacity: 1; }
+  * { transition-duration: .01ms !important; }
+}
