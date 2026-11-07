@@ -243,6 +243,8 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
 
   function ir(delta: number) {
     setError("");
+    // Volver desde "nueva" regresa a la lista sin dejar marcada la opción de agregar
+    if (delta < 0 && id === "nueva") set({ nueva: false });
     setPaso((p) => Math.min(Math.max(p + delta, 0), pasos.length - 1));
   }
 
@@ -476,11 +478,6 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
                   ? "Buscando…"
                   : `${tortillerias.length.toLocaleString("es-MX")} tortillerías${d.pos && km > 0 ? ` a ${km} km o menos` : ` en ${d.municipio?.nombre ?? "el municipio"}`}${filtro.trim() ? ` con “${filtro.trim()}”` : ""}${!d.pos ? ". Toca “Cerca de mí” para ver las más próximas." : ""}`}
               </p>
-              {d.nueva && (
-                <Opcion icono={Plus} activo onClick={() => set({ nueva: false })}>
-                  <span className="font-medium">Agregando una nueva (toca para cancelar)</span>
-                </Opcion>
-              )}
               {tortillerias.slice(0, visibles).map((t) => (
                 <Opcion key={t.id} icono={Store} activo={!d.nueva && d.tortilleria?.id === t.id} onClick={() => set({ tortilleria: t, nueva: false })}>
                   <div className="font-medium">{t.nombre}</div>
@@ -500,8 +497,8 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
 
           {id === "nueva" && (
             <>
-              <Campo etiqueta="Nombre de la tortillería" icono={Store} value={d.nombreNueva} onChange={(e) => set({ nombreNueva: e.target.value })} />
-              <Campo etiqueta="Domicilio" icono={MapPin} value={d.domicilioNueva} onChange={(e) => set({ domicilioNueva: e.target.value })} ayuda="Calle, número y colonia" />
+              <Campo etiqueta="Nombre de la tortillería" icono={Store} value={d.nombreNueva} onChange={(e) => set({ nombreNueva: e.target.value })} placeholder="Ej. Tortillería La Guadalupe" valido={d.nombreNueva.trim().length >= 2} />
+              <Campo etiqueta="Domicilio" icono={MapPin} value={d.domicilioNueva} onChange={(e) => set({ domicilioNueva: e.target.value })} placeholder="Ej. Calle Hidalgo 123, Col. Centro" ayuda="Calle, número y colonia" valido={d.domicilioNueva.trim().length >= 3} />
             </>
           )}
 
@@ -557,17 +554,17 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
           {id === "responsable" && (
             <>
               <div className="grid grid-cols-2 gap-2">
-                <Campo etiqueta="Nombre(s)" value={d.resp.nombre} autoCapitalize="characters" onChange={(e) => setResp({ nombre: normalizarTexto(e.target.value) })} error={errResp("nombre")} autoComplete="off" />
-                <Campo etiqueta="Apellidos" value={d.resp.apellidos} autoCapitalize="characters" onChange={(e) => setResp({ apellidos: normalizarTexto(e.target.value) })} error={errResp("apellidos")} autoComplete="off" />
+                <Campo etiqueta="Nombre(s)" icono={UserRound} value={d.resp.nombre} autoCapitalize="characters" onChange={(e) => setResp({ nombre: normalizarTexto(e.target.value) })} error={errResp("nombre")} autoComplete="off" placeholder="Ej. JOSE ANGEL" valido={!errResp("nombre")} />
+                <Campo etiqueta="Apellidos" icono={UserRound} value={d.resp.apellidos} autoCapitalize="characters" onChange={(e) => setResp({ apellidos: normalizarTexto(e.target.value) })} error={errResp("apellidos")} autoComplete="off" placeholder="Ej. NUÑEZ PEREZ" valido={!errResp("apellidos")} />
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <Chip activo={d.resp.tipoPersona === "fisica"} onClick={() => setResp({ tipoPersona: "fisica", rfc: "" })}>Persona física</Chip>
                 <Chip activo={d.resp.tipoPersona === "moral"} onClick={() => setResp({ tipoPersona: "moral", rfc: "" })}>Persona moral</Chip>
               </div>
-              {d.resp.tipoPersona === "moral" && <Campo etiqueta="Razón social" icono={Building2} value={d.resp.razonSocial} autoCapitalize="characters" onChange={(e) => setResp({ razonSocial: normalizarTexto(e.target.value) })} error={errResp("razonSocial")} />}
-              <Campo etiqueta="CURP" icono={Fingerprint} value={d.resp.curp} maxLength={18} autoCapitalize="characters" autoComplete="off" onChange={(e) => setResp({ curp: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })} error={errResp("curp")} placeholder="18 caracteres" />
-              <Campo etiqueta="RFC" icono={FileText} value={d.resp.rfc} maxLength={d.resp.tipoPersona === "fisica" ? 13 : 12} autoCapitalize="characters" autoComplete="off" onChange={(e) => setResp({ rfc: e.target.value.toUpperCase().replace(/[^A-ZÑ&0-9]/g, "") })} error={errResp("rfc")} placeholder={d.resp.tipoPersona === "fisica" ? "13 caracteres" : "12 caracteres"} />
-              <Campo etiqueta="Teléfono" icono={Phone} value={d.resp.telefono} inputMode="numeric" maxLength={10} autoComplete="off" onChange={(e) => setResp({ telefono: e.target.value.replace(/\D/g, "").slice(0, 10) })} error={errResp("telefono")} placeholder="10 dígitos" />
+              {d.resp.tipoPersona === "moral" && <Campo etiqueta="Razón social" icono={Building2} value={d.resp.razonSocial} autoCapitalize="characters" onChange={(e) => setResp({ razonSocial: normalizarTexto(e.target.value) })} error={errResp("razonSocial")} placeholder="Ej. TORTILLERIA LA GUADALUPE SA DE CV" valido={!errResp("razonSocial")} />}
+              <Campo etiqueta="CURP" icono={Fingerprint} value={d.resp.curp} maxLength={18} autoCapitalize="characters" autoComplete="off" onChange={(e) => setResp({ curp: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })} error={errResp("curp")} placeholder="Ej. NUPJ850101HDFXRS09" valido={!errResp("curp")} ayuda="18 caracteres, sin espacios" />
+              <Campo etiqueta="RFC" icono={FileText} value={d.resp.rfc} maxLength={d.resp.tipoPersona === "fisica" ? 13 : 12} autoCapitalize="characters" autoComplete="off" onChange={(e) => setResp({ rfc: e.target.value.toUpperCase().replace(/[^A-ZÑ&0-9]/g, "") })} error={errResp("rfc")} placeholder={d.resp.tipoPersona === "fisica" ? "Ej. NUPJ850101AB1" : "Ej. TGU100101AB1"} valido={!errResp("rfc")} ayuda={d.resp.tipoPersona === "fisica" ? "13 caracteres" : "12 caracteres"} />
+              <Campo etiqueta="Teléfono" icono={Phone} value={d.resp.telefono} inputMode="numeric" maxLength={10} autoComplete="off" onChange={(e) => setResp({ telefono: e.target.value.replace(/\D/g, "").slice(0, 10) })} error={errResp("telefono")} placeholder="Ej. 5512345678" valido={!errResp("telefono")} ayuda="10 dígitos, sin lada +52" />
               <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-white p-3 shadow-sm ring-1 ring-stone-200">
                 <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0 accent-guinda" checked={d.aviso} onChange={(e) => set({ aviso: e.target.checked })} />
                 <span className="text-xs leading-snug">
@@ -594,7 +591,8 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
                 value={d.cuenta.correo}
                 onChange={(e) => set({ cuenta: { ...d.cuenta, correo: e.target.value } })}
                 error={errCuenta("correo")}
-                placeholder="tucorreo@ejemplo.com"
+                valido={!errCuenta("correo")}
+                placeholder="Ej. tucorreo@ejemplo.com"
               />
               <Campo
                 etiqueta="Contraseña"
@@ -619,6 +617,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
                 value={d.cuenta.confirmar}
                 onChange={(e) => set({ cuenta: { ...d.cuenta, confirmar: e.target.value } })}
                 error={errCuenta("confirmar")}
+                placeholder="Repite tu contraseña"
               />
             </>
           )}

@@ -32,8 +32,10 @@ export function Campo({
   error,
   ayuda,
   derecha,
+  valido,
   ...p
-}: InputHTMLAttributes<HTMLInputElement> & { etiqueta: string; icono?: LucideIcon; error?: string; ayuda?: string; derecha?: ReactNode }) {
+}: InputHTMLAttributes<HTMLInputElement> & { etiqueta: string; icono?: LucideIcon; error?: string; ayuda?: string; derecha?: ReactNode; valido?: boolean }) {
+  const lleno = valido && !error && !derecha && String(p.value ?? "") !== "";
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold text-stone-600">{etiqueta}</span>
@@ -41,11 +43,12 @@ export function Campo({
         {Icono && <Icono className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-stone-400" aria-hidden />}
         <input
           {...p}
-          className={`h-12 w-full rounded-xl border bg-white text-base shadow-sm outline-none transition focus:ring-4 ${Icono ? "pl-11" : "pl-3.5"} ${derecha ? "pr-12" : "pr-3.5"} ${
-            error ? "border-red-400 focus:ring-red-100" : "border-stone-200 focus:border-guinda focus:ring-guinda/10"
+          className={`h-12 w-full rounded-xl border bg-white text-base shadow-sm outline-none transition placeholder:text-stone-400 focus:ring-4 ${Icono ? "pl-11" : "pl-3.5"} ${derecha || lleno ? "pr-12" : "pr-3.5"} ${
+            error ? "border-red-400 focus:ring-red-100" : lleno ? "border-emerald-400 focus:border-emerald-500 focus:ring-emerald-100" : "border-stone-200 focus:border-guinda focus:ring-guinda/10"
           }`}
         />
-        {derecha && <span className="absolute right-1.5 top-1/2 -translate-y-1/2">{derecha}</span>}
+        {lleno && <Check className="pointer-events-none absolute right-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-emerald-500" strokeWidth={3} aria-hidden />}
+        {derecha &&<span className="absolute right-1.5 top-1/2 -translate-y-1/2">{derecha}</span>}
       </span>
       {error ? <span className="mt-0.5 block text-xs text-red-600">{error}</span> : ayuda ? <span className="mt-0.5 block text-xs text-stone-500">{ayuda}</span> : null}
     </label>
@@ -121,7 +124,7 @@ export function Cabecera({
   children?: ReactNode;
 }) {
   return (
-    <header className="relative z-30 shrink-0 bg-gradient-to-br from-guinda-oscuro via-guinda to-guinda-oscuro px-3 pb-6 pt-[max(.5rem,env(safe-area-inset-top))] text-white">
+    <header className="relative shrink-0 bg-gradient-to-br from-guinda-oscuro via-guinda to-guinda-oscuro px-3 pb-8pt-[max(.5rem,env(safe-area-inset-top))] text-white">
       <div className="flex items-center gap-2">
         {atras ? (
           <button onClick={atras} aria-label="Volver" className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-white/10 active:bg-white/20">
@@ -151,7 +154,7 @@ export function Cabecera({
 
 /** Zona clara que ocupa el resto de la pantalla; el scroll ocurre dentro de ella */
 export function Hoja({ children }: { children: ReactNode }) {
-  return <main className="relative -mt-3 flex min-h-0 flex-1 flex-col rounded-t-3xl bg-stone-50">{children}</main>;
+  return <main className="relative z-10 -mt-5 flex min-h-0 flex-1 flex-col rounded-t-[1.75rem] bg-stone-50 shadow-[0_-6px_18px_-6px_rgba(0,0,0,.35)]">{children}</main>;
 }
 
 export function Barra({ children }: { children: ReactNode }) {
