@@ -456,7 +456,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
                 }
               : undefined
           }
-          className={`paso min-h-0 flex-1 overscroll-contain px-3 pb-2 pt-5 ${llena ? "flex flex-col gap-2 overflow-hidden" : "space-y-2 overflow-y-auto"}`}
+          className={`paso min-h-0 flex-1 overscroll-contain px-3 pb-2 pt-5 ${llena ? "flex flex-col gap-2 overflow-hidden" : "space-y-2 overflow-y-auto [mask-image:linear-gradient(to_bottom,transparent,#000_20px,#000_calc(100%-8px),transparent)]"}`}
         >
           {id === "estado" &&
             filtrar(estados).map((e) => (

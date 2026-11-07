@@ -154,7 +154,7 @@ export function Cabecera({
 
 /** Zona clara que ocupa el resto de la pantalla; el scroll ocurre dentro de ella */
 export function Hoja({ children }: { children: ReactNode }) {
-  return <main className="relative z-10 -mt-5 flex min-h-0 flex-1 flex-col rounded-t-[1.75rem] bg-stone-50 shadow-[0_-6px_18px_-6px_rgba(0,0,0,.35)]">{children}</main>;
+  return <main className="relative z-10 -mt-5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[1.75rem] bg-stone-50 shadow-[0_-6px_18px_-6px_rgba(0,0,0,.35)]">{children}</main>;
 }
 
 export function Barra({ children }: { children: ReactNode }) {
