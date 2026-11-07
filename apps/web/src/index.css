@@ -20,3 +20,6 @@ input, select, textarea { font-size: max(16px, 1em); }
   .paso, .a-entra { animation: none !important; opacity: 1; }
   * { transition-duration: .01ms !important; }
 }
+
+/* Respaldo para navegadores sin unidades dvh (Android/iOS antiguos): sin esto el alto se rompe */
+.h-dvh { height: 100vh; height: 100dvh; }

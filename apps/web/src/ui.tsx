@@ -159,7 +159,7 @@ export function Hoja({ children }: { children: ReactNode }) {
 
 export function Barra({ children }: { children: ReactNode }) {
   return (
-    <footer className="shrink-0 border-t border-stone-200/70 bg-white px-3 pb-[max(.75rem,env(safe-area-inset-bottom))] pt-2.5">
+    <footer className="shrink-0 bg-stone-50 px-3 pb-[max(.75rem,calc(env(safe-area-inset-bottom)*.6))] pt-2.5">
       <div className="mx-auto flex max-w-xl gap-3">{children}</div>
     </footer>
   );
@@ -212,7 +212,7 @@ export function PanelShell({
           {children}
         </div>
       </Hoja>
-      <nav className="shrink-0 border-t border-stone-200/70 bg-white pb-[max(.25rem,env(safe-area-inset-bottom))]" aria-label="Secciones">
+      <nav className="shrink-0 border-t border-stone-200/70 bg-white pb-[max(.25rem,calc(env(safe-area-inset-bottom)*.6))]" aria-label="Secciones">
         <ul className="mx-auto flex max-w-xl">
           {pestañas.map((p) => {
             const on = p.id === activa;
@@ -295,7 +295,7 @@ export function HojaModal({ titulo, alCerrar, children }: { titulo: string; alCe
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">{children}</div>
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4 pb-[max(1rem,calc(env(safe-area-inset-bottom)*.6))]">{children}</div>
       </div>
     </div>
   );
