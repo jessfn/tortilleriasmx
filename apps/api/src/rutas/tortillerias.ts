@@ -14,16 +14,19 @@ const busquedaSchema = z.object({
 
 const nuevaSchema = z.object({
   nombre: z.string().trim().min(2).max(120),
-  domicilio: z.string().trim().max(250).optional(),
+  domicilio: z.string().trim().min(3).max(250),
   estadoClave: z.string().min(1),
   municipioClave: z.string().min(1),
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
 });
 
+const uuid = z.string().uuid();
+const LIMITE_ESCRITURA = { rateLimit: { max: 20, timeWindow: "1 minute" } };
+
 export function rutasTortillerias(app: FastifyInstance) {
-  // Búsqueda por municipio, nombre y cercanía
-  app.get("/tortillerias", { preHandler: app.autenticar }, async (req, reply) => {
+  // Búsqueda pública por municipio, nombre y cercanía (solo datos no personales)
+  app.get("/tortillerias", async (req, reply) => {
     const p = busquedaSchema.safeParse(req.query);
     if (!p.success) return reply.code(400).send({ error: "Parámetros inválidos" });
     const { municipio, estado, q, lat, lng } = p.data;
@@ -45,8 +48,8 @@ export function rutasTortillerias(app: FastifyInstance) {
     return rows;
   });
 
-  // Alta de tortillería nueva (queda pendiente de validación)
-  app.post("/tortillerias", { preHandler: app.autenticar }, async (req, reply) => {
+  // Alta pública de tortillería nueva (queda pendiente de validación)
+  app.post("/tortillerias", { config: LIMITE_ESCRITURA }, async (req, reply) => {
     const p = nuevaSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
     const d = p.data;
@@ -60,38 +63,46 @@ export function rutasTortillerias(app: FastifyInstance) {
     const { rows } = await pool.query(
       `INSERT INTO tortillerias(nombre, domicilio, estado_clave, municipio_clave, geom, origen, estatus)
        VALUES ($3,$4,$5,$6,${punto},'nueva','pendiente') RETURNING id`,
-      [d.lng, d.lat, d.nombre, d.domicilio ?? null, d.estadoClave, d.municipioClave],
+      [d.lng, d.lat, d.nombre, d.domicilio, d.estadoClave, d.municipioClave],
     );
     return reply.code(201).send({ id: rows[0].id, estatus: "pendiente" });
   });
 
-  // Responsable: datos personales cifrados
-  app.post<{ Params: { id: string } }>("/tortillerias/:id/responsable", { preHandler: app.autenticar }, async (req, reply) => {
-    if (!z.string().uuid().safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+  // Alta pública del responsable: datos personales cifrados
+  app.post<{ Params: { id: string } }>("/tortillerias/:id/responsable", { config: LIMITE_ESCRITURA }, async (req, reply) => {
+    if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const body = req.body as { aceptoAviso?: boolean };
     if (body?.aceptoAviso !== true) return reply.code(400).send({ error: "Falta aceptar el aviso de privacidad" });
     const p = responsableSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
     const r = p.data;
-    const dup = await pool.query("SELECT 1 FROM responsables WHERE curp_hash = $1", [hashBusqueda(r.curp)]);
-    if (dup.rowCount) return reply.code(409).send({ error: "Esa CURP ya está registrada" });
+    const t = await pool.query("SELECT 1 FROM tortillerias WHERE id = $1", [req.params.id]);
+    if (!t.rowCount) return reply.code(404).send({ error: "Tortillería no existe" });
+
+    const hash = hashBusqueda(r.curp);
+    const dup = await pool.query("SELECT id, tortilleria_id FROM responsables WHERE curp_hash = $1", [hash]);
+    if (dup.rowCount) {
+      // Mismo responsable en la misma tortillería: no se duplica (reintentos y capturas repetidas)
+      if (dup.rows[0].tortilleria_id === req.params.id) return reply.code(200).send({ id: dup.rows[0].id });
+      return reply.code(409).send({ error: "Estos datos ya están registrados en otra tortillería" });
+    }
     const { rows } = await pool.query(
       `INSERT INTO responsables(tortilleria_id, nombre, apellidos, curp_cifrado, curp_hash, telefono_cifrado,
                                 telefono_hash, tipo_persona, rfc_cifrado, rfc_hash, razon_social)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
       [
-        req.params.id, r.nombre, r.apellidos, cifrar(r.curp), hashBusqueda(r.curp), cifrar(r.telefono),
+        req.params.id, r.nombre, r.apellidos, cifrar(r.curp), hash, cifrar(r.telefono),
         hashBusqueda(r.telefono), r.tipoPersona, cifrar(r.rfc), hashBusqueda(r.rfc), r.razonSocial ?? null,
       ],
     );
     await pool.query("INSERT INTO consentimientos(responsable_id, version) VALUES ($1,$2)", [rows[0].id, "v1"]);
-    await auditar(req.user.sub, "crear_responsable", "responsables", rows[0].id);
+    await auditar(null, "crear_responsable_publico", "responsables", rows[0].id);
     return reply.code(201).send({ id: rows[0].id });
   });
 
-  // Capturista ve datos enmascarados; supervisor y admin ven completos (con auditoría)
+  // Lectura de datos personales: SOLO con sesión. Capturista enmascarado; supervisor y admin completos (con auditoría).
   app.get<{ Params: { id: string } }>("/tortillerias/:id/responsable", { preHandler: app.autenticar }, async (req, reply) => {
-    if (!z.string().uuid().safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+    if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const { rows } = await pool.query("SELECT * FROM responsables WHERE tortilleria_id = $1 LIMIT 1", [req.params.id]);
     const r = rows[0];
     if (!r) return reply.code(404).send({ error: "Sin responsable" });
@@ -107,7 +118,7 @@ export function rutasTortillerias(app: FastifyInstance) {
   // Validación por supervisor
   app.patch<{ Params: { id: string } }>("/tortillerias/:id/estatus", { preHandler: app.soloRoles("supervisor", "admin") }, async (req, reply) => {
     const p = z.object({ estatus: z.enum(["validada", "rechazada"]) }).safeParse(req.body);
-    if (!p.success || !z.string().uuid().safeParse(req.params.id).success) return reply.code(400).send({ error: "Datos inválidos" });
+    if (!p.success || !uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Datos inválidos" });
     const r = await pool.query("UPDATE tortillerias SET estatus = $1 WHERE id = $2", [p.data.estatus, req.params.id]);
     if (!r.rowCount) return reply.code(404).send({ error: "No existe" });
     await auditar(req.user.sub, `tortilleria_${p.data.estatus}`, "tortillerias", req.params.id);

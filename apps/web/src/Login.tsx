@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { Loader2, LockKeyhole, LogIn, ShieldCheck, UserRound } from "lucide-react";
 import { api, guardarSesion, type Sesion } from "./api";
-import { Boton, Campo, Pantalla } from "./ui";
+import { Aviso, Boton, Campo } from "./ui";
 
+/** Acceso solo para supervisores y administradores. La captura pública no pide sesión. */
 export default function Login({ alEntrar }: { alEntrar: (s: Sesion) => void }) {
   const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");
@@ -24,16 +26,24 @@ export default function Login({ alEntrar }: { alEntrar: (s: Sesion) => void }) {
   }
 
   return (
-    <Pantalla titulo="Iniciar sesión">
-      <form onSubmit={entrar} className="paso flex flex-1 flex-col gap-4 p-5">
-        <p className="text-stone-600 dark:text-stone-300">Captura el precio de la tortilla en tu zona.</p>
-        <Campo etiqueta="Usuario" value={usuario} onChange={(e) => setUsuario(e.target.value)} autoComplete="username" autoCapitalize="none" required />
-        <Campo etiqueta="Contraseña" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
-        {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-red-700">{error}</p>}
-        <div className="mt-auto">
-          <Boton type="submit" disabled={cargando || !usuario || !password}>{cargando ? "Entrando…" : "Entrar"}</Boton>
+    <div className="mx-auto flex min-h-dvh max-w-xl flex-col bg-gradient-to-b from-guinda-oscuro via-guinda to-guinda-oscuro">
+      <div className="px-6 pb-10 pt-16 text-white">
+        <span className="grid h-16 w-16 place-items-center rounded-2xl bg-white/15 backdrop-blur">
+          <ShieldCheck className="h-8 w-8 text-dorado" aria-hidden />
+        </span>
+        <h1 className="mt-5 text-3xl font-bold">Acceso de supervisión</h1>
+        <p className="mt-1 text-white/75">Solo para supervisores y administradores.</p>
+      </div>
+      <form onSubmit={entrar} className="paso flex flex-1 flex-col gap-4 rounded-t-[2rem] bg-stone-50 p-6">
+        <Campo etiqueta="Usuario" icono={UserRound} value={usuario} onChange={(e) => setUsuario(e.target.value)} autoComplete="username" autoCapitalize="none" required />
+        <Campo etiqueta="Contraseña" icono={LockKeyhole} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
+        {error && <Aviso>{error}</Aviso>}
+        <div className="mt-auto pb-4">
+          <Boton type="submit" disabled={cargando || !usuario || !password} icono={cargando ? Loader2 : LogIn}>
+            {cargando ? "Entrando…" : "Entrar"}
+          </Boton>
         </div>
       </form>
-    </Pantalla>
+    </div>
   );
 }
