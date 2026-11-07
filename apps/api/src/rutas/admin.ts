@@ -10,7 +10,8 @@ export function rutasAdmin(app: FastifyInstance) {
     const { rows } = await pool.query(
       `SELECT
          (SELECT count(*)::int FROM usuarios WHERE rol = 'capturista') AS usuarios,
-         (SELECT count(*)::int FROM tortillerias) AS tortillerias,
+         (SELECT count(*)::int FROM tortillerias t WHERE t.origen <> 'denue' OR EXISTS (SELECT 1 FROM capturas_precio c WHERE c.tortilleria_id = t.id)) AS tortillerias,
+         (SELECT count(*)::int FROM denue_catalogo) AS catalogo,
          (SELECT count(*)::int FROM tortillerias WHERE estatus = 'pendiente') AS tortillerias_pendientes,
          (SELECT count(*)::int FROM capturas_precio) AS capturas,
          (SELECT count(*)::int FROM capturas_precio WHERE estatus = 'pendiente') AS capturas_pendientes,
@@ -41,6 +42,7 @@ export function rutasAdmin(app: FastifyInstance) {
          LEFT JOIN estados e ON e.clave = t.estado_clave
          LEFT JOIN usuarios u ON u.id = t.creado_por
         WHERE ($1::text IS NULL OR t.estatus = $1)
+          AND (t.origen <> 'denue' OR EXISTS (SELECT 1 FROM capturas_precio c WHERE c.tortilleria_id = t.id))
         ORDER BY t.creado_en DESC LIMIT 100`,
       [estatus.success ? estatus.data ?? null : null],
     );

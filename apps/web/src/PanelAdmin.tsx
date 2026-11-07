@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle, Banknote, BarChart3, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Loader2, MapPin, Phone, Store, TriangleAlert,
-  UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog,
+  UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog,
 } from "lucide-react";
 import { api, type Sesion } from "./api";
 import FotoAuth from "./FotoAuth";
@@ -10,7 +10,7 @@ import { CLAVES, usePersistente } from "./persist";
 import { Aviso, Boton, Dato, HojaModal, Insignia, PanelShell, Tarjeta, Vacio } from "./ui";
 
 type Resumen = {
-  usuarios: number; tortillerias: number; tortillerias_pendientes: number; capturas: number; capturas_pendientes: number; alertas: number;
+  usuarios: number; tortillerias: number; catalogo: number; tortillerias_pendientes: number; capturas: number; capturas_pendientes: number; alertas: number;
   promedio_maiz: string | null; porEstado: { estado: string; promedio: string; n: number }[];
 };
 type TortilleriaAdm = {
@@ -84,10 +84,15 @@ function VistaResumen({ r, alRevisar }: { r?: Resumen; alRevisar: () => void }) 
 
       <div className="grid grid-cols-2 gap-2">
         <Dato icono={Users} etiqueta="Usuarios registrados" valor={r.usuarios} />
-        <Dato icono={Store} etiqueta="Tortillerías" valor={r.tortillerias} tono="verde" />
+        <Dato icono={Store} etiqueta="Tortillerías con registros" valor={r.tortillerias} tono="verde" />
         <Dato icono={ClipboardList} etiqueta="Precios capturados" valor={r.capturas} tono="gris" />
         <Dato icono={TriangleAlert} etiqueta="Alertas de precio" valor={r.alertas} tono="dorado" />
       </div>
+
+      <Tarjeta className="flex items-center gap-3 !py-2.5">
+        <Landmark className="h-5 w-5 shrink-0 text-guinda" aria-hidden />
+        <p className="text-sm"><b>{r.catalogo.toLocaleString("es-MX")}</b> tortillerías en el catálogo DENUE para elegir al registrar.</p>
+      </Tarjeta>
 
       {porRevisar > 0 && (
         <button onClick={alRevisar} className="flex w-full items-center gap-3 rounded-2xl bg-amber-50 p-3 text-left ring-1 ring-amber-200 transition active:scale-[.98]">

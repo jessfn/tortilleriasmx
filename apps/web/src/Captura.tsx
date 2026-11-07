@@ -369,7 +369,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
 
   const m = META[id];
   const llena = id === "ubicacion" || id === "foto"; // estas pantallas ocupan todo el alto, sin scroll
-  const buscaEn: Record<string, string> = { estado: "Buscar estado", municipio: "Buscar municipio", tortilleria: "Buscar tortillería por nombre" };
+  const buscaEn: Record<string, string> = { estado: "Buscar estado", municipio: "Buscar municipio", tortilleria: "Buscar por nombre o calle" };
 
   const norm = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
   const filtrar = (items: Item[]) => items.filter((i) => norm(i.nombre).includes(norm(filtro)));
@@ -402,6 +402,9 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
 
           {id === "tortilleria" && (
             <>
+              <Boton variante="secundario" onClick={usarGps} disabled={buscandoGps} icono={buscandoGps ? Loader2 : LocateFixed} className="!min-h-11">
+                {buscandoGps ? "Buscando tu ubicación…" : d.pos ? "Ordenadas por cercanía a ti" : "Ver las más cercanas a mí"}
+              </Boton>
               <Opcion icono={Plus} activo={d.nueva} onClick={() => set({ nueva: true, tortilleria: undefined })}>
                 <span className="font-medium">No aparece, agregar nueva</span>
               </Opcion>
@@ -415,6 +418,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
                   </div>
                 </Opcion>
               ))}
+              {tortillerias.length >= 60 && <p className="px-1 text-center text-xs text-stone-500">Hay muchas en tu municipio: mostramos 60. Escribe el nombre o la calle, o usa tu ubicación, para encontrar la tuya.</p>}
             </>
           )}
 

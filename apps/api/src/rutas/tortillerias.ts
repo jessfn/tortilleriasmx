@@ -25,7 +25,8 @@ const uuid = z.string().uuid();
 const LIMITE_ESCRITURA = { rateLimit: { max: 20, timeWindow: "1 minute" } };
 
 export function rutasTortillerias(app: FastifyInstance) {
-  // Búsqueda pública por municipio, nombre y cercanía (solo datos no personales)
+  // Búsqueda pública por municipio, nombre o calle y cercanía (solo datos no personales). Con el catálogo del DENUE
+  // hay miles por municipio: se devuelven las 60 mejores coincidencias y se afina escribiendo o ordenando por cercanía.
   app.get("/tortillerias", async (req, reply) => {
     const p = busquedaSchema.safeParse(req.query);
     if (!p.success) return reply.code(400).send({ error: "Parámetros inválidos" });
@@ -39,10 +40,10 @@ export function rutasTortillerias(app: FastifyInstance) {
          FROM tortillerias
         WHERE ($1::text IS NULL OR municipio_clave = $1)
           AND ($2::text IS NULL OR estado_clave = $2)
-          AND ($3::text IS NULL OR nombre ILIKE '%' || $3 || '%')
+          AND ($3::text IS NULL OR nombre ILIKE '%' || $3 || '%' OR domicilio ILIKE '%' || $3 || '%')
           AND estatus <> 'rechazada'
         ORDER BY distancia_m NULLS LAST, nombre
-        LIMIT 50`,
+        LIMIT 60`,
       [municipio ?? null, estado ?? null, q ?? null, cercania ? lat : null, cercania ? lng : null],
     );
     return rows;
