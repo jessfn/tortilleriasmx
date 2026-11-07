@@ -4,7 +4,7 @@ import {
   Loader2, LocateFixed, MapPin, PackageOpen, Phone, Plus, RotateCcw, Send, ShieldCheck, Store, UserRound, Wheat,
   type LucideIcon,
 } from "lucide-react";
-import { PRECIO_MAX, PRECIO_MIN, responsableSchema } from "@tortillerias/shared";
+import { normalizarTexto, PRECIO_MAX, PRECIO_MIN, responsableSchema } from "@tortillerias/shared";
 import { api, ApiError } from "./api";
 import { buscarLugar } from "./geocoder";
 import { comprimirFoto } from "./imagen";
@@ -245,7 +245,7 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
             Capturar otra tortillería
           </Boton>
           <Boton variante="fantasma" onClick={alSalir} className="!text-white/80 hover:!bg-white/10">
-            Ir al inicio
+            Ir a mi panel
           </Boton>
         </div>
       </div>
@@ -268,7 +268,7 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
       <Hoja>
         <div
           key={id}
-          className={`paso min-h-0 flex-1 overscroll-contain px-3 pb-2 pt-3 ${llena ? "flex flex-col gap-2 overflow-hidden" : "space-y-2 overflow-y-auto"}`}
+          className={`paso min-h-0 flex-1 overscroll-contain px-3 pb-2 pt-5 ${llena ? "flex flex-col gap-2 overflow-hidden" : "space-y-2 overflow-y-auto"}`}
         >
           {id === "estado" &&
             filtrar(estados).map((e) => (
@@ -361,14 +361,14 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
           {id === "responsable" && (
             <>
               <div className="grid grid-cols-2 gap-2">
-                <Campo etiqueta="Nombre(s)" value={d.resp.nombre} onChange={(e) => setResp({ nombre: e.target.value })} error={errResp("nombre")} autoComplete="off" />
-                <Campo etiqueta="Apellidos" value={d.resp.apellidos} onChange={(e) => setResp({ apellidos: e.target.value })} error={errResp("apellidos")} autoComplete="off" />
+                <Campo etiqueta="Nombre(s)" value={d.resp.nombre} autoCapitalize="characters" onChange={(e) => setResp({ nombre: normalizarTexto(e.target.value) })} error={errResp("nombre")} autoComplete="off" />
+                <Campo etiqueta="Apellidos" value={d.resp.apellidos} autoCapitalize="characters" onChange={(e) => setResp({ apellidos: normalizarTexto(e.target.value) })} error={errResp("apellidos")} autoComplete="off" />
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <Chip activo={d.resp.tipoPersona === "fisica"} onClick={() => setResp({ tipoPersona: "fisica", rfc: "" })}>Persona física</Chip>
                 <Chip activo={d.resp.tipoPersona === "moral"} onClick={() => setResp({ tipoPersona: "moral", rfc: "" })}>Persona moral</Chip>
               </div>
-              {d.resp.tipoPersona === "moral" && <Campo etiqueta="Razón social" icono={Building2} value={d.resp.razonSocial} onChange={(e) => setResp({ razonSocial: e.target.value })} error={errResp("razonSocial")} />}
+              {d.resp.tipoPersona === "moral" && <Campo etiqueta="Razón social" icono={Building2} value={d.resp.razonSocial} autoCapitalize="characters" onChange={(e) => setResp({ razonSocial: normalizarTexto(e.target.value) })} error={errResp("razonSocial")} />}
               <Campo etiqueta="CURP" icono={Fingerprint} value={d.resp.curp} maxLength={18} autoCapitalize="characters" autoComplete="off" onChange={(e) => setResp({ curp: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })} error={errResp("curp")} placeholder="18 caracteres" />
               <Campo etiqueta="RFC" icono={FileText} value={d.resp.rfc} maxLength={d.resp.tipoPersona === "fisica" ? 13 : 12} autoCapitalize="characters" autoComplete="off" onChange={(e) => setResp({ rfc: e.target.value.toUpperCase().replace(/[^A-ZÑ&0-9]/g, "") })} error={errResp("rfc")} placeholder={d.resp.tipoPersona === "fisica" ? "13 caracteres" : "12 caracteres"} />
               <Campo etiqueta="Teléfono" icono={Phone} value={d.resp.telefono} inputMode="numeric" maxLength={10} autoComplete="off" onChange={(e) => setResp({ telefono: e.target.value.replace(/\D/g, "").slice(0, 10) })} error={errResp("telefono")} placeholder="10 dígitos" />

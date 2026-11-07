@@ -3,8 +3,8 @@ import { capturaPrecioSchema } from "@tortillerias/shared";
 import { pool } from "../db.js";
 
 export function rutasPrecios(app: FastifyInstance) {
-  // Pública, con límite por IP. Queda "pendiente" hasta que un supervisor la revise.
-  app.post("/precios", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {
+  // Solo usuarios registrados. Queda "pendiente" hasta que un supervisor la revise.
+  app.post("/precios", { preHandler: app.autenticar, config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {
     const p = capturaPrecioSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
     const d = p.data;
@@ -23,9 +23,9 @@ export function rutasPrecios(app: FastifyInstance) {
     const atipico = mediana !== null && Number(med.rows[0].n) >= 3 && Math.abs(d.precioKg - mediana) / mediana > 0.3;
 
     const { rows } = await pool.query(
-      `INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, geom_captura, precision_gps, alerta, origen)
-       VALUES ($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326),$6,$7,'publica') RETURNING id`,
-      [d.tortilleriaId, d.producto, d.precioKg, d.lng, d.lat, d.precisionGps ?? null, atipico],
+      `INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, geom_captura, precision_gps, alerta, capturista_id, origen)
+       VALUES ($1,$2,$3,ST_SetSRID(ST_MakePoint($4,$5),4326),$6,$7,$8,'app') RETURNING id`,
+      [d.tortilleriaId, d.producto, d.precioKg, d.lng, d.lat, d.precisionGps ?? null, atipico, req.user.sub],
     );
     if (atipico) await pool.query("INSERT INTO alertas(tipo, captura_id) VALUES ('precio_atipico',$1)", [rows[0].id]);
     return reply.code(201).send({ id: rows[0].id, alerta: atipico });

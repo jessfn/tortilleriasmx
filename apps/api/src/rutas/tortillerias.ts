@@ -48,8 +48,8 @@ export function rutasTortillerias(app: FastifyInstance) {
     return rows;
   });
 
-  // Alta pública de tortillería nueva (queda pendiente de validación)
-  app.post("/tortillerias", { config: LIMITE_ESCRITURA }, async (req, reply) => {
+  // Alta de tortillería nueva por un usuario registrado (queda pendiente de validación)
+  app.post("/tortillerias", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
     const p = nuevaSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
     const d = p.data;
@@ -61,15 +61,15 @@ export function rutasTortillerias(app: FastifyInstance) {
     );
     if (cercanas.rowCount) return reply.code(409).send({ error: "Posible duplicado", posibles: cercanas.rows });
     const { rows } = await pool.query(
-      `INSERT INTO tortillerias(nombre, domicilio, estado_clave, municipio_clave, geom, origen, estatus)
-       VALUES ($3,$4,$5,$6,${punto},'nueva','pendiente') RETURNING id`,
-      [d.lng, d.lat, d.nombre, d.domicilio, d.estadoClave, d.municipioClave],
+      `INSERT INTO tortillerias(nombre, domicilio, estado_clave, municipio_clave, geom, origen, estatus, creado_por)
+       VALUES ($3,$4,$5,$6,${punto},'nueva','pendiente',$7) RETURNING id`,
+      [d.lng, d.lat, d.nombre, d.domicilio, d.estadoClave, d.municipioClave, req.user.sub],
     );
     return reply.code(201).send({ id: rows[0].id, estatus: "pendiente" });
   });
 
-  // Alta pública del responsable: datos personales cifrados
-  app.post<{ Params: { id: string } }>("/tortillerias/:id/responsable", { config: LIMITE_ESCRITURA }, async (req, reply) => {
+  // Alta del responsable por un usuario registrado: datos personales cifrados
+  app.post<{ Params: { id: string } }>("/tortillerias/:id/responsable", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const body = req.body as { aceptoAviso?: boolean };
     if (body?.aceptoAviso !== true) return reply.code(400).send({ error: "Falta aceptar el aviso de privacidad" });
@@ -96,7 +96,7 @@ export function rutasTortillerias(app: FastifyInstance) {
       ],
     );
     await pool.query("INSERT INTO consentimientos(responsable_id, version) VALUES ($1,$2)", [rows[0].id, "v1"]);
-    await auditar(null, "crear_responsable_publico", "responsables", rows[0].id);
+    await auditar(req.user.sub, "crear_responsable", "responsables", rows[0].id);
     return reply.code(201).send({ id: rows[0].id });
   });
 

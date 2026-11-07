@@ -1,17 +1,20 @@
 import { useState } from "react";
-import { ChevronLeft, Loader2, LockKeyhole, LogIn, ShieldCheck, UserRound } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Loader2, LogIn, Mail } from "lucide-react";
 import { api, guardarSesion, type Sesion } from "./api";
+import AuthLayout from "./AuthLayout";
 import { Aviso, Boton, Campo } from "./ui";
 
-/** Acceso solo para supervisores y administradores. La captura pública no pide sesión. */
-export default function Login({ alEntrar, alVolver }: { alEntrar: (s: Sesion) => void; alVolver: () => void }) {
+/** Inicio de sesión para todos: usuarios registrados (correo) y personal de supervisión (correo o usuario) */
+export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar: (s: Sesion) => void; alVolver: () => void; alIrARegistro: () => void }) {
   const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");
+  const [ver, setVer] = useState(false);
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
 
   async function entrar(e: React.FormEvent) {
     e.preventDefault();
+    if (!usuario || !password) return;
     setError("");
     setCargando(true);
     try {
@@ -26,31 +29,51 @@ export default function Login({ alEntrar, alVolver }: { alEntrar: (s: Sesion) =>
   }
 
   return (
-    <div className="mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-gradient-to-b from-guinda-oscuro via-guinda to-guinda-oscuro">
-      <div className="shrink-0 px-4 pb-8 pt-[max(.75rem,env(safe-area-inset-top))] text-white">
-        <button onClick={alVolver} aria-label="Volver al inicio" className="-ml-1 grid h-9 w-9 place-items-center rounded-full hover:bg-white/10">
-          <ChevronLeft className="h-6 w-6" />
-        </button>
-        <div className="mt-3 flex items-center gap-3">
-          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white/15">
-            <ShieldCheck className="h-6 w-6 text-dorado" aria-hidden />
-          </span>
-          <div>
-            <h1 className="text-xl font-bold leading-tight">Iniciar sesión</h1>
-            <p className="text-xs text-white/70">Supervisores y administradores</p>
-          </div>
-        </div>
-      </div>
-      <form onSubmit={entrar} className="paso flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto rounded-t-3xl bg-stone-50 p-5">
-        <Campo etiqueta="Usuario" icono={UserRound} value={usuario} onChange={(e) => setUsuario(e.target.value)} autoComplete="username" autoCapitalize="none" required />
-        <Campo etiqueta="Contraseña" icono={LockKeyhole} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
-        {error && <Aviso>{error}</Aviso>}
-        <div className="mt-auto pb-[max(.5rem,env(safe-area-inset-bottom))]">
+    <AuthLayout
+      titulo="Iniciar sesión"
+      subtitulo="Entra a tu panel"
+      icono={LogIn}
+      alVolver={alVolver}
+      pie={
+        <form onSubmit={entrar} className="space-y-2">
           <Boton type="submit" disabled={cargando || !usuario || !password} icono={cargando ? Loader2 : LogIn}>
             {cargando ? "Entrando…" : "Entrar"}
           </Boton>
-        </div>
+          <p className="text-center text-sm text-stone-600">
+            ¿Aún no tienes cuenta?{" "}
+            <button type="button" onClick={alIrARegistro} className="font-semibold text-guinda">
+              Crear cuenta
+            </button>
+          </p>
+        </form>
+      }
+    >
+      <form onSubmit={entrar} className="space-y-3">
+        <Campo
+          etiqueta="Correo electrónico o usuario"
+          icono={Mail}
+          inputMode="email"
+          autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          value={usuario}
+          onChange={(e) => setUsuario(e.target.value)}
+        />
+        <Campo
+          etiqueta="Contraseña"
+          icono={KeyRound}
+          type={ver ? "text" : "password"}
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          derecha={
+            <button type="button" onClick={() => setVer(!ver)} aria-label={ver ? "Ocultar contraseña" : "Mostrar contraseña"} className="grid h-10 w-10 place-items-center rounded-full text-stone-400 hover:text-stone-700">
+              {ver ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+            </button>
+          }
+        />
+        {error && <Aviso>{error}</Aviso>}
       </form>
-    </div>
+    </AuthLayout>
   );
 }

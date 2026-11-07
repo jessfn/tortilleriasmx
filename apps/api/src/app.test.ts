@@ -1,10 +1,24 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
+
+// Base de datos simulada: la cuenta activa tiene el rol que cada prueba necesita
+let rolActual = "capturista";
+vi.mock("./db.js", () => ({
+  pool: {
+    query: vi.fn(async (sql: string) => {
+      if (/FROM usuarios WHERE id/.test(sql)) return { rows: [{ rol: rolActual, activo: true }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    }),
+  },
+  auditar: vi.fn(),
+}));
 
 let app: FastifyInstance;
 let base: string;
 const ID = "00000000-0000-4000-8000-000000000000";
 const json = { "content-type": "application/json" };
+const token = (rol = "capturista") => app.jwt.sign({ sub: "u1", rol: rol as any });
+const auth = (rol?: string) => ({ authorization: `Bearer ${token(rol)}`, ...json });
 
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
@@ -18,40 +32,57 @@ afterAll(async () => {
   await app.close();
 });
 
-describe("app", () => {
+describe("acceso", () => {
   it("health responde", async () => {
     expect(await (await fetch(`${base}/health`)).json()).toEqual({ ok: true });
   });
 
-  it("lo sensible exige sesión: datos personales, fotos y perfil", async () => {
-    for (const url of ["/auth/me", `/fotos/${ID}`, `/tortillerias/${ID}/responsable`]) {
-      expect((await fetch(base + url)).status).toBe(401);
+  it("todo lo privado exige sesión", async () => {
+    const get = ["/auth/me", "/mis/resumen", "/mis/registros", "/admin/resumen", "/admin/usuarios", `/fotos/${ID}`, `/tortillerias/${ID}/responsable`];
+    for (const url of get) expect((await fetch(base + url)).status, url).toBe(401);
+    for (const url of ["/precios", "/tortillerias", `/tortillerias/${ID}/responsable`, `/tortillerias/${ID}/fotos`]) {
+      expect((await fetch(base + url, { method: "POST", headers: json, body: "{}" })).status, url).toBe(401);
     }
   });
 
-  it("la captura es pública: valida datos sin pedir token", async () => {
-    // Sin token llega a la validación (400), no al 401
-    const precio = await fetch(`${base}/precios`, { method: "POST", headers: json, body: "{}" });
-    expect(precio.status).toBe(400);
-    const nueva = await fetch(`${base}/tortillerias`, { method: "POST", headers: json, body: "{}" });
-    expect(nueva.status).toBe(400);
-    const resp = await fetch(`${base}/tortillerias/${ID}/responsable`, { method: "POST", headers: json, body: "{}" });
-    expect(resp.status).toBe(400);
+  it("un usuario registrado puede capturar (llega a la validación)", async () => {
+    const r = await fetch(`${base}/precios`, { method: "POST", headers: auth(), body: "{}" });
+    expect(r.status).toBe(400);
+  });
+
+  it("el panel de administración es solo para supervisores y administradores", async () => {
+    rolActual = "capturista";
+    expect((await fetch(`${base}/admin/resumen`, { headers: auth("capturista") })).status).toBe(403);
+    expect((await fetch(`${base}/admin/tortillerias`, { headers: auth("capturista") })).status).toBe(403);
+    rolActual = "supervisor";
+    expect((await fetch(`${base}/admin/resumen`, { headers: auth("supervisor") })).status).toBe(200);
+  });
+
+  it("la gestión de usuarios es solo del administrador", async () => {
+    rolActual = "supervisor";
+    expect((await fetch(`${base}/admin/usuarios`, { headers: auth("supervisor") })).status).toBe(403);
+    rolActual = "admin";
+    expect((await fetch(`${base}/admin/usuarios`, { headers: auth("admin") })).status).toBe(200);
+  });
+
+  it("el rol vigente en la base manda sobre el del token", async () => {
+    rolActual = "capturista"; // lo degradaron, aunque su token diga admin
+    expect((await fetch(`${base}/admin/usuarios`, { headers: auth("admin") })).status).toBe(403);
+  });
+});
+
+describe("registro de cuenta", () => {
+  const post = (body: unknown) => fetch(`${base}/auth/registro`, { method: "POST", headers: json, body: JSON.stringify(body) });
+
+  it("rechaza contraseña corta, sin confirmar y correo inválido", async () => {
+    expect((await post({ correo: "a@b.com", password: "12345", confirmar: "12345" })).status).toBe(400);
+    expect((await post({ correo: "a@b.com", password: "123456", confirmar: "654321" })).status).toBe(400);
+    expect((await post({ correo: "no-es-correo", password: "123456", confirmar: "123456" })).status).toBe(400);
   });
 
   it("el responsable exige aceptar el aviso de privacidad", async () => {
-    const r = await fetch(`${base}/tortillerias/${ID}/responsable`, { method: "POST", headers: json, body: JSON.stringify({ aceptoAviso: false }) });
+    const r = await fetch(`${base}/tortillerias/${ID}/responsable`, { method: "POST", headers: auth(), body: JSON.stringify({ aceptoAviso: false }) });
     expect(r.status).toBe(400);
     expect((await r.json()).error).toMatch(/aviso/i);
-  });
-
-  it("PATCH estatus exige supervisor", async () => {
-    const token = app.jwt.sign({ sub: "u", rol: "capturista" });
-    const r = await fetch(`${base}/tortillerias/${ID}/estatus`, {
-      method: "PATCH",
-      headers: { authorization: `Bearer ${token}`, ...json },
-      body: JSON.stringify({ estatus: "validada" }),
-    });
-    expect(r.status).toBe(403);
   });
 });

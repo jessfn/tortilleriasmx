@@ -1,14 +1,15 @@
-import { useState } from "react";
-import { ClipboardPlus, LogIn } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ClipboardPlus, LayoutDashboard, LogIn, LogOut } from "lucide-react";
+import type { Sesion } from "./api";
+import "./inicio3d.css";
 
 /**
- * Pantalla de bienvenida. Para usar el logo oficial del Gobierno de México,
- * coloca el archivo en apps/web/public/logo-gobierno.png (fondo transparente, versión blanca).
+ * Para usar el logo oficial del Gobierno de México, coloca el archivo en
+ * apps/web/public/logo-gobierno.png (fondo transparente, versión blanca).
  */
 function LogoGobierno() {
   const [hayLogo, setHayLogo] = useState(true);
-  if (hayLogo)
-    return <img src="/logo-gobierno.png" alt="Gobierno de México" className="h-12 w-auto" onError={() => setHayLogo(false)} />;
+  if (hayLogo) return <img src="/logo-gobierno.png" alt="Gobierno de México" className="h-12 w-auto" onError={() => setHayLogo(false)} />;
   return (
     <div className="flex items-stretch gap-2.5" aria-label="Gobierno de México">
       <span className="w-1 rounded-full bg-dorado" aria-hidden />
@@ -20,55 +21,75 @@ function LogoGobierno() {
   );
 }
 
-function Tortilleria() {
+/** Escena 3D de la tortillería. Se inclina con el dedo o el cursor y se ajusta al espacio disponible. */
+function Tortilleria3D() {
+  const marco = useRef<HTMLDivElement>(null);
+  const rotor = useRef<HTMLDivElement>(null);
+  const [escala, setEscala] = useState(1);
+
+  useEffect(() => {
+    const el = marco.current!;
+    const ajustar = () => setEscala(Math.min(el.clientWidth / 320, el.clientHeight / 270, 1.25));
+    ajustar();
+    const ro = new ResizeObserver(ajustar);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const mover = (e: React.PointerEvent) => {
+    const r = marco.current!.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width - 0.5;
+    const y = (e.clientY - r.top) / r.height - 0.5;
+    rotor.current?.style.setProperty("--ry", String(Math.max(-1, Math.min(1, x)) * 18));
+    rotor.current?.style.setProperty("--rx", String(Math.max(-1, Math.min(1, y)) * 8));
+  };
+  const soltar = () => {
+    rotor.current?.style.setProperty("--ry", "0");
+    rotor.current?.style.setProperty("--rx", "0");
+  };
+
   return (
-    <svg viewBox="0 0 320 250" className="h-full max-h-64 w-auto" role="img" aria-label="Ilustración de una tortillería">
-      {/* suelo */}
-      <ellipse cx="160" cy="236" rx="130" ry="8" fill="#000" opacity=".18" />
-      {/* edificio */}
-      <rect x="48" y="78" width="224" height="152" rx="10" fill="#F3E3C3" />
-      <rect x="48" y="196" width="224" height="34" rx="6" fill="#611232" />
-      {/* letrero */}
-      <g className="a-letrero">
-        <rect x="88" y="52" width="144" height="30" rx="8" fill="#235B4E" />
-        <text x="160" y="72" textAnchor="middle" fontSize="15" fontWeight="800" letterSpacing="2" fill="#BC955C">TORTILLERÍA</text>
-      </g>
-      {/* toldo */}
-      <g className="a-toldo">
-        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
-          <rect key={i} x={36 + i * 31} y="92" width="31" height="30" fill={i % 2 ? "#FFFFFF" : "#9D2449"} />
-        ))}
-        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
-          <circle key={i} cx={51.5 + i * 31} cy="122" r="15.5" fill={i % 2 ? "#FFFFFF" : "#9D2449"} />
-        ))}
-      </g>
-      {/* mostrador y comal */}
-      <rect x="70" y="170" width="180" height="14" rx="4" fill="#BC955C" />
-      <ellipse cx="160" cy="168" rx="58" ry="9" fill="#2a2a2a" />
-      {/* vapor */}
-      <g fill="none" stroke="#fff" strokeWidth="4" strokeLinecap="round" opacity="0">
-        <path className="a-vapor" style={{ animationDelay: "0s" }} d="M132 150c-8-10 8-16 0-28" />
-        <path className="a-vapor" style={{ animationDelay: ".7s" }} d="M160 150c-8-10 8-16 0-28" />
-        <path className="a-vapor" style={{ animationDelay: "1.4s" }} d="M188 150c-8-10 8-16 0-28" />
-      </g>
-      {/* tortillas */}
-      <g>
-        <ellipse cx="136" cy="164" rx="26" ry="6.5" fill="#EBD29C" />
-        <ellipse cx="184" cy="164" rx="26" ry="6.5" fill="#F3E3C3" />
-        <g className="a-volteo">
-          <ellipse cx="160" cy="150" rx="28" ry="8" fill="#F8EBCB" />
-          <circle cx="150" cy="149" r="2" fill="#BC955C" />
-          <circle cx="168" cy="152" r="2.2" fill="#BC955C" />
-          <circle cx="160" cy="147" r="1.6" fill="#BC955C" />
-        </g>
-      </g>
-      {/* puerta */}
-      <rect x="146" y="196" width="28" height="34" rx="4" fill="#9D2449" opacity=".0" />
-    </svg>
+    <div ref={marco} className="relative flex min-h-0 flex-1 touch-none items-center justify-center" onPointerMove={mover} onPointerLeave={soltar} onPointerUp={soltar}>
+      <div style={{ width: 320, height: 270, transform: `scale(${escala})`, flexShrink: 0 }} role="img" aria-label="Tortillería en 3D con una tortilla volteándose en el comal">
+        <div className="escena3d">
+          <div className="rotor" ref={rotor}>
+            <div className="intro">
+              <div className="mundo">
+                <div className="suelo" />
+
+                <div className="box edificio">
+                  <div className="fr"><div className="ventana v1" /><div className="ventana v2" /><div className="puerta" /></div>
+                  <div className="bk" /><div className="lf" /><div className="rt" /><div className="tp" />
+                </div>
+
+                <div className="box letrero">
+                  <div className="fr">TORTILLERÍA</div>
+                  <div className="bk" /><div className="lf" /><div className="rt" /><div className="tp" />
+                </div>
+
+                <div className="toldo">{[0, 1, 2, 3, 4, 5, 6, 7].map((i) => <i key={i} />)}</div>
+
+                <div className="box mostrador">
+                  <div className="fr" /><div className="bk" /><div className="lf" /><div className="rt" />
+                  <div className="tp"><i className="comal" /><i className="tortilla t1" /><i className="tortilla t2" /><i className="sombra-v" /></div>
+                </div>
+                <div className="vuelo"><div className="cara" /><div className="cara dorso" /></div>
+
+                <div className="vapor p1" /><div className="vapor p2" /><div className="vapor p3" />
+                {[1, 2, 3, 4, 5, 6].map((n) => <div key={n} className={`chispa c${n}`} />)}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
-export default function Inicio({ alRegistrar, alIniciar }: { alRegistrar: () => void; alIniciar: () => void }) {
+type Props = { sesion: Sesion | null; alRegistrar: () => void; alIniciar: () => void; alPanel: () => void; alCerrarSesion: () => void };
+
+export default function Inicio({ sesion, alRegistrar, alIniciar, alPanel, alCerrarSesion }: Props) {
+  const boton = "a-entra flex min-h-14 w-full items-center justify-center gap-2.5 rounded-2xl text-base transition active:scale-[.97]";
   return (
     <div className="relative mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-gradient-to-b from-guinda-oscuro via-guinda to-guinda-oscuro px-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-[max(1.25rem,env(safe-area-inset-top))] text-white">
       <div className="pointer-events-none absolute -left-24 top-1/3 h-72 w-72 rounded-full bg-dorado/15 blur-3xl" aria-hidden />
@@ -78,34 +99,37 @@ export default function Inicio({ alRegistrar, alIniciar }: { alRegistrar: () => 
         <LogoGobierno />
       </div>
 
-      <div className="a-entra relative flex min-h-0 flex-1 items-center justify-center py-2" style={{ animationDelay: ".25s" }}>
-        <Tortilleria />
-      </div>
+      <Tortilleria3D />
 
       <div className="relative text-center">
-        <h1 className="a-entra text-4xl font-extrabold tracking-tight" style={{ animationDelay: "1.1s" }}>
+        <h1 className="a-entra text-4xl font-extrabold tracking-tight" style={{ animationDelay: "1.2s" }}>
           Tortillerías<span className="text-dorado">MX</span>
         </h1>
-        <p className="a-entra mx-auto mt-1.5 max-w-[17rem] text-sm leading-snug text-white/80" style={{ animationDelay: "1.3s" }}>
+        <p className="a-entra mx-auto mt-1.5 max-w-[17rem] text-sm leading-snug text-white/80" style={{ animationDelay: "1.4s" }}>
           Registro nacional del precio de la tortilla
         </p>
       </div>
 
       <div className="relative mt-5 space-y-2.5">
-        <button
-          onClick={alRegistrar}
-          className="a-entra flex min-h-14 w-full items-center justify-center gap-2.5 rounded-2xl bg-white text-base font-bold text-guinda shadow-xl shadow-black/20 transition active:scale-[.97]"
-          style={{ animationDelay: "1.6s" }}
-        >
-          <ClipboardPlus className="h-5 w-5" aria-hidden /> Registrar
-        </button>
-        <button
-          onClick={alIniciar}
-          className="a-entra flex min-h-14 w-full items-center justify-center gap-2.5 rounded-2xl bg-white/10 text-base font-semibold text-white ring-1 ring-white/30 backdrop-blur transition active:scale-[.97]"
-          style={{ animationDelay: "1.8s" }}
-        >
-          <LogIn className="h-5 w-5" aria-hidden /> Iniciar sesión
-        </button>
+        {sesion ? (
+          <>
+            <button onClick={alPanel} className={`${boton} bg-white font-bold text-guinda shadow-xl shadow-black/20`} style={{ animationDelay: "1.7s" }}>
+              <LayoutDashboard className="h-5 w-5" aria-hidden /> Ir a mi panel
+            </button>
+            <button onClick={alCerrarSesion} className={`${boton} bg-white/10 font-semibold text-white ring-1 ring-white/30 backdrop-blur`} style={{ animationDelay: "1.9s" }}>
+              <LogOut className="h-5 w-5" aria-hidden /> Cerrar sesión
+            </button>
+          </>
+        ) : (
+          <>
+            <button onClick={alRegistrar} className={`${boton} bg-white font-bold text-guinda shadow-xl shadow-black/20`} style={{ animationDelay: "1.7s" }}>
+              <ClipboardPlus className="h-5 w-5" aria-hidden /> Registrar
+            </button>
+            <button onClick={alIniciar} className={`${boton} bg-white/10 font-semibold text-white ring-1 ring-white/30 backdrop-blur`} style={{ animationDelay: "1.9s" }}>
+              <LogIn className="h-5 w-5" aria-hidden /> Iniciar sesión
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

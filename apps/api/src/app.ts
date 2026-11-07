@@ -7,6 +7,8 @@ import { rutasCatalogos } from "./rutas/catalogos.js";
 import { rutasTortillerias } from "./rutas/tortillerias.js";
 import { rutasPrecios } from "./rutas/precios.js";
 import { rutasFotos } from "./rutas/fotos.js";
+import { rutasPanel } from "./rutas/panel.js";
+import { rutasAdmin } from "./rutas/admin.js";
 
 export async function crearApp() {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test", bodyLimit: 1_000_000 });
@@ -26,5 +28,7 @@ export async function crearApp() {
   rutasTortillerias(app);
   rutasPrecios(app);
   await rutasFotos(app);
+  rutasPanel(app);
+  rutasAdmin(app);
   return app;
 }

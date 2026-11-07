@@ -1,7 +1,8 @@
 const BASE = import.meta.env.VITE_API_URL ?? "https://apitortillerias.geodatos.com.mx";
 const KEY = "tmx_sesion";
 
-export type Sesion = { token: string; usuario: { id: string; nombre: string; apellidos: string; rol: string } };
+export type Rol = "capturista" | "supervisor" | "admin";
+export type Sesion = { token: string; usuario: { id: string; nombre: string; apellidos: string; rol: Rol; correo: string } };
 
 export function leerSesion(): Sesion | null {
   try {
@@ -26,6 +27,14 @@ export class ApiError extends Error {
   }
 }
 
+/** Descarga una imagen protegida (requiere sesión) y devuelve una URL local para <img> */
+export async function apiImagenUrl(ruta: string): Promise<string> {
+  const s = leerSesion();
+  const r = await fetch(BASE + ruta, { headers: s ? { authorization: `Bearer ${s.token}` } : {} });
+  if (!r.ok) throw new ApiError(r.status, "No se pudo cargar la imagen");
+  return URL.createObjectURL(await r.blob());
+}
+
 export async function api<T = any>(
   ruta: string,
   op: { metodo?: string; json?: unknown; form?: FormData } = {},
@@ -37,7 +46,7 @@ export async function api<T = any>(
   let r: Response;
   try {
     r = await fetch(BASE + ruta, {
-      method: op.metodo ?? (op.json || op.form ? "POST" : "GET"),
+      method: op.metodo ?? (op.json !== undefined || op.form ? "POST" : "GET"),
       headers,
       body: op.form ?? (op.json !== undefined ? JSON.stringify(op.json) : undefined),
     });

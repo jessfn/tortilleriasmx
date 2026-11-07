@@ -1,48 +1,83 @@
-import { useEffect, useState } from "react";
-import { LayoutDashboard, LogOut } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { guardarSesion, leerSesion, type Sesion } from "./api";
 import Inicio from "./Inicio";
 import Login from "./Login";
+import Registro from "./Registro";
 import Captura from "./Captura";
-import { Boton } from "./ui";
+import PanelUsuario from "./PanelUsuario";
+import PanelAdmin from "./PanelAdmin";
 
-type Vista = "inicio" | "captura" | "login";
+type Vista = "inicio" | "login" | "registro" | "panel" | "captura";
 
 export default function App() {
   const [sesion, setSesion] = useState<Sesion | null>(leerSesion());
-  // /acceso lleva directo al inicio de sesión; cualquier otra ruta empieza en la bienvenida
+  // La bienvenida va primero; /acceso lleva directo al inicio de sesión
   const [vista, setVista] = useState<Vista>(location.pathname.startsWith("/acceso") ? "login" : "inicio");
 
-  useEffect(() => {
-    const salir = () => setSesion(null);
-    window.addEventListener("sesion-expirada", salir);
-    return () => window.removeEventListener("sesion-expirada", salir);
+  const salir = useCallback(() => {
+    guardarSesion(null);
+    setSesion(null);
+    setVista("inicio");
   }, []);
 
-  if (vista === "inicio") return <Inicio alRegistrar={() => setVista("captura")} alIniciar={() => setVista("login")} />;
-  if (vista === "captura") return <Captura alSalir={() => setVista("inicio")} />;
+  // Si el servidor dice que la sesión expiró o la cuenta se desactivó
+  useEffect(() => {
+    const expirada = () => {
+      setSesion(null);
+      setVista("login");
+    };
+    window.addEventListener("sesion-expirada", expirada);
+    return () => window.removeEventListener("sesion-expirada", expirada);
+  }, []);
 
-  if (!sesion) return <Login alEntrar={setSesion} alVolver={() => setVista("inicio")} />;
+  const entrar = (s: Sesion) => {
+    setSesion(s);
+    setVista("panel");
+  };
 
+  if (vista === "inicio")
+    return (
+      <Inicio
+        sesion={sesion}
+        alRegistrar={() => setVista("registro")}
+        alIniciar={() => setVista("login")}
+        alPanel={() => setVista("panel")}
+        alCerrarSesion={salir}
+      />
+    );
+
+  if (!sesion) {
+    if (vista === "registro") return <Registro alEntrar={entrar} alVolver={() => setVista("inicio")} alIrALogin={() => setVista("login")} />;
+    return <Login alEntrar={entrar} alVolver={() => setVista("inicio")} alIrARegistro={() => setVista("registro")} />;
+  }
+
+  if (vista === "captura") return <Captura alSalir={() => setVista("panel")} />;
+
+  const actualizar = (s: Sesion) => setSesion(s);
+  if (sesion.usuario.rol === "capturista")
+    return <PanelUsuario sesion={sesion} alCapturar={() => setVista("captura")} alActualizarSesion={actualizar} alSalir={salir} />;
+  return <PanelAdmin sesion={sesion} alActualizarSesion={actualizar} alSalir={salir} />;
+}
+
+/** Aviso discreto cuando hay una versión nueva de la app (se muestra sobre cualquier pantalla) */
+export function AvisoVersion() {
+  const [hay, setHay] = useState(false);
+  useEffect(() => {
+    const f = () => setHay(true);
+    window.addEventListener("hay-version-nueva", f);
+    return () => window.removeEventListener("hay-version-nueva", f);
+  }, []);
+  if (!hay) return null;
   return (
-    <div className="mx-auto flex h-dvh max-w-xl flex-col items-center justify-center gap-4 p-8 text-center">
-      <span className="grid h-20 w-20 place-items-center rounded-3xl bg-guinda/10 text-guinda">
-        <LayoutDashboard className="h-10 w-10" aria-hidden />
-      </span>
-      <h1 className="text-2xl font-bold">Hola, {sesion.usuario.nombre}</h1>
-      <p className="text-stone-600">El panel de supervisión y el visor de estadísticas se están construyendo.</p>
-      <div className="w-full max-w-xs space-y-2">
-        <Boton
-          variante="secundario"
-          icono={LogOut}
-          onClick={() => {
-            guardarSesion(null);
-            setSesion(null);
-            setVista("inicio");
-          }}
+    <div className="fixed inset-x-0 bottom-[max(5.5rem,env(safe-area-inset-bottom))] z-[60] flex justify-center px-4">
+      <div className="paso flex items-center gap-3 rounded-full bg-stone-900 py-2 pl-4 pr-2 text-sm text-white shadow-2xl">
+        Hay una versión nueva
+        <button
+          onClick={() => (window as unknown as { __actualizarApp?: () => void }).__actualizarApp?.()}
+          className="rounded-full bg-dorado px-3 py-1.5 font-semibold text-stone-900"
         >
-          Cerrar sesión
-        </Boton>
+          Actualizar
+        </button>
       </div>
     </div>
   );
