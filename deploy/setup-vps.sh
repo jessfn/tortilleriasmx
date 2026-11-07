@@ -37,7 +37,7 @@ cd "$APP_DIR"
 
 # .env (solo se crea si no existe)
 if [ ! -f .env ]; then
-  umask 077
+  (umask 077
   cat > .env <<EOF
 DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@localhost:5432/${DB_NAME}
 ENCRYPTION_KEY=$(openssl rand -hex 32)
@@ -45,6 +45,7 @@ JWT_SECRET=$(openssl rand -hex 32)
 CORS_ORIGIN=https://${APP_DOMAIN}
 PORT=3001
 EOF
+  )
 fi
 
 # Nginx

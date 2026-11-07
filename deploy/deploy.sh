@@ -19,3 +19,5 @@ pm2 startOrReload deploy/ecosystem.config.cjs
 # Publicar la PWA (Nginx sirve esta carpeta)
 mkdir -p /var/www/tortilleriasmx-web
 cp -r apps/web/dist/. /var/www/tortilleriasmx-web/
+# Nginx (www-data) debe poder leer los archivos
+chmod -R u=rwX,go=rX /var/www/tortilleriasmx-web
