@@ -51,3 +51,13 @@ input, select, textarea { font-size: max(16px, 1em); }
 #root { position: fixed; inset: 0; }
 /* Color de la página según la vista: cualquier resto de franja en el borde inferior se funde con la pantalla */
 @media (max-width: 767px) { html[data-vista="inicio"] body, html[data-vista="inicio"] { background-color: #611232; } }
+
+/*
+ * iOS 26, app instalada (WebKit bug 301108): con viewport-fit=cover y barra de estado translúcida el viewport mide menos que la
+ * pantalla (la altura de la barra de estado) y el contenido fijo se corta ahí, dejando una franja vacía abajo. Mientras la página
+ * mida menos que la pantalla iOS mantiene ese viewport corto; si la página mide al menos la pantalla, le da el viewport completo.
+ * El tope con 100lvh evita que haya scroll si la barra de estado es opaca (inset superior 0).
+ */
+@media (display-mode: standalone) {
+  html { min-height: min(100lvh, calc(100% + env(safe-area-inset-top))); }
+}
