@@ -416,6 +416,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
               </button>
               <button
                 onClick={() => {
+                  setError("");
                   set({ nueva: true, tortilleria: undefined });
                   setPaso((x) => x + 1);
                 }}

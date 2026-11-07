@@ -124,7 +124,7 @@ export function Cabecera({
   children?: ReactNode;
 }) {
   return (
-    <header className="relative shrink-0 bg-gradient-to-br from-guinda-oscuro via-guinda to-guinda-oscuro px-3 pb-8pt-[max(.5rem,env(safe-area-inset-top))] text-white">
+    <header className="relative shrink-0 bg-gradient-to-br from-guinda-oscuro via-guinda to-guinda-oscuro px-3 pb-7 pt-[max(.5rem,env(safe-area-inset-top))] text-white">
       <div className="flex items-center gap-2">
         {atras ? (
           <button onClick={atras} aria-label="Volver" className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-white/10 active:bg-white/20">
