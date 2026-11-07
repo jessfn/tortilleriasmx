@@ -1,10 +1,7 @@
 /**
- * Alto real de la pantalla en iPhone con la app instalada.
- *
- * En iOS (modo standalone) `100dvh`, `100%` e incluso `position: fixed; bottom: 0` pueden medir menos que la pantalla
- * física y dejar una franja vacía abajo. Aquí se compara el alto que reporta el navegador con el alto de la pantalla
- * y, si falta, se fija el alto de la app (variable --alto). También se pinta el fondo de la página del mismo color
- * que el borde inferior de cada vista, para que cualquier resto de franja no se note.
+ * Diagnóstico de pantalla. En algunos iPhone la ventana visible mide menos que la pantalla física; ajustar el alto a la pantalla
+ * esconde contenido bajo esa franja, así que no se fuerza: la raíz mide lo que el navegador reporta y el fondo de la página
+ * se pinta del color del borde inferior de cada vista (ver index.css) para que la franja se funda con la pantalla.
  */
 const standalone = () => (navigator as any).standalone === true || matchMedia("(display-mode: standalone)").matches;
 
@@ -24,26 +21,6 @@ export function medidas() {
     esperado: retrato ? largo : corto,
     dpr: devicePixelRatio,
   };
-}
-
-export function ajustarAltoReal() {
-  const ajustar = () => {
-    const m = medidas();
-    const falta = m.esperado - innerHeight;
-    const root = document.documentElement;
-    // Solo en celulares (táctil) instalados y cuando de verdad falta una franja visible
-    if (m.standalone && esIOS() && falta > 8 && falta < 160) {
-      root.style.setProperty("--alto", `${m.esperado}px`);
-      root.dataset.alto = "1";
-    } else {
-      root.style.removeProperty("--alto");
-      delete root.dataset.alto;
-    }
-  };
-  ajustar();
-  addEventListener("resize", ajustar);
-  addEventListener("orientationchange", () => setTimeout(ajustar, 300));
-  document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && ajustar());
 }
 
 /** Cinco toques rápidos en la esquina superior izquierda muestran las medidas (para diagnosticar en un teléfono real) */
