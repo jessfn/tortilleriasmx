@@ -361,7 +361,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
 
   if (listo)
     return (
-      <div className="mx-auto flex h-dvh max-w-xl flex-col items-center justify-center gap-5 bg-gradient-to-b from-guinda-oscuro to-guinda p-8 text-center text-white">
+      <div className="marco-pc mx-auto flex h-dvh max-w-xl flex-col items-center justify-center gap-5 lg:max-w-2xl bg-gradient-to-b from-guinda-oscuro to-guinda p-8 text-center text-white">
         <div className="paso grid h-24 w-24 place-items-center rounded-full bg-white/15 ring-8 ring-white/10">
           <CircleCheck className="h-14 w-14 text-dorado" aria-hidden />
         </div>
@@ -400,7 +400,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
   const filtrar = (items: Item[]) => items.filter((i) => norm(i.nombre).includes(norm(filtro)));
 
   return (
-    <div className="mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro">
+    <div className="marco-pc mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro lg:max-w-2xl">
       <Cabecera paso={paso + 1} total={pasos.length} titulo={m.titulo} subtitulo={m.sub} icono={m.icono} atras={paso > 0 ? () => ir(-1) : alSalir}>
         {buscaEn[id] && <Buscador value={filtro} onChange={setFiltro} placeholder={buscaEn[id]} cargando={id === "tortilleria" && cargandoLista} />}
         {id === "tortilleria" && (

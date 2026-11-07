@@ -153,8 +153,8 @@ export function Cabecera({
 }
 
 /** Zona clara que ocupa el resto de la pantalla; el scroll ocurre dentro de ella */
-export function Hoja({ children }: { children: ReactNode }) {
-  return <main className="relative z-10 -mt-5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[1.75rem] bg-stone-50 shadow-[0_-6px_18px_-6px_rgba(0,0,0,.35)]">{children}</main>;
+export function Hoja({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return <main className={`relative z-10 -mt-5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-[1.75rem] bg-stone-50 shadow-[0_-6px_18px_-6px_rgba(0,0,0,.35)] ${className}`}>{children}</main>;
 }
 
 export function Barra({ children }: { children: ReactNode }) {
@@ -196,8 +196,8 @@ export function PanelShell({
   children: ReactNode;
 }) {
   return (
-    <div className="mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro">
-      <header className="relative shrink-0 bg-gradient-to-b from-guinda-oscuro from-35% to-guinda px-4 pb-6 pt-[max(.75rem,env(safe-area-inset-top))] text-white">
+    <div className="marco-pc mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro lg:grid lg:max-w-6xl lg:grid-cols-[16rem_minmax(0,1fr)] lg:grid-rows-[auto_minmax(0,1fr)]">
+      <header className="relative shrink-0 bg-gradient-to-b from-guinda-oscuro from-35% to-guinda px-4 pb-6 lg:col-span-2 lg:px-8 lg:pb-7 pt-[max(.75rem,env(safe-area-inset-top))] text-white">
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-semibold uppercase tracking-[.2em] text-dorado">TortilleríasMX</p>
@@ -207,13 +207,13 @@ export function PanelShell({
           {derecha}
         </div>
       </header>
-      <Hoja>
-        <div key={activa} className="paso min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 pb-3 pt-5">
-          {children}
+      <Hoja className="lg:col-start-2 lg:row-start-2 lg:mt-0 lg:rounded-none lg:shadow-none">
+        <div key={activa} className="paso min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3 pt-5 lg:px-8 lg:pb-8 lg:pt-8">
+          <div className="mx-auto w-full max-w-3xl space-y-3">{children}</div>
         </div>
       </Hoja>
-      <nav className="shrink-0 border-t border-stone-200/70 bg-white pb-[max(.25rem,calc(env(safe-area-inset-bottom)*.6))]" aria-label="Secciones">
-        <ul className="mx-auto flex max-w-xl">
+      <nav className="shrink-0 border-t border-stone-200/70 bg-white pb-[max(.25rem,calc(env(safe-area-inset-bottom)*.6))] lg:col-start-1 lg:row-start-2 lg:border-r lg:border-t-0 lg:p-3" aria-label="Secciones">
+        <ul className="mx-auto flex max-w-xl lg:max-w-none lg:flex-col lg:gap-1">
           {pestañas.map((p) => {
             const on = p.id === activa;
             return (
@@ -221,14 +221,14 @@ export function PanelShell({
                 <button
                   onClick={() => alCambiar(p.id)}
                   aria-current={on ? "page" : undefined}
-                  className={`relative flex w-full flex-col items-center gap-0.5 py-2 text-[11px] font-semibold transition ${on ? "text-guinda" : "text-stone-400"}`}
+                  className={`relative flex w-full flex-col items-center gap-0.5 py-2 text-[11px] font-semibold transition lg:flex-row lg:gap-3 lg:rounded-xl lg:px-3 lg:py-2.5 lg:text-sm lg:hover:bg-stone-100 ${on ? "text-guinda lg:bg-guinda/10" : "text-stone-400 lg:text-stone-600"}`}
                 >
-                  <span className={`grid h-8 w-14 place-items-center rounded-full transition-all ${on ? "bg-guinda/10" : ""}`}>
+                  <span className={`grid h-8 w-14 place-items-center rounded-full transition-all lg:h-auto lg:w-auto ${on ? "bg-guinda/10 lg:bg-transparent" : ""}`}>
                     <p.icono className="h-5 w-5" aria-hidden />
                   </span>
                   {p.texto}
                   {!!p.insignia && (
-                    <span className="absolute right-[calc(50%-1.6rem)] top-1 grid h-4 min-w-4 place-items-center rounded-full bg-guinda px-1 text-[10px] text-white">{p.insignia}</span>
+                    <span className="absolute right-[calc(50%-1.6rem)] top-1 lg:static lg:ml-auto lg:mr-1 grid h-4 min-w-4 place-items-center rounded-full bg-guinda px-1 text-[10px] text-white">{p.insignia}</span>
                   )}
                 </button>
               </li>

@@ -23,3 +23,21 @@ input, select, textarea { font-size: max(16px, 1em); }
 
 /* Respaldo para navegadores sin unidades dvh (Android/iOS antiguos): sin esto el alto se rompe */
 .h-dvh { height: 100vh; height: 100dvh; }
+
+/* Computadora y tableta: la app se muestra como una tarjeta centrada sobre un fondo institucional */
+@media (min-width: 768px) {
+  body {
+    background:
+      radial-gradient(1100px 620px at 15% 8%, rgba(188, 149, 92, .22), transparent 60%),
+      radial-gradient(900px 600px at 92% 92%, rgba(35, 91, 78, .45), transparent 60%),
+      linear-gradient(160deg, #611232, #4a0e27);
+  }
+  .marco-pc {
+    position: relative;
+    top: 50%;
+    transform: translateY(-50%);
+    height: min(50rem, calc(100dvh - 3rem)) !important;
+    border-radius: 2rem;
+    box-shadow: 0 30px 80px -20px rgba(0, 0, 0, .6), 0 0 0 1px rgba(255, 255, 255, .08);
+  }
+}
