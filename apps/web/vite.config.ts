@@ -6,7 +6,8 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "prompt",
+      // La versión nueva se activa sola y la app se recarga (el borrador de captura se conserva)
+      registerType: "autoUpdate",
       includeAssets: ["icon.svg"],
       manifest: {
         name: "TortilleríasMX",
@@ -23,7 +24,13 @@ export default defineConfig({
           { src: "icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
         ],
       },
-      workbox: { navigateFallback: "/index.html", globPatterns: ["**/*.{js,css,html,svg,png}"] },
+      workbox: {
+        navigateFallback: "/index.html",
+        globPatterns: ["**/*.{js,css,html,svg,png}"],
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
+      },
     }),
   ],
 });

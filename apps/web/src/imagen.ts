@@ -1,3 +1,13 @@
+/** Convierte la foto en texto (data URL) para poder conservarla si la página se recarga */
+export function blobADataUrl(b: Blob): Promise<string> {
+  return new Promise((ok, fallo) => {
+    const r = new FileReader();
+    r.onload = () => ok(String(r.result));
+    r.onerror = () => fallo(r.error);
+    r.readAsDataURL(b);
+  });
+}
+
 /** Reduce la foto en el dispositivo (máx. 1600 px, JPEG) antes de enviarla. */
 export async function comprimirFoto(archivo: File): Promise<Blob> {
   let bmp: ImageBitmap;

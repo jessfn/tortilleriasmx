@@ -6,6 +6,7 @@ import {
 import { api, type Sesion } from "./api";
 import FotoAuth from "./FotoAuth";
 import Perfil from "./Perfil";
+import { CLAVES, usePersistente } from "./persist";
 import { Aviso, Boton, Dato, HojaModal, Insignia, PanelShell, Tarjeta, Vacio } from "./ui";
 
 type Resumen = {
@@ -30,7 +31,8 @@ export default function PanelAdmin({
   sesion, alActualizarSesion, alSalir,
 }: { sesion: Sesion; alActualizarSesion: (s: Sesion) => void; alSalir: () => void }) {
   const esAdmin = sesion.usuario.rol === "admin";
-  const [tab, setTab] = useState("resumen");
+  const [tabGuardada, setTab] = usePersistente(CLAVES.tabAdmin, "resumen");
+  const tab = tabGuardada === "usuarios" && !esAdmin ? "resumen" : tabGuardada; // por si cambió su rol
   const [resumen, setResumen] = useState<Resumen>();
   const [error, setError] = useState("");
 

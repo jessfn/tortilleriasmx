@@ -1,13 +1,15 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  Banknote, Building2, Camera, Check, CircleCheck, FileText, Fingerprint, ImagePlus, Landmark, Layers, ListChecks,
-  Loader2, LocateFixed, MapPin, PackageOpen, Phone, Plus, RotateCcw, Send, ShieldCheck, Store, UserRound, Wheat,
+  Banknote, Building2, Camera, Check, CircleCheck, Eye, EyeOff, FileText, Fingerprint, ImagePlus, KeyRound, Landmark, Layers,
+  ListChecks, Loader2, LocateFixed, Mail, MapPin, PackageOpen, Phone, Plus, RotateCcw, Send, ShieldCheck, Store, UserPlus,
+  UserRound, Wheat,
   type LucideIcon,
 } from "lucide-react";
-import { normalizarTexto, PRECIO_MAX, PRECIO_MIN, responsableSchema } from "@tortillerias/shared";
-import { api, ApiError } from "./api";
+import { normalizarTexto, PASSWORD_MIN, PRECIO_MAX, PRECIO_MIN, registroSchema, responsableSchema } from "@tortillerias/shared";
+import { api, ApiError, guardarSesion, type Sesion } from "./api";
 import { buscarLugar } from "./geocoder";
-import { comprimirFoto } from "./imagen";
+import { blobADataUrl, comprimirFoto } from "./imagen";
+import { borrar, CLAVES, guardar, leer } from "./persist";
 import BuscadorLugar from "./BuscadorLugar";
 import { Aviso, Barra, Boton, Buscador, Cabecera, Campo, Hoja, Opcion } from "./ui";
 
@@ -36,9 +38,16 @@ type Datos = {
   fotoUrl?: string;
   resp: { nombre: string; apellidos: string; curp: string; telefono: string; tipoPersona: "fisica" | "moral"; rfc: string; razonSocial: string };
   aviso: boolean;
+  /** Solo se pide si la persona aún no tiene cuenta: se crea al enviar el registro */
+  cuenta: { correo: string; password: string; confirmar: string };
   producto: Producto;
   precio: string;
 };
+
+/** Pasos del asistente. El de la cuenta va justo después de los datos personales y solo si aún no hay sesión. */
+function armarPasos(nueva: boolean, conCuenta: boolean): string[] {
+  return ["estado", "municipio", "tortilleria", ...(nueva ? ["nueva"] : []), "ubicacion", "foto", "responsable", ...(conCuenta ? ["cuenta"] : []), "precio", "resumen"];
+}
 
 const inicial: Datos = {
   nueva: false,
@@ -46,6 +55,7 @@ const inicial: Datos = {
   domicilioNueva: "",
   resp: { nombre: "", apellidos: "", curp: "", telefono: "", tipoPersona: "fisica", rfc: "", razonSocial: "" },
   aviso: false,
+  cuenta: { correo: "", password: "", confirmar: "" },
   producto: "maiz",
   precio: "",
 };
@@ -57,14 +67,43 @@ const META: Record<string, { titulo: string; sub: string; icono: LucideIcon }> =
   nueva: { titulo: "Nueva tortillería", sub: "Todos los campos son obligatorios", icono: Plus },
   ubicacion: { titulo: "Ubicación", sub: "GPS o elige el punto en el mapa", icono: MapPin },
   foto: { titulo: "Foto", sub: "Toma una foto o elige de tu galería", icono: Camera },
-  responsable: { titulo: "Responsable", sub: "Todos los campos son obligatorios", icono: UserRound },
+  responsable: { titulo: "Tus datos", sub: "Del responsable de la tortillería", icono: UserRound },
+  cuenta: { titulo: "Tu cuenta", sub: "Con ella entrarás a tu panel", icono: UserPlus },
   precio: { titulo: "Precio", sub: "Precio por kilo al público", icono: Banknote },
   resumen: { titulo: "Resumen", sub: "Revisa y envía", icono: ListChecks },
 };
 
-export default function Captura({ alSalir }: { alSalir: () => void }) {
-  const [d, setD] = useState<Datos>(inicial);
-  const [paso, setPaso] = useState(0);
+/** Lo que se conserva si la página se recarga (p. ej. al actualizarse la app): todo menos el archivo de la foto */
+type Creada = { cuenta?: boolean; tortilleriaId?: string; foto?: boolean; resp?: boolean };
+type Borrador = {
+  d: Omit<Datos, "foto" | "fotoUrl">; // la contraseña NUNCA se guarda
+  pasoId: string;
+  creada: Creada;
+  fotoDataUrl?: string;
+};
+
+type Props = {
+  /** null = aún no tiene cuenta: el asistente le pedirá correo y contraseña al final de sus datos */
+  sesion: Sesion | null;
+  alSesion: (s: Sesion) => void;
+  /** Salir sin terminar (regresa a la bienvenida o al panel) */
+  alSalir: () => void;
+  /** Registro terminado: entrar al panel */
+  alTerminar: () => void;
+};
+
+export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props) {
+  const [conCuenta] = useState(!sesion); // se fija al entrar: los pasos no cambian aunque se cree la cuenta a mitad del envío
+  const [verPass, setVerPass] = useState(false);
+  const [borrador] = useState(() => leer<Borrador>(CLAVES.borrador));
+  const [d, setD] = useState<Datos>(() => (borrador ? { ...inicial, ...borrador.d, cuenta: { ...borrador.d.cuenta, password: "", confirmar: "" } } : inicial));
+  const [paso, setPaso] = useState(() => {
+    if (!borrador) return 0;
+    const ps = armarPasos(borrador.d.nueva, !sesion);
+    const i = ps.indexOf(borrador.pasoId);
+    return i >= 0 ? i : ps.length - 1;
+  });
+  const [fotoDataUrl, setFotoDataUrl] = useState<string | undefined>(borrador?.fotoDataUrl);
   const [estados, setEstados] = useState<Item[]>([]);
   const [municipios, setMunicipios] = useState<Item[]>([]);
   const [tortillerias, setTortillerias] = useState<Tortilleria[]>([]);
@@ -74,20 +113,47 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [listo, setListo] = useState(false);
-  const [creada, setCreada] = useState<{ tortilleriaId?: string; foto?: boolean; resp?: boolean }>({});
+  const [creada, setCreada] = useState<Creada>(() => borrador?.creada ?? {});
   const inputCamara = useRef<HTMLInputElement>(null);
   const inputGaleria = useRef<HTMLInputElement>(null);
 
   const set = (p: Partial<Datos>) => setD((x) => ({ ...x, ...p }));
   const setResp = (p: Partial<Datos["resp"]>) => setD((x) => ({ ...x, resp: { ...x.resp, ...p } }));
 
-  const pasos = useMemo(
-    () => ["estado", "municipio", "tortilleria", ...(d.nueva ? ["nueva"] : []), "ubicacion", "foto", "responsable", "precio", "resumen"],
-    [d.nueva],
-  );
+  const pasos = useMemo(() => armarPasos(d.nueva, conCuenta), [d.nueva, conCuenta]);
   const id = pasos[paso];
 
   useEffect(() => setFiltro(""), [id]);
+
+  // Recuperar la foto del borrador tras una recarga
+  useEffect(() => {
+    if (!borrador?.fotoDataUrl) return;
+    fetch(borrador.fotoDataUrl)
+      .then((r) => r.blob())
+      .then((b) => setD((x) => (x.foto ? x : { ...x, foto: b, fotoUrl: URL.createObjectURL(b) })))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Guardar el borrador (sin archivo de foto) mientras se captura
+  useEffect(() => {
+    if (listo) return;
+    const t = setTimeout(() => {
+      const { foto: _f, fotoUrl: _u, ...resto } = d;
+      const sinClave = { ...resto, cuenta: { correo: d.cuenta.correo, password: "", confirmar: "" } };
+      const base = { d: sinClave, pasoId: pasos[paso], creada };
+      const ok = guardar(CLAVES.borrador, { ...base, fotoDataUrl } satisfies Borrador);
+      if (!ok && fotoDataUrl) guardar(CLAVES.borrador, base satisfies Borrador); // sin foto si no cabe
+    }, 300);
+    return () => clearTimeout(t);
+  }, [d, paso, pasos, creada, fotoDataUrl, listo]);
+
+  // Registro nuevo terminado: entrar solo al panel después de un momento
+  useEffect(() => {
+    if (!listo || !conCuenta) return;
+    const t = setTimeout(alTerminar, 3500);
+    return () => clearTimeout(t);
+  }, [listo, conCuenta, alTerminar]);
 
   useEffect(() => {
     api<Item[]>("/estados").then(setEstados).catch((e) => setError(e.message));
@@ -123,6 +189,9 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
     if (resultadoResp.success) return undefined;
     return (d.resp as any)[campo] ? resultadoResp.error.flatten().fieldErrors[campo as never]?.[0] : undefined;
   };
+  const resultadoCuenta = registroSchema.safeParse(d.cuenta);
+  const errCuenta = (campo: "correo" | "password" | "confirmar") =>
+    d.cuenta[campo] && !resultadoCuenta.success ? (resultadoCuenta.error.flatten().fieldErrors[campo] as string[] | undefined)?.[0] : undefined;
   const precioNum = Number(d.precio.replace(",", "."));
   const precioOk = d.precio !== "" && precioNum >= PRECIO_MIN && precioNum <= PRECIO_MAX;
 
@@ -135,6 +204,7 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
     ubicacion: !!d.pos,
     foto: !!d.foto,
     responsable: resultadoResp.success && d.aviso,
+    cuenta: resultadoCuenta.success,
     precio: precioOk,
     resumen: true,
   };
@@ -167,6 +237,7 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
       const blob = await comprimirFoto(archivo);
       if (d.fotoUrl) URL.revokeObjectURL(d.fotoUrl);
       set({ foto: blob, fotoUrl: URL.createObjectURL(blob) });
+      blobADataUrl(blob).then(setFotoDataUrl).catch(() => setFotoDataUrl(undefined));
       setError("");
     } catch (e: any) {
       setError(e.message);
@@ -177,7 +248,25 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
   async function enviar() {
     setEnviando(true);
     setError("");
+    let etapa = "";
     try {
+      // 0) Cuenta nueva: se crea con el mismo formulario y la sesión inicia sola
+      if (conCuenta && !creada.cuenta) {
+        etapa = "cuenta";
+        let s = await api<Sesion>("/auth/registro", { json: d.cuenta });
+        guardarSesion(s); // desde aquí las llamadas siguientes ya van con la sesión
+        try {
+          // el perfil toma el nombre de quien registra (lo puede editar después)
+          const nombre = await api<{ nombre: string; apellidos: string }>("/perfil", { metodo: "PATCH", json: { nombre: d.resp.nombre, apellidos: d.resp.apellidos } });
+          s = { ...s, usuario: { ...s.usuario, ...nombre } };
+          guardarSesion(s);
+        } catch {
+          /* no es crítico */
+        }
+        alSesion(s);
+        setCreada((c) => ({ ...c, cuenta: true }));
+      }
+      etapa = "tortilleria";
       let tid = creada.tortilleriaId ?? d.tortilleria?.id;
       if (!tid) {
         const r = await api<{ id: string }>("/tortillerias", {
@@ -206,9 +295,14 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
       await api("/precios", {
         json: { tortilleriaId: tid, producto: d.producto, precioKg: precioNum, lat: d.pos!.lat, lng: d.pos!.lng, precisionGps: d.pos!.precision },
       });
+      borrar(CLAVES.borrador);
       setListo(true);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409 && e.cuerpo?.posibles) {
+      if (etapa === "cuenta") {
+        // correo ya usado u otro problema con la cuenta: se regresa a ese paso para corregirlo
+        setPaso(pasos.indexOf("cuenta"));
+        setError(e instanceof ApiError && e.status === 429 ? "Demasiados intentos. Inténtalo más tarde." : (e as Error).message);
+      } else if (e instanceof ApiError && e.status === 409 && e.cuerpo?.posibles) {
         setError(`Ya existe una tortillería parecida cerca: ${e.cuerpo.posibles.map((p: any) => p.nombre).join(", ")}. Regresa y elígela de la lista.`);
       } else if (e instanceof ApiError && e.status === 429) {
         setError("Demasiados envíos seguidos. Espera un minuto e inténtalo de nuevo.");
@@ -223,6 +317,7 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
   function otra() {
     if (d.fotoUrl) URL.revokeObjectURL(d.fotoUrl);
     setD({ ...inicial, estado: d.estado, municipio: d.municipio });
+    setFotoDataUrl(undefined);
     setCreada({});
     setFiltro("");
     setCentro(undefined);
@@ -237,16 +332,28 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
           <CircleCheck className="h-14 w-14 text-dorado" aria-hidden />
         </div>
         <div className="paso">
-          <h1 className="text-2xl font-bold">¡Captura enviada!</h1>
-          <p className="mt-1.5 text-sm text-white/80">Gracias por tu aportación. El precio quedó registrado y será revisado.</p>
+          <h1 className="text-2xl font-bold">{conCuenta ? "¡Registro completo!" : "¡Captura enviada!"}</h1>
+          <p className="mt-1.5 text-sm text-white/80">
+            {conCuenta
+              ? "Creamos tu cuenta, iniciaste sesión y registramos tu tortillería. Entrando a tu panel…"
+              : "Gracias por tu aportación. El precio quedó registrado y será revisado."}
+          </p>
         </div>
         <div className="mt-2 w-full max-w-sm space-y-2">
-          <Boton onClick={otra} icono={RotateCcw} className="!bg-white !bg-none !text-guinda !shadow-xl">
-            Capturar otra tortillería
-          </Boton>
-          <Boton variante="fantasma" onClick={alSalir} className="!text-white/80 hover:!bg-white/10">
-            Ir a mi panel
-          </Boton>
+          {conCuenta ? (
+            <Boton onClick={alTerminar} icono={Check} className="!bg-white !bg-none !text-guinda !shadow-xl">
+              Entrar a mi panel
+            </Boton>
+          ) : (
+            <>
+              <Boton onClick={otra} icono={RotateCcw} className="!bg-white !bg-none !text-guinda !shadow-xl">
+                Registrar otra tortillería
+              </Boton>
+              <Boton variante="fantasma" onClick={alTerminar} className="!text-white/80 hover:!bg-white/10">
+                Ir a mi panel
+              </Boton>
+            </>
+          )}
         </div>
       </div>
     );
@@ -382,6 +489,51 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
             </>
           )}
 
+          {id === "cuenta" && (
+            <>
+              <p className="text-sm leading-snug text-stone-600">
+                Con tu correo y contraseña entrarás a tu panel para ver tus registros y registrar más tortillerías. Tu cuenta se crea al enviar.
+              </p>
+              <Campo
+                etiqueta="Correo electrónico"
+                icono={Mail}
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                value={d.cuenta.correo}
+                onChange={(e) => set({ cuenta: { ...d.cuenta, correo: e.target.value } })}
+                error={errCuenta("correo")}
+                placeholder="tucorreo@ejemplo.com"
+              />
+              <Campo
+                etiqueta="Contraseña"
+                icono={KeyRound}
+                type={verPass ? "text" : "password"}
+                autoComplete="new-password"
+                value={d.cuenta.password}
+                onChange={(e) => set({ cuenta: { ...d.cuenta, password: e.target.value } })}
+                error={errCuenta("password")}
+                ayuda={`Mínimo ${PASSWORD_MIN} caracteres`}
+                derecha={
+                  <button type="button" onClick={() => setVerPass(!verPass)} aria-label={verPass ? "Ocultar contraseña" : "Mostrar contraseña"} className="grid h-10 w-10 place-items-center rounded-full text-stone-400 hover:text-stone-700">
+                    {verPass ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
+                }
+              />
+              <Campo
+                etiqueta="Confirmar contraseña"
+                icono={KeyRound}
+                type={verPass ? "text" : "password"}
+                autoComplete="new-password"
+                value={d.cuenta.confirmar}
+                onChange={(e) => set({ cuenta: { ...d.cuenta, confirmar: e.target.value } })}
+                error={errCuenta("confirmar")}
+              />
+            </>
+          )}
+
           {id === "precio" && (
             <>
               {PRODUCTOS.map((p) => (
@@ -415,6 +567,7 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
               <Fila icono={Banknote} k="Precio" v={`$${precioNum.toFixed(2)} por kilo`} />
               <Fila icono={Camera} k="Foto" v="Incluida" />
               <Fila icono={UserRound} k="Responsable" v={`${d.resp.nombre} ${d.resp.apellidos}`} />
+              {conCuenta && <Fila icono={Mail} k="Tu cuenta" v={d.cuenta.correo} />}
             </div>
           )}
 
@@ -425,7 +578,7 @@ export default function Captura({ alSalir }: { alSalir: () => void }) {
       <Barra>
         {id === "resumen" ? (
           <Boton onClick={enviar} disabled={enviando} icono={enviando ? Loader2 : Send}>
-            {enviando ? "Enviando…" : "Enviar captura"}
+            {enviando ? "Enviando…" : conCuenta ? "Crear cuenta y enviar" : "Enviar captura"}
           </Boton>
         ) : (
           <Boton onClick={() => ir(1)} disabled={!puede[id]} icono={Check}>

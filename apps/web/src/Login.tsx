@@ -40,9 +40,9 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
             {cargando ? "Entrando…" : "Entrar"}
           </Boton>
           <p className="text-center text-sm text-stone-600">
-            ¿Aún no tienes cuenta?{" "}
+            ¿Aún no te has registrado?{" "}
             <button type="button" onClick={alIrARegistro} className="font-semibold text-guinda">
-              Crear cuenta
+              Registrar mi tortillería
             </button>
           </p>
         </form>

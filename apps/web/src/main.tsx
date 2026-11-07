@@ -1,22 +1,24 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { registerSW } from "virtual:pwa-register";
-import App, { AvisoVersion } from "./App";
+import App from "./App";
 import "./index.css";
 
-// La versión nueva NO reemplaza la actual por sorpresa (se perdería una captura a medias):
-// se avisa con un botón "Actualizar" y la persona decide cuándo.
-const actualizar = registerSW({
+// Actualización reactiva: la app busca versiones nuevas cada minuto y cada vez que vuelve a primer plano.
+// Al detectarla, se activa y la página se recarga sola (la captura a medias se restaura: ver persist.ts).
+registerSW({
   immediate: true,
-  onNeedRefresh() {
-    window.dispatchEvent(new Event("hay-version-nueva"));
+  onRegisteredSW(_url, registro) {
+    if (!registro) return;
+    const buscar = () => registro.update().catch(() => {});
+    setInterval(buscar, 60_000);
+    document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && buscar());
+    window.addEventListener("online", buscar);
   },
 });
-(window as unknown as { __actualizarApp: () => void }).__actualizarApp = () => actualizar(true);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <App />
-    <AvisoVersion />
   </StrictMode>,
 );

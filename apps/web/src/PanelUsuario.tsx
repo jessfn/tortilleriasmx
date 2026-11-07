@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, ClipboardList, Clock, Home, MapPin, PackageOpen, Plus, Store, UserRound, Wheat, XCircle, Layers, Loader2 } from "lucide-react";
 import { api, type Sesion } from "./api";
 import Perfil from "./Perfil";
+import { CLAVES, usePersistente } from "./persist";
 import { Boton, Dato, Insignia, PanelShell, Tarjeta, Vacio } from "./ui";
 
 type Resumen = { registros: number; pendientes: number; aprobados: number; rechazados: number; tortillerias: number };
@@ -42,7 +43,7 @@ function TarjetaRegistro({ r }: { r: Registro }) {
 export default function PanelUsuario({
   sesion, alCapturar, alActualizarSesion, alSalir,
 }: { sesion: Sesion; alCapturar: () => void; alActualizarSesion: (s: Sesion) => void; alSalir: () => void }) {
-  const [tab, setTab] = useState("inicio");
+  const [tab, setTab] = usePersistente(CLAVES.tabUsuario, "inicio");
   const [resumen, setResumen] = useState<Resumen>();
   const [registros, setRegistros] = useState<Registro[]>();
   const [error, setError] = useState("");
