@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { curpSchema, telefonoSchema, precioSchema, responsableSchema } from "./validaciones";
+import { curpSchema, telefonoSchema, precioSchema, responsableSchema } from "./validaciones.js";
 
 describe("validaciones", () => {
   it("CURP válida", () => expect(curpSchema.safeParse("HEGG560427MVZRRL04").success).toBe(true));

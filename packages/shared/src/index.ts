@@ -1,1 +1,1 @@
-export * from "./validaciones";
+export * from "./validaciones.js";

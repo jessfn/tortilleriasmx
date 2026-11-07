@@ -2,8 +2,9 @@
   "name": "@tortillerias/shared",
   "version": "0.1.0",
   "type": "module",
-  "main": "src/index.ts",
-  "scripts": { "test": "vitest run", "dev": "echo shared" },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": { "build": "tsc -p .", "test": "vitest run", "dev": "tsc -p . --watch" },
   "dependencies": { "zod": "^3.23.8" },
   "devDependencies": { "vitest": "^2.1.0" }
 }
