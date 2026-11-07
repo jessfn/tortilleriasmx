@@ -23,6 +23,29 @@ export function medidas() {
   };
 }
 
+/**
+ * Si el iPhone instalado deja una franja física abajo (la ventana mide menos que la pantalla), esa franja ya funciona como
+ * margen inferior: se anula el margen de zona segura propio para no sumar espacio vacío bajo los botones.
+ */
+export function ajustarMargenInferior() {
+  const ajustar = () => {
+    const m = medidas();
+    const falta = m.esperado - innerHeight;
+    const root = document.documentElement;
+    if (m.standalone && m.ios && falta > 8 && falta < 160) {
+      root.style.setProperty("--sb", "0px");
+      root.dataset.hueco = "1";
+    } else {
+      root.style.removeProperty("--sb");
+      delete root.dataset.hueco;
+    }
+  };
+  ajustar();
+  addEventListener("resize", ajustar);
+  addEventListener("orientationchange", () => setTimeout(ajustar, 300));
+  document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && ajustar());
+}
+
 /** Cinco toques rápidos en la esquina superior izquierda muestran las medidas (para diagnosticar en un teléfono real) */
 export function activarDiagnostico() {
   let toques: number[] = [];

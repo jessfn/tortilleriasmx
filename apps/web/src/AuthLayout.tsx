@@ -35,7 +35,7 @@ export default function AuthLayout({
       </header>
       <main className="paso -mt-3 flex min-h-0 flex-1 flex-col rounded-t-3xl bg-stone-50">
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 pb-3 pt-5">{children}</div>
-        <div className="shrink-0 bg-stone-50 px-4 pb-[max(.5rem,calc(env(safe-area-inset-bottom)*.35))] pt-3">{pie}</div>
+        <div className="shrink-0 bg-stone-50 px-4 pb-[max(.5rem,calc(var(--sb)*.35))] pt-3">{pie}</div>
       </main>
     </div>
   );
