@@ -119,6 +119,9 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
   const [filtro, setFiltro] = useState("");
   const [centro, setCentro] = useState<Pos>();
   const [buscandoGps, setBuscandoGps] = useState(false);
+  const [km, setKm] = useState(5); // 0 = todo el municipio
+  const [cargandoLista, setCargandoLista] = useState(false);
+  const [visibles, setVisibles] = useState(80);
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [listo, setListo] = useState(false);
@@ -175,15 +178,35 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
 
   useEffect(() => {
     if (id !== "tortilleria" || !d.municipio) return;
-    const q = new URLSearchParams({ municipio: d.municipio.clave });
+    const q = new URLSearchParams();
     if (filtro.trim()) q.set("q", filtro.trim());
-    if (d.pos) {
+    if (d.pos && km > 0) {
+      // Radio alrededor de mi ubicación: TODAS las del círculo
       q.set("lat", String(d.pos.lat));
       q.set("lng", String(d.pos.lng));
+      q.set("km", String(km));
+    } else {
+      q.set("municipio", d.municipio.clave);
+      if (d.pos) {
+        q.set("lat", String(d.pos.lat));
+        q.set("lng", String(d.pos.lng));
+      }
     }
-    const t = setTimeout(() => api<Tortilleria[]>(`/tortillerias?${q}`).then(setTortillerias).catch((e) => setError(e.message)), 250);
-    return () => clearTimeout(t);
-  }, [id, d.municipio, filtro, d.pos]);
+    let vigente = true;
+    setCargandoLista(true);
+    const t = setTimeout(
+      () =>
+        api<Tortilleria[]>(`/tortillerias?${q}`)
+          .then((r) => vigente && (setTortillerias(r), setVisibles(80)))
+          .catch((e) => vigente && setError(e.message))
+          .finally(() => vigente && setCargandoLista(false)),
+      200,
+    );
+    return () => {
+      vigente = false;
+      clearTimeout(t);
+    };
+  }, [id, d.municipio, filtro, d.pos, km]);
 
   // Al llegar al mapa, centrarlo en el municipio elegido
   useEffect(() => {
@@ -377,13 +400,50 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
   return (
     <div className="mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro">
       <Cabecera paso={paso + 1} total={pasos.length} titulo={m.titulo} subtitulo={m.sub} icono={m.icono} atras={paso > 0 ? () => ir(-1) : alSalir}>
-        {buscaEn[id] && <Buscador value={filtro} onChange={setFiltro} placeholder={buscaEn[id]} />}
+        {buscaEn[id] && <Buscador value={filtro} onChange={setFiltro} placeholder={buscaEn[id]} cargando={id === "tortilleria" && cargandoLista} />}
+        {id === "tortilleria" && (
+          <div className="-mx-3 mt-2 flex gap-1.5 overflow-x-auto px-3 pb-0.5 [scrollbar-width:none]" role="toolbar" aria-label="Filtros de cercanía">
+            <button
+              onClick={usarGps}
+              disabled={buscandoGps}
+              className={`flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-sm font-semibold ring-1 transition ${d.pos ? "bg-dorado text-guinda-oscuro ring-dorado" : "bg-white/15 text-white ring-white/25"}`}
+            >
+              {buscandoGps ? <Loader2 className="h-4 w-4 animate-spin" /> : <LocateFixed className="h-4 w-4" />}
+              {d.pos ? "Cerca de mí" : "Cerca de mí"}
+            </button>
+            {d.pos &&
+              [1, 5, 10, 20, 0].map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setKm(v)}
+                  aria-pressed={km === v}
+                  className={`h-9 shrink-0 rounded-full px-3 text-sm font-medium ring-1 transition ${km === v ? "bg-white text-guinda ring-white" : "bg-white/10 text-white/90 ring-white/25"}`}
+                >
+                  {v === 0 ? "Municipio" : `${v} km`}
+                </button>
+              ))}
+            <button
+              onClick={() => set({ nueva: true, tortilleria: undefined })}
+              className="ml-auto flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-white/15 px-3 text-sm font-semibold text-white ring-1 ring-white/25"
+            >
+              <Plus className="h-4 w-4" /> Agregar nueva
+            </button>
+          </div>
+        )}
         {id === "ubicacion" && <BuscadorLugar onElegir={(l) => set({ pos: { lat: l.lat, lng: l.lng } })} />}
       </Cabecera>
 
       <Hoja>
         <div
           key={id}
+          onScroll={
+            id === "tortilleria"
+              ? (e) => {
+                  const el = e.currentTarget;
+                  if (el.scrollTop + el.clientHeight > el.scrollHeight - 600) setVisibles((v) => v + 80);
+                }
+              : undefined
+          }
           className={`paso min-h-0 flex-1 overscroll-contain px-3 pb-2 pt-5 ${llena ? "flex flex-col gap-2 overflow-hidden" : "space-y-2 overflow-y-auto"}`}
         >
           {id === "estado" &&
@@ -402,23 +462,30 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
 
           {id === "tortilleria" && (
             <>
-              <Boton variante="secundario" onClick={usarGps} disabled={buscandoGps} icono={buscandoGps ? Loader2 : LocateFixed} className="!min-h-11">
-                {buscandoGps ? "Buscando tu ubicación…" : d.pos ? "Ordenadas por cercanía a ti" : "Ver las más cercanas a mí"}
-              </Boton>
-              <Opcion icono={Plus} activo={d.nueva} onClick={() => set({ nueva: true, tortilleria: undefined })}>
-                <span className="font-medium">No aparece, agregar nueva</span>
-              </Opcion>
-              {tortillerias.map((t) => (
+              <p className="px-1 text-xs text-stone-500">
+                {cargandoLista
+                  ? "Buscando…"
+                  : `${tortillerias.length.toLocaleString("es-MX")} tortillerías${d.pos && km > 0 ? ` a ${km} km o menos` : ` en ${d.municipio?.nombre ?? "el municipio"}`}${filtro.trim() ? ` con “${filtro.trim()}”` : ""}${!d.pos ? ". Toca “Cerca de mí” para ver las más próximas." : ""}`}
+              </p>
+              {d.nueva && (
+                <Opcion icono={Plus} activo onClick={() => set({ nueva: false })}>
+                  <span className="font-medium">Agregando una nueva (toca para cancelar)</span>
+                </Opcion>
+              )}
+              {tortillerias.slice(0, visibles).map((t) => (
                 <Opcion key={t.id} icono={Store} activo={!d.nueva && d.tortilleria?.id === t.id} onClick={() => set({ tortilleria: t, nueva: false })}>
                   <div className="font-medium">{t.nombre}</div>
                   <div className="text-xs text-stone-500">
                     {t.domicilio ?? "Sin domicilio"}
-                    {t.distancia_m != null && ` · ${Math.round(t.distancia_m)} m`}
+                    {t.distancia_m != null && ` · ${t.distancia_m >= 1000 ? (t.distancia_m / 1000).toFixed(1) + " km" : Math.round(t.distancia_m) + " m"}`}
                     {t.estatus === "pendiente" && " · por validar"}
                   </div>
                 </Opcion>
               ))}
-              {tortillerias.length >= 60 && <p className="px-1 text-center text-xs text-stone-500">Hay muchas en tu municipio: mostramos 60. Escribe el nombre o la calle, o usa tu ubicación, para encontrar la tuya.</p>}
+              {visibles < tortillerias.length && <p className="px-1 py-2 text-center text-xs text-stone-400">Desliza para ver más…</p>}
+              {!cargandoLista && tortillerias.length === 0 && (
+                <p className="px-1 py-6 text-center text-sm text-stone-500">No hay resultados. Amplía el radio, cambia la búsqueda o agrega una nueva.</p>
+              )}
             </>
           )}
 

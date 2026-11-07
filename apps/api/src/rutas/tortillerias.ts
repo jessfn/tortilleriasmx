@@ -10,6 +10,7 @@ const busquedaSchema = z.object({
   q: z.string().trim().max(80).optional(),
   lat: z.coerce.number().min(-90).max(90).optional(),
   lng: z.coerce.number().min(-180).max(180).optional(),
+  km: z.coerce.number().min(0.1).max(50).optional(),
 });
 
 const nuevaSchema = z.object({
@@ -26,25 +27,33 @@ const LIMITE_ESCRITURA = { rateLimit: { max: 20, timeWindow: "1 minute" } };
 
 export function rutasTortillerias(app: FastifyInstance) {
   // Búsqueda pública por municipio, nombre o calle y cercanía (solo datos no personales). Con el catálogo del DENUE
-  // hay miles por municipio: se devuelven las 60 mejores coincidencias y se afina escribiendo o ordenando por cercanía.
+  // hay miles por municipio: con km se devuelven todas las del radio, ordenadas por distancia; q filtra en tiempo real.
   app.get("/tortillerias", async (req, reply) => {
     const p = busquedaSchema.safeParse(req.query);
     if (!p.success) return reply.code(400).send({ error: "Parámetros inválidos" });
-    const { municipio, estado, q, lat, lng } = p.data;
+    const { municipio, estado, q, lat, lng, km } = p.data;
     const cercania = lat !== undefined && lng !== undefined;
+    // Con radio: TODAS las del círculo (sin importar el municipio). Sin radio: las del municipio/estado.
+    const radio = cercania && km ? km * 1000 : null;
+    if (!radio && !municipio && !estado && (q?.length ?? 0) < 3) return [];
+    // El rectángulo (&&) usa el índice espacial; ST_DWithin afina el círculo exacto. 1° de latitud ≈ 111 km.
+    const grados = radio ? radio / 111000 / Math.cos(((lat ?? 0) * Math.PI) / 180) + 0.001 : null;
     const { rows } = await pool.query(
-      `SELECT id, nombre, domicilio, estatus, origen,
+      `SELECT id, nombre, domicilio, estatus,
               ST_Y(geom) AS lat, ST_X(geom) AS lng,
               CASE WHEN $4::float8 IS NULL THEN NULL
                    ELSE ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint($5,$4),4326)::geography) END AS distancia_m
          FROM tortillerias
-        WHERE ($1::text IS NULL OR municipio_clave = $1)
-          AND ($2::text IS NULL OR estado_clave = $2)
+        WHERE ($6::float8 IS NOT NULL OR $1::text IS NULL OR municipio_clave = $1)
+          AND ($6::float8 IS NOT NULL OR $2::text IS NULL OR estado_clave = $2)
+          AND ($6::float8 IS NULL OR (
+                geom && ST_Expand(ST_SetSRID(ST_MakePoint($5,$4),4326), $7::float8)
+                AND ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint($5,$4),4326)::geography, $6::float8)))
           AND ($3::text IS NULL OR nombre ILIKE '%' || $3 || '%' OR domicilio ILIKE '%' || $3 || '%')
           AND estatus <> 'rechazada'
         ORDER BY distancia_m NULLS LAST, nombre
-        LIMIT 60`,
-      [municipio ?? null, estado ?? null, q ?? null, cercania ? lat : null, cercania ? lng : null],
+        LIMIT 10000`,
+      [municipio ?? null, estado ?? null, q ?? null, cercania ? lat : null, cercania ? lng : null, radio, grados],
     );
     return rows;
   });
