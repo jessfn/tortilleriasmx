@@ -32,6 +32,11 @@ input, select, textarea { font-size: max(16px, 1em); }
       radial-gradient(900px 600px at 92% 92%, rgba(35, 91, 78, .45), transparent 60%),
       linear-gradient(160deg, #611232, #4a0e27);
   }
+
+}
+
+/* La tarjeta flotante es solo para pantallas grandes con ratón: nunca en celulares ni en tabletas táctiles */
+@media (min-width: 768px) and (min-height: 560px) and (pointer: fine) {
   .marco-pc {
     position: relative;
     top: 50%;
