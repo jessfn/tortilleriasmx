@@ -159,7 +159,7 @@ export function Hoja({ children, className = "" }: { children: ReactNode; classN
 
 export function Barra({ children }: { children: ReactNode }) {
   return (
-    <footer className="shrink-0 bg-stone-50 px-3 pb-[max(.75rem,calc(env(safe-area-inset-bottom)*.6))] pt-2.5">
+    <footer className="shrink-0 bg-stone-50 px-3 pb-[max(.5rem,calc(env(safe-area-inset-bottom)*.35))] pt-2.5">
       <div className="mx-auto flex max-w-xl gap-3">{children}</div>
     </footer>
   );
@@ -212,7 +212,7 @@ export function PanelShell({
           <div className="mx-auto w-full max-w-3xl space-y-3">{children}</div>
         </div>
       </Hoja>
-      <nav className="shrink-0 bg-stone-50 pb-[max(.25rem,calc(env(safe-area-inset-bottom)*.6))] shadow-[0_-10px_20px_-14px_rgba(0,0,0,.3)] lg:col-start-1 lg:row-start-2 lg:border-r lg:border-stone-200/70 lg:bg-white lg:p-3 lg:shadow-none" aria-label="Secciones">
+      <nav className="shrink-0 bg-stone-50 pb-[max(.125rem,calc(env(safe-area-inset-bottom)*.3))] shadow-[0_-10px_20px_-14px_rgba(0,0,0,.3)] lg:col-start-1 lg:row-start-2 lg:border-r lg:border-stone-200/70 lg:bg-white lg:p-3 lg:shadow-none" aria-label="Secciones">
         <ul className="mx-auto flex max-w-xl lg:max-w-none lg:flex-col lg:gap-1">
           {pestañas.map((p) => {
             const on = p.id === activa;
@@ -221,7 +221,7 @@ export function PanelShell({
                 <button
                   onClick={() => alCambiar(p.id)}
                   aria-current={on ? "page" : undefined}
-                  className={`relative flex w-full flex-col items-center gap-0.5 py-2 text-[11px] font-semibold transition lg:flex-row lg:gap-3 lg:rounded-xl lg:px-3 lg:py-2.5 lg:text-sm lg:hover:bg-stone-100 ${on ? "text-guinda lg:bg-guinda/10" : "text-stone-400 lg:text-stone-600"}`}
+                  className={`relative flex w-full flex-col items-center gap-0 py-1.5 text-[11px] font-semibold transition lg:flex-row lg:gap-3 lg:rounded-xl lg:px-3 lg:py-2.5 lg:text-sm lg:hover:bg-stone-100 ${on ? "text-guinda lg:bg-guinda/10" : "text-stone-400 lg:text-stone-600"}`}
                 >
                   <span className={`grid h-8 w-14 place-items-center rounded-full transition-all lg:h-auto lg:w-auto ${on ? "bg-guinda/10 lg:bg-transparent" : ""}`}>
                     <p.icono className="h-5 w-5" aria-hidden />
@@ -295,7 +295,7 @@ export function HojaModal({ titulo, alCerrar, children }: { titulo: string; alCe
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4 pb-[max(1rem,calc(env(safe-area-inset-bottom)*.6))]">{children}</div>
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4 pb-[max(1rem,calc(env(safe-area-inset-bottom)*.35))]">{children}</div>
       </div>
     </div>
   );
