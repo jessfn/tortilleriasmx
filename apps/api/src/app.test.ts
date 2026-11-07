@@ -22,7 +22,7 @@ describe("app", () => {
     expect(await r.json()).toEqual({ ok: true });
   });
   it("rutas protegidas piden token", async () => {
-    for (const url of ["/estados", "/tortillerias", "/auth/me"]) {
+    for (const url of ["/estados", "/tortillerias", "/auth/me", "/fotos/00000000-0000-4000-8000-000000000000"]) {
       expect((await fetch(base + url)).status).toBe(401);
     }
     const r = await fetch(`${base}/precios`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });

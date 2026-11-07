@@ -6,6 +6,7 @@ import { registrarAuth } from "./auth.js";
 import { rutasCatalogos } from "./rutas/catalogos.js";
 import { rutasTortillerias } from "./rutas/tortillerias.js";
 import { rutasPrecios } from "./rutas/precios.js";
+import { rutasFotos } from "./rutas/fotos.js";
 
 export async function crearApp() {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test", bodyLimit: 1_000_000 });
@@ -24,5 +25,6 @@ export async function crearApp() {
   rutasCatalogos(app);
   rutasTortillerias(app);
   rutasPrecios(app);
+  await rutasFotos(app);
   return app;
 }
