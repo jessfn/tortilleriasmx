@@ -3,20 +3,13 @@ import { ClipboardPlus, LayoutDashboard, LogIn, LogOut } from "lucide-react";
 import type { Sesion } from "./api";
 import "./inicio3d.css";
 
-/**
- * Para usar el logo oficial del Gobierno de México, coloca el archivo en
- * apps/web/public/logo-gobierno.png (fondo transparente, versión blanca).
- */
+/** Logotipos oficiales: Gobierno de México y Secretaría de Agricultura y Desarrollo Rural (administración 2024-2030, fuente: gob.mx) */
 function LogoGobierno() {
-  const [hayLogo, setHayLogo] = useState(true);
-  if (hayLogo) return <img src="/logo-gobierno.png" alt="Gobierno de México" className="h-12 w-auto" onError={() => setHayLogo(false)} />;
   return (
-    <div className="flex items-stretch gap-2.5" aria-label="Gobierno de México">
-      <span className="w-1 rounded-full bg-dorado" aria-hidden />
-      <div className="leading-none">
-        <div className="text-[10px] font-semibold tracking-[.32em] text-dorado">GOBIERNO DE</div>
-        <div className="mt-1 text-[26px] font-extrabold tracking-tight">MÉXICO</div>
-      </div>
+    <div className="flex items-center gap-3">
+      <img src="/logo-gobierno.svg" alt="Gobierno de México" className="h-11 w-auto shrink-0" />
+      <span className="h-8 w-px shrink-0 bg-white/30" aria-hidden />
+      <img src="/logo-agricultura.png" alt="Agricultura, Secretaría de Agricultura y Desarrollo Rural" className="h-7 w-auto min-w-0 shrink [filter:brightness(0)_invert(1)]" />
     </div>
   );
 }
