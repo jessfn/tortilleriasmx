@@ -44,9 +44,18 @@ type Datos = {
   precio: string;
 };
 
-/** Pasos del asistente. El de la cuenta va justo después de los datos personales y solo si aún no hay sesión. */
+/**
+ * Pasos del asistente, de lo general a lo personal:
+ * primero todo lo de la tortillería (lugar, ubicación, foto, precio), después los datos de la persona
+ * y al final la cuenta (correo y contraseña), que solo se pide si aún no hay sesión.
+ */
 function armarPasos(nueva: boolean, conCuenta: boolean): string[] {
-  return ["estado", "municipio", "tortilleria", ...(nueva ? ["nueva"] : []), "ubicacion", "foto", "responsable", ...(conCuenta ? ["cuenta"] : []), "precio", "resumen"];
+  return [
+    "estado", "municipio", "tortilleria", ...(nueva ? ["nueva"] : []),
+    "ubicacion", "foto", "precio",
+    "responsable", ...(conCuenta ? ["cuenta"] : []),
+    "resumen",
+  ];
 }
 
 const inicial: Datos = {
