@@ -21,8 +21,8 @@ input, select, textarea { font-size: max(16px, 1em); }
   * { transition-duration: .01ms !important; }
 }
 
-/* Respaldo para navegadores sin unidades dvh (Android/iOS antiguos): sin esto el alto se rompe */
-.h-dvh { height: 100vh; height: 100dvh; }
+/* La raíz cubre SIEMPRE toda la pantalla real (también bajo la barra de estado y la de inicio en iOS), sin depender de dvh, que en iOS instalado deja una franja vacía abajo */
+.h-dvh { height: 100%; }
 
 /* Computadora y tableta: la app se muestra como una tarjeta centrada sobre un fondo institucional */
 @media (min-width: 768px) {
@@ -48,5 +48,4 @@ input, select, textarea { font-size: max(16px, 1em); }
 }
 
 /* iOS: que la raíz siga el alto visible real y no deje una franja vacía abajo */
-html, body, #root { min-height: 100%; }
-@supports (height: 100dvh) { #root { height: 100dvh; } }
+#root { position: fixed; inset: 0; }

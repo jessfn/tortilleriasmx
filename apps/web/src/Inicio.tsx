@@ -84,7 +84,7 @@ type Props = { sesion: Sesion | null; alRegistrar: () => void; alIniciar: () => 
 export default function Inicio({ sesion, alRegistrar, alIniciar, alPanel, alCerrarSesion }: Props) {
   const boton = "a-entra flex min-h-14 w-full items-center justify-center gap-2.5 rounded-2xl text-base transition active:scale-[.97]";
   return (
-    <div className="marco-pc relative mx-auto flex h-dvh max-w-xl flex-col overflow-hidden lg:grid lg:max-w-5xl lg:grid-cols-[1.15fr_1fr] lg:grid-rows-[auto_minmax(0,1fr)] lg:gap-x-10 lg:px-14 lg:pt-10 bg-gradient-to-b from-guinda-oscuro via-guinda to-guinda-oscuro px-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-[max(1.25rem,env(safe-area-inset-top))] text-white">
+    <div className="marco-pc relative mx-auto flex h-dvh max-w-xl flex-col overflow-hidden lg:grid lg:max-w-5xl lg:grid-cols-[1.15fr_1fr] lg:grid-rows-[auto_minmax(0,1fr)] lg:gap-x-10 lg:px-14 lg:pt-10 bg-gradient-to-b from-guinda-oscuro via-guinda to-guinda-oscuro px-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-[max(1.25rem,calc(env(safe-area-inset-top)+.75rem))] text-white">
       <div className="pointer-events-none absolute -left-24 top-1/3 h-72 w-72 rounded-full bg-dorado/15 blur-3xl" aria-hidden />
       <div className="pointer-events-none absolute -right-20 bottom-10 h-64 w-64 rounded-full bg-verde/30 blur-3xl" aria-hidden />
 
