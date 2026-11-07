@@ -16,3 +16,6 @@ for f in db/migrations/*.sql; do
   fi
 done
 pm2 startOrReload deploy/ecosystem.config.cjs
+# Publicar la PWA (Nginx sirve esta carpeta)
+mkdir -p /var/www/tortilleriasmx-web
+cp -r apps/web/dist/. /var/www/tortilleriasmx-web/
