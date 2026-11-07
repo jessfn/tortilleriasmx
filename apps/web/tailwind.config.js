@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: "class", // nunca se agrega la clase: la app es siempre clara
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
