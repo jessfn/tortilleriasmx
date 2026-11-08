@@ -61,3 +61,6 @@ input, select, textarea { font-size: max(16px, 1em); }
 @media (display-mode: standalone) {
   html { min-height: min(100lvh, calc(100% + env(safe-area-inset-top))); }
 }
+
+/* Punto azul "Estás aquí" del mapa */
+@keyframes pulsoAzul { 0% { transform: scale(.5); opacity: 1; } 100% { transform: scale(1.6); opacity: 0; } }

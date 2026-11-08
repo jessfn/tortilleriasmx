@@ -38,9 +38,12 @@ describe("acceso", () => {
   });
 
   it("todo lo privado exige sesión", async () => {
-    const get = ["/auth/me", "/mis/resumen", "/mis/registros", "/admin/resumen", "/admin/usuarios", `/fotos/${ID}`, `/tortillerias/${ID}/responsable`];
+    const get = [
+      "/auth/me", "/mis/resumen", "/mis/registros", "/mis/tortillerias", "/admin/resumen", "/admin/usuarios", `/fotos/${ID}`,
+      `/tortillerias/${ID}/responsable`, `/tortillerias/${ID}/fiscal`, `/tortillerias/${ID}/fiscal/existe`, `/tortillerias/${ID}/mis-precios-hoy`,
+    ];
     for (const url of get) expect((await fetch(base + url)).status, url).toBe(401);
-    for (const url of ["/precios", "/tortillerias", `/tortillerias/${ID}/responsable`, `/tortillerias/${ID}/fotos`]) {
+    for (const url of ["/precios", "/tortillerias", `/tortillerias/${ID}/fiscal`, `/tortillerias/${ID}/fotos`]) {
       expect((await fetch(base + url, { method: "POST", headers: json, body: "{}" })).status, url).toBe(401);
     }
   });
@@ -48,6 +51,17 @@ describe("acceso", () => {
   it("un usuario registrado puede capturar (llega a la validación)", async () => {
     const r = await fetch(`${base}/precios`, { method: "POST", headers: auth(), body: "{}" });
     expect(r.status).toBe(400);
+  });
+
+  it("no se puede capturar tortilla de harina", async () => {
+    const r = await fetch(`${base}/precios`, { method: "POST", headers: auth(), body: JSON.stringify({ tortilleriaId: ID, producto: "harina", precioKg: 24 }) });
+    expect(r.status).toBe(400);
+  });
+
+  it("el mapa exige un rectángulo válido", async () => {
+    expect((await fetch(`${base}/tortillerias/mapa`)).status).toBe(400);
+    expect((await fetch(`${base}/tortillerias/mapa?bbox=1,2,0,1`)).status).toBe(400);
+    expect((await fetch(`${base}/tortillerias/mapa?bbox=-99.2,19.3,-99.1,19.4`)).status).toBe(200);
   });
 
   it("el panel de administración es solo para supervisores y administradores", async () => {
@@ -80,9 +94,14 @@ describe("registro de cuenta", () => {
     expect((await post({ correo: "no-es-correo", password: "123456", confirmar: "123456" })).status).toBe(400);
   });
 
-  it("el responsable exige aceptar el aviso de privacidad", async () => {
-    const r = await fetch(`${base}/tortillerias/${ID}/responsable`, { method: "POST", headers: auth(), body: JSON.stringify({ aceptoAviso: false }) });
+  it("los datos fiscales exigen aceptar el aviso de privacidad", async () => {
+    const r = await fetch(`${base}/tortillerias/${ID}/fiscal`, { method: "POST", headers: auth(), body: JSON.stringify({ aceptoAviso: false }) });
     expect(r.status).toBe(400);
     expect((await r.json()).error).toMatch(/aviso/i);
+  });
+
+  it("ya no existe el alta de responsable con CURP", async () => {
+    const r = await fetch(`${base}/tortillerias/${ID}/responsable`, { method: "POST", headers: auth(), body: JSON.stringify({ curp: "HEGG560427MVZRRL04" }) });
+    expect(r.status).toBe(404);
   });
 });

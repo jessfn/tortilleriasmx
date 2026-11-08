@@ -1,128 +1,147 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  Banknote, Building2, Camera, Check, CircleCheck, Eye, EyeOff, FileText, Fingerprint, ImagePlus, KeyRound, Landmark, Layers,
-  ListChecks, Loader2, LocateFixed, Mail, MapPin, PackageOpen, Phone, Plus, RotateCcw, Send, ShieldCheck, Store, UserPlus,
-  UserRound, Wheat,
-  type LucideIcon,
+  Banknote, Briefcase, Building2, Camera, Check, CircleCheck, Eye, EyeOff, FileText, Hash, ImagePlus, KeyRound, Landmark, Layers, ListChecks,
+  Loader2, LocateFixed, Mail, MapPin, Phone, Plus, RotateCcw, Route, Send, ShieldCheck, Store, UserPlus, Users, Wheat, type LucideIcon,
 } from "lucide-react";
-import { normalizarTexto, PASSWORD_MIN, PRECIO_MAX, PRECIO_MIN, registroSchema, responsableSchema } from "@tortillerias/shared";
+import {
+  fiscalSchema, nuevaTortilleriaSchema, normalizarTexto, PASSWORD_MIN, PERSONAL_OCUPADO, PRECIO_MAX, PRECIO_MIN, registroSchema, TIPOS_VIAL,
+} from "@tortillerias/shared";
 import { api, ApiError, guardarSesion, type Sesion } from "./api";
 import { buscarLugar } from "./geocoder";
 import { blobADataUrl, comprimirFoto } from "./imagen";
 import { borrar, CLAVES, guardar, leer } from "./persist";
-import BuscadorLugar from "./BuscadorLugar";
-import { Aviso, Barra, Boton, Buscador, Cabecera, Campo, Hoja, Opcion } from "./ui";
-
-const Mapa = lazy(() => import("./Mapa"));
+import PasoTortilleria from "./PasoTortilleria";
+import type { Punto } from "./MapaTortillerias";
+import { Aviso, Barra, Boton, Buscador, Cabecera, Campo, Hoja, Opcion, Selector } from "./ui";
 
 type Item = { clave: string; nombre: string };
-type Tortilleria = { id: string; nombre: string; domicilio: string | null; estatus: string; distancia_m: number | null };
-type Producto = "maiz" | "harina" | "masa";
 type Pos = { lat: number; lng: number; precision?: number };
+type Producto = "maiz" | "masa";
+type Caso = "mapa" | "actualizar";
 
-const PRODUCTOS: { id: Producto; texto: string; icono: LucideIcon }[] = [
-  { id: "maiz", texto: "Tortilla de maíz", icono: Wheat },
-  { id: "harina", texto: "Tortilla de harina", icono: PackageOpen },
-  { id: "masa", texto: "Masa", icono: Layers },
+const PRODUCTOS: { id: Producto; clave: "precioMaiz" | "precioMasa"; texto: string; icono: LucideIcon }[] = [
+  { id: "maiz", clave: "precioMaiz", texto: "Tortilla de maíz", icono: Wheat },
+  { id: "masa", clave: "precioMasa", texto: "Masa", icono: Layers },
 ];
+
+const NV_VACIO = {
+  nombre: "", telefono: "", correo: "", personalOcupado: "", localidad: "", tipoVial: "CALLE", calle: "", numeroExt: "", sinNumero: false,
+  numeroInt: "", colonia: "", codigoPostal: "",
+};
 
 type Datos = {
   estado?: Item;
   municipio?: Item;
-  tortilleria?: Tortilleria;
+  zonaManual: boolean;
+  tortilleria?: Punto;
   nueva: boolean;
-  nombreNueva: string;
-  domicilioNueva: string;
-  pos?: Pos;
+  pin?: Pos;
+  nv: typeof NV_VACIO;
   foto?: Blob;
   fotoUrl?: string;
-  resp: { nombre: string; apellidos: string; curp: string; telefono: string; tipoPersona: "fisica" | "moral"; rfc: string; razonSocial: string };
-  aviso: boolean;
+  fiscal: { tipoPersona: "fisica" | "moral"; rfc: string; razonSocial: string; celular: string; aviso: boolean };
   /** Solo se pide si la persona aún no tiene cuenta: se crea al enviar el registro */
   cuenta: { correo: string; password: string; confirmar: string };
-  producto: Producto;
-  precio: string;
+  precioMaiz: string;
+  precioMasa: string;
+};
+
+const inicial: Datos = {
+  zonaManual: false,
+  nueva: false,
+  nv: NV_VACIO,
+  fiscal: { tipoPersona: "fisica", rfc: "", razonSocial: "", celular: "", aviso: false },
+  cuenta: { correo: "", password: "", confirmar: "" },
+  precioMaiz: "",
+  precioMasa: "",
 };
 
 /**
- * Pasos del asistente, de lo general a lo personal:
- * primero todo lo de la tortillería (lugar, ubicación, foto, precio), después los datos de la persona
- * y al final la cuenta (correo y contraseña), que solo se pide si aún no hay sesión.
+ * Pasos del asistente según el caso:
+ *  A) tortillería existente:  [estado → municipio, solo sin GPS] → tortilleria (mapa) → [fiscal, si no los tiene] → precio → [cuenta] → resumen
+ *  B) tortillería nueva:      [estado → municipio] → tortilleria (mapa + pin) → nueva → foto → fiscal → precio → [cuenta] → resumen
+ *  C) actualizar precio:      [fiscal, si no los tiene] → precio → resumen
  */
-function armarPasos(nueva: boolean, conCuenta: boolean): string[] {
+function armarPasos(o: { caso: Caso; zonaManual: boolean; nueva: boolean; faltaFiscal: boolean; conCuenta: boolean }): string[] {
+  if (o.caso === "actualizar") return [...(o.faltaFiscal ? ["fiscal"] : []), "precio", "resumen"];
   return [
-    "estado", "municipio", "tortilleria", ...(nueva ? ["nueva"] : []),
-    "ubicacion", "foto", "precio",
-    "responsable", ...(conCuenta ? ["cuenta"] : []),
+    ...(o.zonaManual ? ["estado", "municipio"] : []),
+    "tortilleria",
+    ...(o.nueva ? ["nueva", "foto", "fiscal"] : o.faltaFiscal ? ["fiscal"] : []),
+    "precio",
+    ...(o.conCuenta ? ["cuenta"] : []),
     "resumen",
   ];
 }
 
-const inicial: Datos = {
-  nueva: false,
-  nombreNueva: "",
-  domicilioNueva: "",
-  resp: { nombre: "", apellidos: "", curp: "", telefono: "", tipoPersona: "fisica", rfc: "", razonSocial: "" },
-  aviso: false,
-  cuenta: { correo: "", password: "", confirmar: "" },
-  producto: "maiz",
-  precio: "",
-};
-
 const META: Record<string, { titulo: string; sub: string; icono: LucideIcon }> = {
   estado: { titulo: "Estado", sub: "¿En qué estado estás?", icono: Landmark },
   municipio: { titulo: "Municipio", sub: "¿En qué municipio?", icono: Building2 },
-  tortilleria: { titulo: "Tortillería", sub: "Elige una o agrega una nueva", icono: Store },
-  nueva: { titulo: "Nueva tortillería", sub: "Todos los campos son obligatorios", icono: Plus },
-  ubicacion: { titulo: "Ubicación", sub: "GPS o elige el punto en el mapa", icono: MapPin },
-  foto: { titulo: "Foto", sub: "Toma una foto o elige de tu galería", icono: Camera },
-  responsable: { titulo: "Tus datos", sub: "Del responsable de la tortillería", icono: UserRound },
+  tortilleria: { titulo: "Tortillería", sub: "Toca un punto y elígela", icono: Store },
+  nueva: { titulo: "Nueva tortillería", sub: "Los campos marcados con * son obligatorios", icono: Plus },
+  foto: { titulo: "Foto", sub: "Foto de la tortillería nueva", icono: Camera },
+  fiscal: { titulo: "Datos fiscales", sub: "De la tortillería (la empresa)", icono: FileText },
   cuenta: { titulo: "Tu cuenta", sub: "Con ella entrarás a tu panel", icono: UserPlus },
   precio: { titulo: "Precio", sub: "Precio por kilo al público", icono: Banknote },
   resumen: { titulo: "Resumen", sub: "Revisa y envía", icono: ListChecks },
 };
 
-/** Lo que se conserva si la página se recarga (p. ej. al actualizarse la app): todo menos el archivo de la foto */
-type Creada = { cuenta?: boolean; tortilleriaId?: string; foto?: boolean; resp?: boolean };
+/** Lo que ya se envió, para que un reintento no duplique nada */
+type Creada = { cuenta?: boolean; tortilleriaId?: string; foto?: boolean; fiscal?: boolean; precios?: { maiz?: boolean; masa?: boolean } };
 type Borrador = {
+  v: 2;
   d: Omit<Datos, "foto" | "fotoUrl">; // la contraseña NUNCA se guarda
   pasoId: string;
   creada: Creada;
   fotoDataUrl?: string;
+  caso: Caso;
+  tieneFiscal?: boolean;
 };
 
 type Props = {
-  /** null = aún no tiene cuenta: el asistente le pedirá correo y contraseña al final de sus datos */
+  /** null = aún no tiene cuenta: el asistente le pedirá correo y contraseña al final */
   sesion: Sesion | null;
   alSesion: (s: Sesion) => void;
   /** Salir sin terminar (regresa a la bienvenida o al panel) */
   alSalir: () => void;
   /** Registro terminado: entrar al panel */
   alTerminar: () => void;
+  /** Caso C: actualizar el precio de una tortillería ya visitada (desde el panel) */
+  tortilleriaInicial?: Punto;
 };
 
-export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props) {
-  const [conCuenta] = useState(!sesion); // se fija al entrar: los pasos no cambian aunque se cree la cuenta a mitad del envío
+const precioNumero = (s: string) => Number(s.replace(",", "."));
+const precioValido = (s: string) => s !== "" && precioNumero(s) >= PRECIO_MIN && precioNumero(s) <= PRECIO_MAX;
+const dinero = (n: number) => `$${n.toFixed(2)}`;
+
+export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortilleriaInicial }: Props) {
+  const [conCuenta, setConCuenta] = useState(!sesion); // se fija al entrar: los pasos no cambian aunque se cree la cuenta a mitad del envío
   const [verPass, setVerPass] = useState(false);
-  const [borrador] = useState(() => leer<Borrador>(CLAVES.borrador));
-  const [d, setD] = useState<Datos>(() => (borrador ? { ...inicial, ...borrador.d, cuenta: { ...borrador.d.cuenta, password: "", confirmar: "" } } : inicial));
-  const [paso, setPaso] = useState(() => {
-    if (!borrador) return 0;
-    const ps = armarPasos(borrador.d.nueva, !sesion);
-    const i = ps.indexOf(borrador.pasoId);
-    return i >= 0 ? i : ps.length - 1;
+  const [borrador] = useState(() => {
+    const b = leer<Borrador>(CLAVES.borrador);
+    // El borrador de un formato anterior no se puede restaurar; el de actualizar precio no aplica a otra tortillería
+    if (!b || b.v !== 2) return null;
+    if (tortilleriaInicial && (b.caso !== "actualizar" || b.d.tortilleria?.id !== tortilleriaInicial.id)) return null;
+    if (!tortilleriaInicial && b.caso === "actualizar") return null;
+    return b;
   });
+  const [caso, setCaso] = useState<Caso>(tortilleriaInicial ? "actualizar" : "mapa");
+  const [d, setD] = useState<Datos>(() =>
+    borrador ? { ...inicial, ...borrador.d, cuenta: { ...borrador.d.cuenta, password: "", confirmar: "" } } : { ...inicial, tortilleria: tortilleriaInicial },
+  );
+  const [tieneFiscal, setTieneFiscal] = useState<boolean | undefined>(borrador?.tieneFiscal);
+  const [pasoId, setPasoId] = useState<string>(() => borrador?.pasoId ?? (tortilleriaInicial ? "precio" : "tortilleria"));
+  const [preparando, setPreparando] = useState(!!tortilleriaInicial && !borrador); // caso C: se averigua si faltan los datos fiscales
   const [fotoDataUrl, setFotoDataUrl] = useState<string | undefined>(borrador?.fotoDataUrl);
   const [estados, setEstados] = useState<Item[]>([]);
   const [municipios, setMunicipios] = useState<Item[]>([]);
-  const [tortillerias, setTortillerias] = useState<Tortilleria[]>([]);
   const [filtro, setFiltro] = useState("");
-  const [centro, setCentro] = useState<Pos>();
-  const [buscandoGps, setBuscandoGps] = useState(false);
-  const [km, setKm] = useState(5); // 0 = todo el municipio
-  const [cargandoLista, setCargandoLista] = useState(false);
-  const [visibles, setVisibles] = useState(80);
+  const [centro, setCentro] = useState<{ lat: number; lng: number }>();
+  const [gps, setGps] = useState<{ estado: "pidiendo" | "ok" | "error"; pos?: Pos }>({ estado: "pidiendo" });
+  const [modoMapa, setModoMapa] = useState<"elegir" | "marcar">(borrador?.pasoId === "tortilleria" && borrador.d.nueva ? "marcar" : "elegir");
+  const [hoy, setHoy] = useState<{ maiz: number | null; masa: number | null }>();
   const [error, setError] = useState("");
+  const [avisos, setAvisos] = useState<string[]>([]);
   const [enviando, setEnviando] = useState(false);
   const [listo, setListo] = useState(false);
   const [creada, setCreada] = useState<Creada>(() => borrador?.creada ?? {});
@@ -130,14 +149,118 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
   const inputGaleria = useRef<HTMLInputElement>(null);
 
   const set = (p: Partial<Datos>) => setD((x) => ({ ...x, ...p }));
-  const setResp = (p: Partial<Datos["resp"]>) => setD((x) => ({ ...x, resp: { ...x.resp, ...p } }));
+  const setNv = (p: Partial<Datos["nv"]>) => setD((x) => ({ ...x, nv: { ...x.nv, ...p } }));
+  const setFiscal = (p: Partial<Datos["fiscal"]>) => setD((x) => ({ ...x, fiscal: { ...x.fiscal, ...p } }));
 
-  const pasos = useMemo(() => armarPasos(d.nueva, conCuenta), [d.nueva, conCuenta]);
-  const id = pasos[paso];
+  const faltaFiscal = d.nueva ? true : tieneFiscal === false;
+  const pasos = useMemo(
+    () => armarPasos({ caso, zonaManual: d.zonaManual, nueva: d.nueva, faltaFiscal, conCuenta }),
+    [caso, d.zonaManual, d.nueva, faltaFiscal, conCuenta],
+  );
+  const id = pasos.includes(pasoId) ? pasoId : pasos[0];
+  const paso = pasos.indexOf(id);
 
   useEffect(() => setFiltro(""), [id]);
 
-  // Recuperar la foto del borrador tras una recarga
+  /* ---------------- GPS: se pide al entrar; con él se brincan estado y municipio ---------------- */
+  const gpsResuelto = useRef(false);
+  function pedirGps() {
+    if (!navigator.geolocation) {
+      setGps({ estado: "error" });
+      return;
+    }
+    setGps((g) => ({ ...g, estado: g.pos ? "ok" : "pidiendo" }));
+    navigator.geolocation.getCurrentPosition(
+      (p) => setGps({ estado: "ok", pos: { lat: p.coords.latitude, lng: p.coords.longitude, precision: p.coords.accuracy } }),
+      () => setGps((g) => ({ estado: g.pos ? "ok" : "error", pos: g.pos })),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 15000 },
+    );
+  }
+  useEffect(pedirGps, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sin GPS (negado o sin señal): se piden estado y municipio, y el mapa se centra ahí
+  useEffect(() => {
+    if (gps.estado !== "error" || gpsResuelto.current || caso !== "mapa") return;
+    gpsResuelto.current = true;
+    if (d.municipio) return;
+    setD((x) => ({ ...x, zonaManual: true }));
+    if (pasoId === "tortilleria") setPasoId("estado");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gps.estado, caso]);
+
+  /* ---------------- catálogos ---------------- */
+  useEffect(() => {
+    if (id !== "estado" && id !== "nueva") return;
+    if (estados.length) return;
+    api<Item[]>("/estados").then(setEstados).catch((e) => setError(e.message));
+  }, [id, estados.length]);
+
+  useEffect(() => {
+    if (!d.estado) return setMunicipios([]);
+    api<Item[]>(`/estados/${d.estado.clave}/municipios`).then(setMunicipios).catch((e) => setError(e.message));
+  }, [d.estado?.clave]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Centro del mapa cuando la zona se eligió a mano
+  useEffect(() => {
+    if (!d.zonaManual || !d.municipio || !d.estado) return;
+    let vigente = true;
+    buscarLugar(`${d.municipio.nombre}, ${d.estado.nombre}`)
+      .then((r) => {
+        if (!vigente) return;
+        if (r[0]) return setCentro({ lat: r[0].lat, lng: r[0].lng });
+        throw new Error("sin resultado");
+      })
+      .catch(() =>
+        api<{ lat: number; lng: number }[]>(`/tortillerias?municipio=${d.municipio!.clave}&limite=1`)
+          .then((r) => vigente && r[0] && setCentro({ lat: r[0].lat, lng: r[0].lng }))
+          .catch(() => {}),
+      );
+    return () => {
+      vigente = false;
+    };
+  }, [d.zonaManual, d.municipio?.clave]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Tortillería nueva: estado y municipio se precargan con los del punto marcado (editables)
+  useEffect(() => {
+    if (id !== "nueva" || d.estado || !d.pin) return;
+    api<{ estado: Item | null; municipio: Item | null }>(`/ubicacion/cercana?lat=${d.pin.lat}&lng=${d.pin.lng}`)
+      .then((r) => r.estado && r.municipio && setD((x) => (x.estado ? x : { ...x, estado: r.estado!, municipio: r.municipio! })))
+      .catch(() => {});
+  }, [id, d.estado, d.pin?.lat, d.pin?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---------------- caso C: ¿faltan los datos fiscales? ---------------- */
+  useEffect(() => {
+    if (!tortilleriaInicial || !preparando) return;
+    api<{ tiene: boolean }>(`/tortillerias/${tortilleriaInicial.id}/fiscal/existe`)
+      .then((r) => {
+        setTieneFiscal(r.tiene);
+        setPasoId(r.tiene ? "precio" : "fiscal");
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setPreparando(false));
+  }, [tortilleriaInicial, preparando]);
+
+  /* ---------------- precio: lo que este censador ya capturó hoy ---------------- */
+  useEffect(() => {
+    if (id !== "precio") return;
+    if (!d.tortilleria?.id || d.nueva) return setHoy({ maiz: null, masa: null });
+    let vigente = true;
+    api<{ maiz: number | null; masa: number | null }>(`/tortillerias/${d.tortilleria.id}/mis-precios-hoy`)
+      .then((r) => vigente && setHoy(r))
+      .catch(() => vigente && setHoy({ maiz: null, masa: null }));
+    return () => {
+      vigente = false;
+    };
+  }, [id, d.tortilleria?.id, d.nueva]);
+
+  // Razón social: se precarga con la del DENUE, si la trae (editable)
+  useEffect(() => {
+    if (id !== "fiscal" || d.fiscal.razonSocial || !d.tortilleria?.razon_social || d.nueva) return;
+    setFiscal({ razonSocial: normalizarTexto(d.tortilleria.razon_social) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  /* ---------------- foto y borrador ---------------- */
   useEffect(() => {
     if (!borrador?.fotoDataUrl) return;
     fetch(borrador.fotoDataUrl)
@@ -147,122 +270,104 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Guardar el borrador (sin archivo de foto) mientras se captura
   useEffect(() => {
-    if (listo) return;
+    if (listo || preparando) return;
     const t = setTimeout(() => {
       const { foto: _f, fotoUrl: _u, ...resto } = d;
       const sinClave = { ...resto, cuenta: { correo: d.cuenta.correo, password: "", confirmar: "" } };
-      const base = { d: sinClave, pasoId: pasos[paso], creada };
-      const ok = guardar(CLAVES.borrador, { ...base, fotoDataUrl } satisfies Borrador);
-      if (!ok && fotoDataUrl) guardar(CLAVES.borrador, base satisfies Borrador); // sin foto si no cabe
+      const base: Borrador = { v: 2, d: sinClave, pasoId: id, creada, caso, tieneFiscal };
+      const ok = guardar(CLAVES.borrador, { ...base, fotoDataUrl });
+      if (!ok && fotoDataUrl) guardar(CLAVES.borrador, base); // sin foto si no cabe
     }, 300);
     return () => clearTimeout(t);
-  }, [d, paso, pasos, creada, fotoDataUrl, listo]);
+  }, [d, id, creada, fotoDataUrl, listo, preparando, caso, tieneFiscal]);
 
   // Registro nuevo terminado: entrar solo al panel después de un momento
   useEffect(() => {
     if (!listo || !conCuenta) return;
-    const t = setTimeout(alTerminar, 3500);
+    const t = setTimeout(alTerminar, 4500);
     return () => clearTimeout(t);
   }, [listo, conCuenta, alTerminar]);
 
-  useEffect(() => {
-    api<Item[]>("/estados").then(setEstados).catch((e) => setError(e.message));
-  }, []);
-
-  useEffect(() => {
-    if (!d.estado) return;
-    api<Item[]>(`/estados/${d.estado.clave}/municipios`).then(setMunicipios).catch((e) => setError(e.message));
-  }, [d.estado]);
-
-  useEffect(() => {
-    if (id !== "tortilleria" || !d.municipio) return;
-    const q = new URLSearchParams();
-    if (filtro.trim()) q.set("q", filtro.trim());
-    if (d.pos && km > 0) {
-      // Radio alrededor de mi ubicación: TODAS las del círculo
-      q.set("lat", String(d.pos.lat));
-      q.set("lng", String(d.pos.lng));
-      q.set("km", String(km));
-    } else {
-      q.set("municipio", d.municipio.clave);
-      if (d.pos) {
-        q.set("lat", String(d.pos.lat));
-        q.set("lng", String(d.pos.lng));
-      }
-    }
-    let vigente = true;
-    setCargandoLista(true);
-    const t = setTimeout(
-      () =>
-        api<Tortilleria[]>(`/tortillerias?${q}`)
-          .then((r) => vigente && (setTortillerias(r), setVisibles(80)))
-          .catch((e) => vigente && setError(e.message))
-          .finally(() => vigente && setCargandoLista(false)),
-      200,
-    );
-    return () => {
-      vigente = false;
-      clearTimeout(t);
-    };
-  }, [id, d.municipio, filtro, d.pos, km]);
-
-  // Al llegar al mapa, centrarlo en el municipio elegido
-  useEffect(() => {
-    if (id !== "ubicacion" || d.pos || centro || !d.municipio || !d.estado) return;
-    buscarLugar(`${d.municipio.nombre}, ${d.estado.nombre}`)
-      .then((r) => r[0] && setCentro({ lat: r[0].lat, lng: r[0].lng }))
-      .catch(() => {});
-  }, [id, d.pos, centro, d.municipio, d.estado]);
-
-  const resultadoResp = responsableSchema.safeParse({ ...d.resp, razonSocial: d.resp.razonSocial || undefined });
-  const errResp = (campo: string) => {
-    if (resultadoResp.success) return undefined;
-    return (d.resp as any)[campo] ? resultadoResp.error.flatten().fieldErrors[campo as never]?.[0] : undefined;
+  /* ---------------- validaciones ---------------- */
+  const pedirNv = () => ({
+    nombre: d.nv.nombre, estadoClave: d.estado?.clave ?? "", municipioClave: d.municipio?.clave ?? "", localidad: d.nv.localidad,
+    tipoVial: d.nv.tipoVial, calle: d.nv.calle, numeroExt: d.nv.sinNumero ? "SN" : d.nv.numeroExt, numeroInt: d.nv.numeroInt, colonia: d.nv.colonia,
+    codigoPostal: d.nv.codigoPostal, telefono: d.nv.telefono, correo: d.nv.correo, personalOcupado: d.nv.personalOcupado,
+    lat: d.pin?.lat ?? NaN, lng: d.pin?.lng ?? NaN,
+  });
+  const resNv = nuevaTortilleriaSchema.safeParse(pedirNv());
+  const errNv = (campo: string) => {
+    if (resNv.success) return undefined;
+    const e = resNv.error.flatten().fieldErrors as Record<string, string[] | undefined>;
+    return e[campo]?.[0];
   };
-  const resultadoCuenta = registroSchema.safeParse(d.cuenta);
-  const errCuenta = (campo: "correo" | "password" | "confirmar") =>
-    d.cuenta[campo] && !resultadoCuenta.success ? (resultadoCuenta.error.flatten().fieldErrors[campo] as string[] | undefined)?.[0] : undefined;
-  const precioNum = Number(d.precio.replace(",", "."));
-  const precioOk = d.precio !== "" && precioNum >= PRECIO_MIN && precioNum <= PRECIO_MAX;
+  const tocadoNv = (valor: string) => valor.trim() !== "";
 
-  // Todo es obligatorio
+  const resFiscal = fiscalSchema.safeParse({ tipoPersona: d.fiscal.tipoPersona, rfc: d.fiscal.rfc, razonSocial: d.fiscal.razonSocial, celular: d.fiscal.celular });
+  const errFiscal = (campo: string) => {
+    if (resFiscal.success) return undefined;
+    const valor = campo === "rfc" ? d.fiscal.rfc : campo === "razonSocial" ? d.fiscal.razonSocial : d.fiscal.celular;
+    return valor ? (resFiscal.error.flatten().fieldErrors as Record<string, string[] | undefined>)[campo]?.[0] : undefined;
+  };
+  const resCuenta = registroSchema.safeParse(d.cuenta);
+  const errCuenta = (campo: "correo" | "password" | "confirmar") =>
+    d.cuenta[campo] && !resCuenta.success ? (resCuenta.error.flatten().fieldErrors[campo] as string[] | undefined)?.[0] : undefined;
+
+  const bloqueado = (p: Producto) => hoy?.[p] != null; // ya lo capturó hoy
+  const activo = (p: (typeof PRODUCTOS)[number]) => !bloqueado(p.id);
+  const hayAlgo = PRODUCTOS.some((p) => activo(p) && d[p.clave] !== "");
+  const hayMalo = PRODUCTOS.some((p) => activo(p) && d[p.clave] !== "" && !precioValido(d[p.clave]));
+  const todoCapturado = hoy != null && !activo(PRODUCTOS[0]) && !activo(PRODUCTOS[1]);
+
   const puede: Record<string, boolean> = {
     estado: !!d.estado,
     municipio: !!d.municipio,
-    tortilleria: d.nueva || !!d.tortilleria,
-    nueva: d.nombreNueva.trim().length >= 2 && d.domicilioNueva.trim().length >= 3,
-    ubicacion: !!d.pos,
+    tortilleria: false, // se avanza con "Elegir esta tortillería" o "Confirmar ubicación"
+    nueva: resNv.success,
     foto: !!d.foto,
-    responsable: resultadoResp.success && d.aviso,
-    cuenta: resultadoCuenta.success,
-    precio: precioOk,
+    fiscal: resFiscal.success && d.fiscal.aviso,
+    cuenta: resCuenta.success,
+    precio: hoy != null && hayAlgo && !hayMalo,
     resumen: true,
   };
 
+  /* ---------------- navegación ---------------- */
   function ir(delta: number) {
     setError("");
-    // Volver desde "nueva" regresa a la lista sin dejar marcada la opción de agregar
-    if (delta < 0 && id === "nueva") set({ nueva: false });
-    setPaso((p) => Math.min(Math.max(p + delta, 0), pasos.length - 1));
+    const i = Math.min(Math.max(paso + delta, 0), pasos.length - 1);
+    // Volver desde la ficha de la tortillería nueva regresa al mapa, con el pin donde estaba
+    if (delta < 0 && pasos[i] === "tortilleria" && d.nueva) setModoMapa("marcar");
+    setPasoId(pasos[i]);
   }
 
-  function usarGps() {
-    setError("");
-    if (!navigator.geolocation) return setError("Este dispositivo no tiene GPS. Busca la dirección o toca el mapa.");
-    setBuscandoGps(true);
-    navigator.geolocation.getCurrentPosition(
-      (p) => {
-        set({ pos: { lat: p.coords.latitude, lng: p.coords.longitude, precision: p.coords.accuracy } });
-        setBuscandoGps(false);
-      },
-      () => {
-        setBuscandoGps(false);
-        setError("No pudimos obtener tu ubicación. Activa el permiso o elige el punto en el mapa.");
-      },
-      { enableHighAccuracy: true, timeout: 20000 },
-    );
+  /** Mapa → tortillería existente elegida. Antes de seguir se averigua si ya tiene datos fiscales. */
+  async function elegirTortilleria(punto: Punto) {
+    const r = await api<{ tiene: boolean }>(`/tortillerias/${punto.id}/fiscal/existe`);
+    setTieneFiscal(r.tiene);
+    setHoy(undefined);
+    setD((x) => ({
+      ...x, tortilleria: punto, nueva: false, foto: undefined, fotoUrl: undefined,
+      fiscal: x.tortilleria?.id === punto.id ? x.fiscal : { ...inicial.fiscal },
+      precioMaiz: x.tortilleria?.id === punto.id ? x.precioMaiz : "", precioMasa: x.tortilleria?.id === punto.id ? x.precioMasa : "",
+    }));
+    setCreada({});
+    setFotoDataUrl(undefined);
+    setModoMapa("elegir");
+    // el siguiente paso depende del resultado: fiscal si faltan, si no el precio
+    setPasoId(r.tiene ? "precio" : "fiscal");
+  }
+
+  function confirmarPin() {
+    setD((x) => ({ ...x, nueva: true, tortilleria: undefined }));
+    setTieneFiscal(false);
+    setCreada((c) => ({ ...c, tortilleriaId: undefined }));
+    setPasoId("nueva");
+  }
+
+  function otraZona() {
+    setD((x) => ({ ...x, zonaManual: true }));
+    setPasoId("estado");
   }
 
   async function recibirFoto(archivo?: File) {
@@ -278,66 +383,72 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
     }
   }
 
-  // Envío por etapas: si algo falla se reintenta sin duplicar lo ya guardado
+  /* ---------------- envío por etapas: un reintento no duplica lo ya guardado ---------------- */
   async function enviar() {
     setEnviando(true);
     setError("");
+    setAvisos([]);
     let etapa = "";
     try {
       // 0) Cuenta nueva: se crea con el mismo formulario y la sesión inicia sola
       if (conCuenta && !creada.cuenta) {
         etapa = "cuenta";
-        let s = await api<Sesion>("/auth/registro", { json: d.cuenta });
+        const s = await api<Sesion>("/auth/registro", { json: d.cuenta });
         guardarSesion(s); // desde aquí las llamadas siguientes ya van con la sesión
-        try {
-          // el perfil toma el nombre de quien registra (lo puede editar después)
-          const nombre = await api<{ nombre: string; apellidos: string }>("/perfil", { metodo: "PATCH", json: { nombre: d.resp.nombre, apellidos: d.resp.apellidos } });
-          s = { ...s, usuario: { ...s.usuario, ...nombre } };
-          guardarSesion(s);
-        } catch {
-          /* no es crítico */
-        }
         alSesion(s);
         setCreada((c) => ({ ...c, cuenta: true }));
       }
+      // 1) Tortillería nueva
       etapa = "tortilleria";
       let tid = creada.tortilleriaId ?? d.tortilleria?.id;
       if (!tid) {
-        const r = await api<{ id: string }>("/tortillerias", {
-          json: {
-            nombre: d.nombreNueva.trim(),
-            domicilio: d.domicilioNueva.trim(),
-            estadoClave: d.estado!.clave,
-            municipioClave: d.municipio!.clave,
-            lat: d.pos!.lat,
-            lng: d.pos!.lng,
-          },
-        });
+        const r = await api<{ id: string }>("/tortillerias", { json: pedirNv() });
         tid = r.id;
         setCreada((c) => ({ ...c, tortilleriaId: tid }));
       }
-      if (!creada.foto) {
+      // 2) Foto: solo para las nuevas
+      if (d.nueva && !creada.foto) {
+        etapa = "foto";
         const f = new FormData();
         f.append("file", d.foto!, "foto.jpg");
         await api(`/tortillerias/${tid}/fotos`, { form: f });
         setCreada((c) => ({ ...c, foto: true }));
       }
-      if (!creada.resp) {
-        await api(`/tortillerias/${tid}/responsable`, { json: { ...d.resp, razonSocial: d.resp.razonSocial || undefined, aceptoAviso: d.aviso } });
-        setCreada((c) => ({ ...c, resp: true }));
+      // 3) Datos fiscales: una sola vez por tortillería
+      if (faltaFiscal && !creada.fiscal) {
+        etapa = "fiscal";
+        await api(`/tortillerias/${tid}/fiscal`, {
+          json: { tipoPersona: d.fiscal.tipoPersona, rfc: d.fiscal.rfc, razonSocial: d.fiscal.razonSocial, celular: d.fiscal.celular || undefined, aceptoAviso: d.fiscal.aviso },
+        });
+        setCreada((c) => ({ ...c, fiscal: true }));
       }
-      await api("/precios", {
-        json: { tortilleriaId: tid, producto: d.producto, precioKg: precioNum, lat: d.pos!.lat, lng: d.pos!.lng, precisionGps: d.pos!.precision },
-      });
+      // 4) Un precio por cada producto lleno (el GPS del teléfono solo va como evidencia)
+      etapa = "precio";
+      const avisosLocales: string[] = [];
+      for (const p of PRODUCTOS) {
+        if (!activo(p) || d[p.clave] === "" || creada.precios?.[p.id]) continue;
+        try {
+          await api("/precios", {
+            json: {
+              tortilleriaId: tid, producto: p.id, precioKg: precioNumero(d[p.clave]),
+              ...(gps.pos ? { lat: gps.pos.lat, lng: gps.pos.lng, precisionGps: gps.pos.precision } : {}),
+            },
+          });
+        } catch (e) {
+          if (!(e instanceof ApiError && e.status === 409)) throw e;
+          avisosLocales.push(`${p.texto}: ya la capturaste hoy en esta tortillería${e.cuerpo?.precioKg != null ? ` (${dinero(e.cuerpo.precioKg)})` : ""}. Podrás actualizarla mañana.`);
+        }
+        setCreada((c) => ({ ...c, precios: { ...c.precios, [p.id]: true } }));
+      }
+      setAvisos(avisosLocales);
       borrar(CLAVES.borrador);
       setListo(true);
     } catch (e) {
       if (etapa === "cuenta") {
-        // correo ya usado u otro problema con la cuenta: se regresa a ese paso para corregirlo
-        setPaso(pasos.indexOf("cuenta"));
+        setPasoId("cuenta");
         setError(e instanceof ApiError && e.status === 429 ? "Demasiados intentos. Inténtalo más tarde." : (e as Error).message);
       } else if (e instanceof ApiError && e.status === 409 && e.cuerpo?.posibles) {
-        setError(`Ya existe una tortillería parecida cerca: ${e.cuerpo.posibles.map((p: any) => p.nombre).join(", ")}. Regresa y elígela de la lista.`);
+        setError(`Ya existe una tortillería parecida en ese lugar: ${e.cuerpo.posibles.map((p: any) => p.nombre).join(", ")}. Regresa al mapa y elígela.`);
       } else if (e instanceof ApiError && e.status === 429) {
         setError("Demasiados envíos seguidos. Espera un minuto e inténtalo de nuevo.");
       } else {
@@ -350,18 +461,34 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
 
   function otra() {
     if (d.fotoUrl) URL.revokeObjectURL(d.fotoUrl);
-    setD({ ...inicial, estado: d.estado, municipio: d.municipio });
+    setD({ ...inicial, estado: d.estado, municipio: d.municipio, zonaManual: d.zonaManual });
     setFotoDataUrl(undefined);
     setCreada({});
+    setTieneFiscal(undefined);
+    setHoy(undefined);
     setFiltro("");
-    setCentro(undefined);
+    setConCuenta(false); // la cuenta ya existe
+    setCaso("mapa");
+    setModoMapa("elegir");
+    setAvisos([]);
     setListo(false);
-    setPaso(2);
+    setPasoId("tortilleria");
+    pedirGps();
   }
+
+  /* ---------------- pantallas ---------------- */
+  if (preparando)
+    return (
+      <div className="marco-pc mx-auto flex h-dvh max-w-xl flex-col items-center justify-center gap-3 bg-gradient-to-b from-guinda-oscuro to-guinda p-8 text-center text-white lg:max-w-2xl">
+        <Loader2 className="h-9 w-9 animate-spin text-dorado" aria-hidden />
+        <p className="text-sm text-white/80">Un momento…</p>
+        {error && <Aviso>{error}</Aviso>}
+      </div>
+    );
 
   if (listo)
     return (
-      <div className="marco-pc mx-auto flex h-dvh max-w-xl flex-col items-center justify-center gap-5 lg:max-w-2xl bg-gradient-to-b from-guinda-oscuro to-guinda p-8 text-center text-white">
+      <div className="marco-pc mx-auto flex h-dvh max-w-xl flex-col items-center justify-center gap-5 bg-gradient-to-b from-guinda-oscuro to-guinda p-8 text-center text-white lg:max-w-2xl">
         <div className="paso grid h-24 w-24 place-items-center rounded-full bg-white/15 ring-8 ring-white/10">
           <CircleCheck className="h-14 w-14 text-dorado" aria-hidden />
         </div>
@@ -369,163 +496,114 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
           <h1 className="text-2xl font-bold">{conCuenta ? "¡Registro completo!" : "¡Captura enviada!"}</h1>
           <p className="mt-1.5 text-sm text-white/80">
             {conCuenta
-              ? "Creamos tu cuenta, iniciaste sesión y registramos tu tortillería. Entrando a tu panel…"
-              : "Gracias por tu aportación. El precio quedó registrado y será revisado."}
+              ? "Creamos tu cuenta, iniciaste sesión y registramos el precio. Entrando a tu panel…"
+              : d.nueva
+                ? "Gracias por tu aportación. La tortillería nueva quedó por validar y los precios serán revisados."
+                : "Gracias por tu aportación. Los precios quedaron registrados y serán revisados."}
           </p>
+          {avisos.map((a) => (
+            <p key={a} className="mx-auto mt-2 max-w-sm rounded-xl bg-white/10 px-3 py-2 text-xs text-white/90">{a}</p>
+          ))}
         </div>
         <div className="mt-2 w-full max-w-sm space-y-2">
-          {conCuenta ? (
-            <Boton onClick={alTerminar} icono={Check} className="!bg-white !bg-none !text-guinda !shadow-xl">
-              Entrar a mi panel
-            </Boton>
-          ) : (
-            <>
-              <Boton onClick={otra} icono={RotateCcw} className="!bg-white !bg-none !text-guinda !shadow-xl">
-                Registrar otra tortillería
-              </Boton>
-              <Boton variante="fantasma" onClick={alTerminar} className="!text-white/80 hover:!bg-white/10">
-                Ir a mi panel
-              </Boton>
-            </>
-          )}
+          <Boton onClick={otra} icono={RotateCcw} className="!bg-white !bg-none !text-guinda !shadow-xl">
+            Registrar otra tortillería
+          </Boton>
+          <Boton variante="fantasma" onClick={alTerminar} className="!text-white/80 hover:!bg-white/10">
+            {conCuenta ? "Entrar a mi panel" : "Ir a mi panel"}
+          </Boton>
         </div>
       </div>
     );
 
   const m = META[id];
-  const llena = id === "ubicacion" || id === "foto"; // estas pantallas ocupan todo el alto, sin scroll
-  const buscaEn: Record<string, string> = { estado: "Buscar estado", municipio: "Buscar municipio", tortilleria: "Buscar por nombre o calle" };
-
+  const buscaEn: Record<string, string> = { estado: "Buscar estado", municipio: "Buscar municipio" };
   const norm = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
   const filtrar = (items: Item[]) => items.filter((i) => norm(i.nombre).includes(norm(filtro)));
+  const llena = id === "foto";
+
+  // El mapa trae su propia cabecera y no usa el botón "Continuar"
+  if (id === "tortilleria")
+    return (
+      <div className="marco-pc mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro lg:max-w-2xl">
+        <PasoTortilleria
+          cab={{ paso: paso + 1, total: pasos.length, atras: paso > 0 ? () => ir(-1) : alSalir }}
+          zona={{ estado: d.estado, municipio: d.municipio, centro, manual: d.zonaManual }}
+          gps={gps}
+          alMiUbicacion={pedirGps}
+          alOtraZona={otraZona}
+          alElegir={elegirTortilleria}
+          modo={modoMapa}
+          setModo={(x) => {
+            setModoMapa(x);
+            if (x === "elegir") setD((v) => ({ ...v, nueva: false }));
+          }}
+          pin={d.pin}
+          setPin={(pn) => set({ pin: pn })}
+          alConfirmarPin={confirmarPin}
+        />
+      </div>
+    );
+
+  const numeroOk = d.nv.sinNumero || d.nv.numeroExt.trim() !== "";
+  const Req = ({ children }: { children: ReactNode }) => <>{children} *</>;
 
   return (
     <div className="marco-pc mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro lg:max-w-2xl">
       <Cabecera paso={paso + 1} total={pasos.length} titulo={m.titulo} subtitulo={m.sub} icono={m.icono} atras={paso > 0 ? () => ir(-1) : alSalir}>
-        {buscaEn[id] && <Buscador value={filtro} onChange={setFiltro} placeholder={buscaEn[id]} cargando={id === "tortilleria" && cargandoLista} />}
-        {id === "tortilleria" && (
-          <div className="mt-2 space-y-2">
-            <div className="grid grid-cols-[1fr_auto] gap-2">
-              <button
-                onClick={usarGps}
-                disabled={buscandoGps}
-                className={`flex h-10 items-center justify-center gap-2 rounded-xl text-sm font-semibold ring-1 transition ${d.pos ? "bg-white/20 text-white ring-white/40" : "bg-white text-guinda ring-white"}`}
-              >
-                {buscandoGps ? <Loader2 className="h-4 w-4 animate-spin" /> : <LocateFixed className="h-4 w-4" />}
-                {buscandoGps ? "Buscando…" : d.pos ? "Ubicación activa · actualizar" : "Ver las más cercanas a mí"}
-              </button>
-              <button
-                onClick={() => {
-                  setError("");
-                  set({ nueva: true, tortilleria: undefined });
-                  setPaso((x) => x + 1);
-                }}
-                className="flex h-10 items-center gap-1.5 rounded-xl bg-dorado px-3.5 text-sm font-bold text-guinda-oscuro shadow-md active:scale-95"
-              >
-                <Plus className="h-4 w-4" strokeWidth={3} /> Nueva
-              </button>
-            </div>
-            {d.pos && (
-              <div className="grid grid-cols-5 gap-1 rounded-xl bg-black/20 p-1" role="radiogroup" aria-label="Distancia">
-                {[1, 5, 10, 20, 0].map((v) => (
-                  <button
-                    key={v}
-                    role="radio"
-                    aria-checked={km === v}
-                    onClick={() => setKm(v)}
-                    className={`h-8 rounded-lg text-xs font-semibold transition ${km === v ? "bg-white text-guinda shadow" : "text-white/85"}`}
-                  >
-                    {v === 0 ? "Muni." : `${v} km`}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        {id === "ubicacion" && <BuscadorLugar onElegir={(l) => set({ pos: { lat: l.lat, lng: l.lng } })} />}
+        {buscaEn[id] && <Buscador value={filtro} onChange={setFiltro} placeholder={buscaEn[id]} />}
       </Cabecera>
 
       <Hoja>
         <div
           key={id}
-          onScroll={
-            id === "tortilleria"
-              ? (e) => {
-                  const el = e.currentTarget;
-                  if (el.scrollTop + el.clientHeight > el.scrollHeight - 600) setVisibles((v) => v + 80);
-                }
-              : undefined
-          }
           className={`paso min-h-0 flex-1 overscroll-contain px-3 pb-2 pt-5 ${llena ? "flex flex-col gap-2 overflow-hidden" : "space-y-2 overflow-y-auto [mask-image:linear-gradient(to_bottom,transparent,#000_20px,#000_calc(100%-8px),transparent)]"}`}
         >
           {id === "estado" &&
             filtrar(estados).map((e) => (
-              <Opcion key={e.clave} icono={Landmark} activo={d.estado?.clave === e.clave} onClick={() => set({ estado: e, municipio: undefined, tortilleria: undefined })}>
+              <Opcion key={e.clave} icono={Landmark} activo={d.estado?.clave === e.clave} onClick={() => set({ estado: e, municipio: undefined })}>
                 <span className="font-medium">{e.nombre}</span>
               </Opcion>
             ))}
 
           {id === "municipio" &&
             filtrar(municipios).slice(0, 120).map((mu) => (
-              <Opcion key={mu.clave} icono={Building2} activo={d.municipio?.clave === mu.clave} onClick={() => set({ municipio: mu, tortilleria: undefined })}>
+              <Opcion key={mu.clave} icono={Building2} activo={d.municipio?.clave === mu.clave} onClick={() => set({ municipio: mu })}>
                 <span className="font-medium">{mu.nombre}</span>
               </Opcion>
             ))}
 
-          {id === "tortilleria" && (
-            <>
-              <p className="px-1 text-xs text-stone-500">
-                {cargandoLista
-                  ? "Buscando…"
-                  : `${tortillerias.length.toLocaleString("es-MX")} tortillerías${d.pos && km > 0 ? ` a ${km} km o menos` : ` en ${d.municipio?.nombre ?? "el municipio"}`}${filtro.trim() ? ` con “${filtro.trim()}”` : ""}${!d.pos ? ". Toca “Cerca de mí” para ver las más próximas." : ""}`}
-              </p>
-              {tortillerias.slice(0, visibles).map((t) => (
-                <Opcion key={t.id} icono={Store} activo={!d.nueva && d.tortilleria?.id === t.id} onClick={() => set({ tortilleria: t, nueva: false })}>
-                  <div className="font-medium">{t.nombre}</div>
-                  <div className="text-xs text-stone-500">
-                    {t.domicilio ?? "Sin domicilio"}
-                    {t.distancia_m != null && ` · ${t.distancia_m >= 1000 ? (t.distancia_m / 1000).toFixed(1) + " km" : Math.round(t.distancia_m) + " m"}`}
-                    {t.estatus === "pendiente" && " · por validar"}
-                  </div>
-                </Opcion>
-              ))}
-              {visibles < tortillerias.length && <p className="px-1 py-2 text-center text-xs text-stone-400">Desliza para ver más…</p>}
-              {!cargandoLista && tortillerias.length === 0 && (
-                <p className="px-1 py-6 text-center text-sm text-stone-500">No hay resultados. Amplía el radio, cambia la búsqueda o agrega una nueva.</p>
-              )}
-            </>
-          )}
-
           {id === "nueva" && (
             <>
-              <Campo etiqueta="Nombre de la tortillería" icono={Store} value={d.nombreNueva} onChange={(e) => set({ nombreNueva: e.target.value })} placeholder="Ej. Tortillería La Guadalupe" valido={d.nombreNueva.trim().length >= 2} />
-              <Campo etiqueta="Domicilio" icono={MapPin} value={d.domicilioNueva} onChange={(e) => set({ domicilioNueva: e.target.value })} placeholder="Ej. Calle Hidalgo 123, Col. Centro" ayuda="Calle, número y colonia" valido={d.domicilioNueva.trim().length >= 3} />
-            </>
-          )}
+              <h2 className="flex items-center gap-2 px-1 text-sm font-bold text-guinda"><Store className="h-4 w-4" aria-hidden /> Negocio</h2>
+              <Campo etiqueta="Nombre de la tortillería *" icono={Store} value={d.nv.nombre} autoComplete="off" onChange={(e) => setNv({ nombre: normalizarTexto(e.target.value) })} placeholder="Ej. TORTILLERIA LA GUADALUPE" error={tocadoNv(d.nv.nombre) ? errNv("nombre") : undefined} valido={!errNv("nombre")} />
+              <div className="grid grid-cols-2 gap-2">
+                <Campo etiqueta="Teléfono (opcional)" icono={Phone} value={d.nv.telefono} inputMode="numeric" maxLength={10} autoComplete="off" onChange={(e) => setNv({ telefono: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="Ej. 5512345678" error={tocadoNv(d.nv.telefono) ? errNv("telefono") : undefined} valido={tocadoNv(d.nv.telefono) && !errNv("telefono")} />
+                <Campo etiqueta="Correo (opcional)" icono={Mail} type="email" inputMode="email" autoCapitalize="none" autoCorrect="off" value={d.nv.correo} onChange={(e) => setNv({ correo: e.target.value })} placeholder="Ej. tortas@correo.com" error={tocadoNv(d.nv.correo) ? errNv("correo") : undefined} valido={tocadoNv(d.nv.correo) && !errNv("correo")} />
+              </div>
+              <Selector etiqueta="Personal ocupado *" icono={Users} value={d.nv.personalOcupado} onChange={(e) => setNv({ personalOcupado: e.target.value })} placeholder="Elige un rango" opciones={PERSONAL_OCUPADO.map((v) => ({ valor: v, texto: v }))} />
 
-          {id === "ubicacion" && (
-            <>
-              <Boton variante="secundario" onClick={usarGps} disabled={buscandoGps} icono={buscandoGps ? Loader2 : LocateFixed} className="!min-h-11 shrink-0">
-                {buscandoGps ? "Buscando tu ubicación…" : "Usar mi ubicación actual"}
-              </Boton>
-              <div className="min-h-0 flex-1">
-                <Suspense fallback={<div className="h-full animate-pulse rounded-2xl bg-stone-200" />}>
-                  <Mapa pos={d.pos} centro={centro} onElegir={(lat, lng) => set({ pos: { lat, lng } })} />
-                </Suspense>
+              <h2 className="flex items-center gap-2 px-1 pt-3 text-sm font-bold text-guinda"><MapPin className="h-4 w-4" aria-hidden /> Domicilio</h2>
+              <Selector etiqueta="Estado *" icono={Landmark} value={d.estado?.clave ?? ""} onChange={(e) => set({ estado: estados.find((x) => x.clave === e.target.value), municipio: undefined })} placeholder="Elige el estado" opciones={estados.map((x) => ({ valor: x.clave, texto: x.nombre }))} />
+              <Selector etiqueta="Municipio *" icono={Building2} value={d.municipio?.clave ?? ""} disabled={!d.estado} onChange={(e) => set({ municipio: municipios.find((x) => x.clave === e.target.value) })} placeholder={d.estado ? "Elige el municipio" : "Primero el estado"} opciones={municipios.map((x) => ({ valor: x.clave, texto: x.nombre }))} />
+              <Campo etiqueta="Localidad *" icono={Landmark} value={d.nv.localidad} autoComplete="off" onChange={(e) => setNv({ localidad: normalizarTexto(e.target.value) })} placeholder="Ej. CIUDAD DE MEXICO" error={tocadoNv(d.nv.localidad) ? errNv("localidad") : undefined} valido={!errNv("localidad")} />
+              <Selector etiqueta="Tipo de vialidad *" icono={Route} value={d.nv.tipoVial} onChange={(e) => setNv({ tipoVial: e.target.value })} opciones={TIPOS_VIAL.map((v) => ({ valor: v, texto: v }))} />
+              <Campo etiqueta="Nombre de la vialidad (calle) *" icono={Route} value={d.nv.calle} autoComplete="off" onChange={(e) => setNv({ calle: normalizarTexto(e.target.value) })} placeholder="Ej. HIDALGO" error={tocadoNv(d.nv.calle) ? errNv("calle") : undefined} valido={!errNv("calle")} />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Campo etiqueta="Núm. exterior *" icono={Hash} value={d.nv.sinNumero ? "SN" : d.nv.numeroExt} disabled={d.nv.sinNumero} autoComplete="off" onChange={(e) => setNv({ numeroExt: normalizarTexto(e.target.value) })} placeholder="Ej. 123" valido={numeroOk} />
+                  <label className="mt-1.5 flex cursor-pointer items-center gap-2 px-1 text-xs text-stone-600">
+                    <input type="checkbox" className="h-4 w-4 accent-guinda" checked={d.nv.sinNumero} onChange={(e) => setNv({ sinNumero: e.target.checked, numeroExt: "" })} />
+                    Sin número (SN)
+                  </label>
+                </div>
+                <Campo etiqueta="Núm. interior (opcional)" icono={Hash} value={d.nv.numeroInt} autoComplete="off" onChange={(e) => setNv({ numeroInt: normalizarTexto(e.target.value) })} placeholder="Ej. 2" />
               </div>
-              <div className="shrink-0">
-                {d.pos ? (
-                  d.pos.precision != null ? (
-                    <Aviso tipo={d.pos.precision > 50 ? "info" : "ok"}>
-                      GPS con precisión de {Math.round(d.pos.precision)} m.{d.pos.precision > 50 ? " Es baja: ajusta el pin en el mapa." : " Puedes mover el pin."}
-                    </Aviso>
-                  ) : (
-                    <Aviso tipo="ok">Ubicación elegida. Arrastra el pin para ajustarla.</Aviso>
-                  )
-                ) : (
-                  <p className="text-center text-xs text-stone-500">Busca arriba, toca el mapa o usa tu ubicación actual.</p>
-                )}
-              </div>
+              <Campo etiqueta="Colonia *" icono={Building2} value={d.nv.colonia} autoComplete="off" onChange={(e) => setNv({ colonia: normalizarTexto(e.target.value) })} placeholder="Ej. CENTRO" error={tocadoNv(d.nv.colonia) ? errNv("colonia") : undefined} valido={!errNv("colonia")} />
+              <Campo etiqueta="Código postal *" icono={Hash} value={d.nv.codigoPostal} inputMode="numeric" maxLength={5} autoComplete="off" onChange={(e) => setNv({ codigoPostal: e.target.value.replace(/\D/g, "").slice(0, 5) })} placeholder="Ej. 09700" error={tocadoNv(d.nv.codigoPostal) ? errNv("codigoPostal") : undefined} valido={!errNv("codigoPostal")} />
+              <p className="flex items-center gap-1.5 px-1 pt-1 text-xs text-stone-500">
+                <MapPin className="h-3.5 w-3.5 text-dorado" aria-hidden /> La ubicación es el punto que marcaste en el mapa.
+              </p>
             </>
           )}
 
@@ -539,6 +617,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
                     <div className="text-center">
                       <Camera className="mx-auto h-12 w-12" aria-hidden />
                       <p className="mt-2 text-sm">Aún no hay foto</p>
+                      <p className="mt-0.5 text-xs">Es obligatoria para las tortillerías nuevas</p>
                     </div>
                   </div>
                 )}
@@ -552,25 +631,58 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
             </>
           )}
 
-          {id === "responsable" && (
+          {id === "fiscal" && (
             <>
+              <p className="px-1 text-xs leading-snug text-stone-500">
+                Son datos de la empresa, no tuyos. Se piden una sola vez por tortillería: después ya no se vuelven a pedir.
+              </p>
               <div className="grid grid-cols-2 gap-2">
-                <Campo etiqueta="Nombre(s)" icono={UserRound} value={d.resp.nombre} autoCapitalize="characters" onChange={(e) => setResp({ nombre: normalizarTexto(e.target.value) })} error={errResp("nombre")} autoComplete="off" placeholder="Ej. JOSE ANGEL" valido={!errResp("nombre")} />
-                <Campo etiqueta="Apellidos" icono={UserRound} value={d.resp.apellidos} autoCapitalize="characters" onChange={(e) => setResp({ apellidos: normalizarTexto(e.target.value) })} error={errResp("apellidos")} autoComplete="off" placeholder="Ej. NUÑEZ PEREZ" valido={!errResp("apellidos")} />
+                <Chip activo={d.fiscal.tipoPersona === "fisica"} onClick={() => setFiscal({ tipoPersona: "fisica", rfc: "" })}>Persona física</Chip>
+                <Chip activo={d.fiscal.tipoPersona === "moral"} onClick={() => setFiscal({ tipoPersona: "moral", rfc: "" })}>Persona moral</Chip>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <Chip activo={d.resp.tipoPersona === "fisica"} onClick={() => setResp({ tipoPersona: "fisica", rfc: "" })}>Persona física</Chip>
-                <Chip activo={d.resp.tipoPersona === "moral"} onClick={() => setResp({ tipoPersona: "moral", rfc: "" })}>Persona moral</Chip>
-              </div>
-              {d.resp.tipoPersona === "moral" && <Campo etiqueta="Razón social" icono={Building2} value={d.resp.razonSocial} autoCapitalize="characters" onChange={(e) => setResp({ razonSocial: normalizarTexto(e.target.value) })} error={errResp("razonSocial")} placeholder="Ej. TORTILLERIA LA GUADALUPE SA DE CV" valido={!errResp("razonSocial")} />}
-              <Campo etiqueta="CURP" icono={Fingerprint} value={d.resp.curp} maxLength={18} autoCapitalize="characters" autoComplete="off" onChange={(e) => setResp({ curp: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })} error={errResp("curp")} placeholder="Ej. NUPJ850101HDFXRS09" valido={!errResp("curp")} ayuda="18 caracteres, sin espacios" />
-              <Campo etiqueta="RFC" icono={FileText} value={d.resp.rfc} maxLength={d.resp.tipoPersona === "fisica" ? 13 : 12} autoCapitalize="characters" autoComplete="off" onChange={(e) => setResp({ rfc: e.target.value.toUpperCase().replace(/[^A-ZÑ&0-9]/g, "") })} error={errResp("rfc")} placeholder={d.resp.tipoPersona === "fisica" ? "Ej. NUPJ850101AB1" : "Ej. TGU100101AB1"} valido={!errResp("rfc")} ayuda={d.resp.tipoPersona === "fisica" ? "13 caracteres" : "12 caracteres"} />
-              <Campo etiqueta="Teléfono" icono={Phone} value={d.resp.telefono} inputMode="numeric" maxLength={10} autoComplete="off" onChange={(e) => setResp({ telefono: e.target.value.replace(/\D/g, "").slice(0, 10) })} error={errResp("telefono")} placeholder="Ej. 5512345678" valido={!errResp("telefono")} ayuda="10 dígitos, sin lada +52" />
+              <Campo
+                etiqueta={d.fiscal.tipoPersona === "moral" ? "Razón social *" : "Nombre del titular del RFC *"}
+                icono={d.fiscal.tipoPersona === "moral" ? Building2 : Briefcase}
+                value={d.fiscal.razonSocial}
+                autoCapitalize="characters"
+                autoComplete="off"
+                onChange={(e) => setFiscal({ razonSocial: normalizarTexto(e.target.value) })}
+                error={errFiscal("razonSocial")}
+                valido={!errFiscal("razonSocial")}
+                placeholder={d.fiscal.tipoPersona === "moral" ? "Ej. TORTILLERIA LA GUADALUPE SA DE CV" : "Ej. JOSE ANGEL NUÑEZ PEREZ"}
+                ayuda={d.tortilleria?.razon_social && !d.nueva ? "Viene del catálogo del DENUE: corrígela si no es la correcta" : undefined}
+              />
+              <Campo
+                etiqueta="RFC *"
+                icono={FileText}
+                value={d.fiscal.rfc}
+                maxLength={d.fiscal.tipoPersona === "fisica" ? 13 : 12}
+                autoCapitalize="characters"
+                autoComplete="off"
+                onChange={(e) => setFiscal({ rfc: e.target.value.toUpperCase().replace(/[^A-ZÑ&0-9]/g, "") })}
+                error={errFiscal("rfc")}
+                valido={!errFiscal("rfc")}
+                placeholder={d.fiscal.tipoPersona === "fisica" ? "Ej. NUPJ850101AB1" : "Ej. TGU100101AB1"}
+                ayuda={d.fiscal.tipoPersona === "fisica" ? "13 caracteres" : "12 caracteres"}
+              />
+              <Campo
+                etiqueta="Celular de contacto (opcional)"
+                icono={Phone}
+                value={d.fiscal.celular}
+                inputMode="numeric"
+                maxLength={10}
+                autoComplete="off"
+                onChange={(e) => setFiscal({ celular: e.target.value.replace(/\D/g, "").slice(0, 10) })}
+                error={errFiscal("celular")}
+                valido={d.fiscal.celular !== "" && !errFiscal("celular")}
+                placeholder="Ej. 5512345678"
+                ayuda="10 dígitos, sin lada +52"
+              />
               <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-white p-3 shadow-sm ring-1 ring-stone-200">
-                <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0 accent-guinda" checked={d.aviso} onChange={(e) => set({ aviso: e.target.checked })} />
+                <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0 accent-guinda" checked={d.fiscal.aviso} onChange={(e) => setFiscal({ aviso: e.target.checked })} />
                 <span className="text-xs leading-snug">
                   <ShieldCheck className="mr-1 inline h-4 w-4 text-verde" aria-hidden />
-                  El responsable acepta el aviso de privacidad para el tratamiento de sus datos personales.
+                  Acepto el aviso de privacidad para el tratamiento de estos datos. El RFC y el celular se guardan cifrados.
                 </span>
               </label>
             </>
@@ -579,7 +691,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
           {id === "cuenta" && (
             <>
               <p className="text-sm leading-snug text-stone-600">
-                Con tu correo y contraseña entrarás a tu panel para ver tus registros y registrar más tortillerías. Tu cuenta se crea al enviar.
+                Con tu correo y contraseña entrarás a tu panel para ver tus tortillerías, actualizar precios y registrar más. Tu cuenta se crea al enviar.
               </p>
               <Campo
                 etiqueta="Correo electrónico"
@@ -625,37 +737,65 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar }: Props
 
           {id === "precio" && (
             <>
-              {PRODUCTOS.map((p) => (
-                <Opcion key={p.id} icono={p.icono} activo={d.producto === p.id} onClick={() => set({ producto: p.id })}>
-                  <span className="font-medium">{p.texto}</span>
-                </Opcion>
-              ))}
-              <label className="block pt-1">
-                <span className="mb-1 block text-xs font-semibold text-stone-600">Precio por kilo (MXN)</span>
-                <span className="flex items-center rounded-2xl bg-white px-4 shadow-sm ring-1 ring-stone-200 focus-within:ring-4 focus-within:ring-guinda/15">
-                  <span className="text-3xl font-bold text-stone-300">$</span>
-                  <input
-                    inputMode="decimal"
-                    value={d.precio}
-                    onChange={(e) => set({ precio: e.target.value.replace(/[^0-9.,]/g, "").slice(0, 6) })}
-                    placeholder="0.00"
-                    aria-label="Precio por kilo"
-                    className="w-full bg-transparent px-2 py-4 text-center text-4xl font-bold outline-none placeholder:text-stone-200"
-                  />
-                </span>
-              </label>
-              {d.precio !== "" && !precioOk && <Aviso>El precio debe estar entre ${PRECIO_MIN} y ${PRECIO_MAX}.</Aviso>}
+              <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm shadow-sm ring-1 ring-stone-200">
+                <Store className="h-4 w-4 shrink-0 text-guinda" aria-hidden />
+                <span className="min-w-0 truncate font-semibold">{d.nueva ? d.nv.nombre || "Tortillería nueva" : d.tortilleria?.nombre}</span>
+              </div>
+              {hoy === undefined ? (
+                <div className="grid place-items-center py-8 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
+              ) : (
+                <>
+                  <p className="px-1 text-xs text-stone-500">Captura uno o los dos. Con un precio es suficiente.</p>
+                  {PRODUCTOS.map((p) => {
+                    const ya = hoy[p.id];
+                    const valor = d[p.clave];
+                    const malo = valor !== "" && !precioValido(valor);
+                    return (
+                      <label key={p.id} className="block">
+                        <span className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-stone-600">
+                          <p.icono className="h-4 w-4 text-guinda" aria-hidden /> {p.texto} — precio por kilo (MXN)
+                        </span>
+                        <span className={`flex items-center rounded-2xl px-4 shadow-sm ring-1 transition focus-within:ring-4 ${ya != null ? "bg-stone-100 ring-stone-200" : malo ? "bg-white ring-red-300 focus-within:ring-red-100" : "bg-white ring-stone-200 focus-within:ring-guinda/15"}`}>
+                          <span className="text-3xl font-bold text-stone-300">$</span>
+                          <input
+                            inputMode="decimal"
+                            value={ya != null ? ya.toFixed(2) : valor}
+                            disabled={ya != null}
+                            onChange={(e) => set({ [p.clave]: e.target.value.replace(/[^0-9.,]/g, "").slice(0, 6) } as Partial<Datos>)}
+                            placeholder="0.00"
+                            aria-label={`Precio por kilo de ${p.texto}`}
+                            className="w-full bg-transparent px-2 py-3.5 text-center text-4xl font-bold outline-none placeholder:text-stone-200 disabled:text-stone-400"
+                          />
+                          {ya != null && <Check className="h-6 w-6 shrink-0 text-emerald-500" strokeWidth={3} aria-hidden />}
+                        </span>
+                        {ya != null ? (
+                          <span className="mt-1 block text-xs font-medium text-emerald-700">Ya capturaste hoy: {dinero(ya)}. Podrás actualizarlo mañana.</span>
+                        ) : malo ? (
+                          <span className="mt-1 block text-xs text-red-600">Debe estar entre ${PRECIO_MIN} y ${PRECIO_MAX}.</span>
+                        ) : null}
+                      </label>
+                    );
+                  })}
+                  {todoCapturado && <Aviso tipo="info">Ya capturaste hoy el maíz y la masa de esta tortillería. Podrás volver a capturarlos mañana.</Aviso>}
+                </>
+              )}
             </>
           )}
 
           {id === "resumen" && (
             <div className="divide-y divide-stone-100 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200">
-              <Fila icono={MapPin} k="Lugar" v={`${d.municipio?.nombre}, ${d.estado?.nombre}`} />
-              <Fila icono={Store} k="Tortillería" v={d.nueva ? `${d.nombreNueva} (nueva)` : d.tortilleria?.nombre ?? ""} />
-              <Fila icono={Wheat} k="Producto" v={PRODUCTOS.find((p) => p.id === d.producto)!.texto} />
-              <Fila icono={Banknote} k="Precio" v={`$${precioNum.toFixed(2)} por kilo`} />
-              <Fila icono={Camera} k="Foto" v="Incluida" />
-              <Fila icono={UserRound} k="Responsable" v={`${d.resp.nombre} ${d.resp.apellidos}`} />
+              <Fila icono={Store} k="Tortillería" v={d.nueva ? `${d.nv.nombre} (nueva)` : d.tortilleria?.nombre ?? ""} />
+              <Fila icono={MapPin} k="Domicilio" v={d.nueva ? [d.nv.tipoVial, d.nv.calle, d.nv.sinNumero ? "SN" : d.nv.numeroExt, d.nv.numeroInt && `INT. ${d.nv.numeroInt}`, `COL. ${d.nv.colonia}`, `C.P. ${d.nv.codigoPostal}`].filter(Boolean).join(" ") : d.tortilleria?.domicilio ?? "Sin domicilio"} />
+              {PRODUCTOS.filter((p) => activo(p) && d[p.clave] !== "").map((p) => (
+                <Fila key={p.id} icono={p.icono} k={p.texto} v={`${dinero(precioNumero(d[p.clave]))} por kilo`} />
+              ))}
+              {d.nueva && <Fila icono={Camera} k="Foto" v="Incluida" />}
+              {pasos.includes("fiscal") && (
+                <>
+                  <Fila icono={FileText} k={`RFC (${d.fiscal.tipoPersona === "fisica" ? "persona física" : "persona moral"})`} v={d.fiscal.rfc} />
+                  <Fila icono={d.fiscal.tipoPersona === "moral" ? Building2 : Briefcase} k={d.fiscal.tipoPersona === "moral" ? "Razón social" : "Titular del RFC"} v={d.fiscal.razonSocial} />
+                </>
+              )}
               {conCuenta && <Fila icono={Mail} k="Tu cuenta" v={d.cuenta.correo} />}
             </div>
           )}

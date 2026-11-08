@@ -1,5 +1,5 @@
-import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
-import { Check, ChevronLeft, Search, X, type LucideIcon } from "lucide-react";
+import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
+import { Check, ChevronDown, ChevronLeft, Search, X, type LucideIcon } from "lucide-react";
 
 // NOTA: los campos de texto usan 16 px (text-base) a propósito: con menos, iOS hace zoom al enfocarlos.
 
@@ -49,6 +49,41 @@ export function Campo({
         />
         {lleno && <Check className="pointer-events-none absolute right-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-emerald-500" strokeWidth={3} aria-hidden />}
         {derecha &&<span className="absolute right-1.5 top-1/2 -translate-y-1/2">{derecha}</span>}
+      </span>
+      {error ? <span className="mt-0.5 block text-xs text-red-600">{error}</span> : ayuda ? <span className="mt-0.5 block text-xs text-stone-500">{ayuda}</span> : null}
+    </label>
+  );
+}
+
+/** Selector con el mismo aspecto que Campo (lista nativa: en el celular abre el selector del sistema) */
+export function Selector({
+  etiqueta,
+  icono: Icono,
+  error,
+  ayuda,
+  opciones,
+  placeholder,
+  ...p
+}: SelectHTMLAttributes<HTMLSelectElement> & { etiqueta: string; icono?: LucideIcon; error?: string; ayuda?: string; opciones: { valor: string; texto: string }[]; placeholder?: string }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-semibold text-stone-600">{etiqueta}</span>
+      <span className="relative block">
+        {Icono && <Icono className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-stone-400" aria-hidden />}
+        <select
+          {...p}
+          className={`h-12 w-full appearance-none rounded-xl border bg-white pr-10 text-base shadow-sm outline-none transition focus:ring-4 ${Icono ? "pl-11" : "pl-3.5"} ${
+            error ? "border-red-400 focus:ring-red-100" : "border-stone-200 focus:border-guinda focus:ring-guinda/10"
+          } ${p.value ? "text-stone-900" : "text-stone-400"}`}
+        >
+          {placeholder && <option value="">{placeholder}</option>}
+          {opciones.map((o) => (
+            <option key={o.valor} value={o.valor} className="text-stone-900">
+              {o.texto}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-stone-400" aria-hidden />
       </span>
       {error ? <span className="mt-0.5 block text-xs text-red-600">{error}</span> : ayuda ? <span className="mt-0.5 block text-xs text-stone-500">{ayuda}</span> : null}
     </label>

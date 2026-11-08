@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { responsableSchema } from "@tortillerias/shared";
+import { fiscalSchema, nuevaTortilleriaSchema } from "@tortillerias/shared";
 import { auditar, pool } from "../db.js";
 import { cifrar, descifrar, enmascarar, hashBusqueda } from "../crypto.js";
+import { domicilioDe, type Fila } from "../denue.js";
 
 const busquedaSchema = z.object({
   municipio: z.string().optional(),
@@ -11,56 +12,73 @@ const busquedaSchema = z.object({
   lat: z.coerce.number().min(-90).max(90).optional(),
   lng: z.coerce.number().min(-180).max(180).optional(),
   km: z.coerce.number().min(0.1).max(50).optional(),
+  limite: z.coerce.number().int().min(1).max(10000).optional(),
 });
 
-const nuevaSchema = z.object({
-  nombre: z.string().trim().min(2).max(120),
-  domicilio: z.string().trim().min(3).max(250),
-  estadoClave: z.string().min(1),
-  municipioClave: z.string().min(1),
-  lat: z.number().min(-90).max(90),
-  lng: z.number().min(-180).max(180),
-});
+/** bbox = "minLng,minLat,maxLng,maxLat" (lo visible en el mapa) */
+const bboxSchema = z
+  .string()
+  .transform((s) => s.split(",").map(Number))
+  .pipe(z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90), z.number().min(-180).max(180), z.number().min(-90).max(90)]))
+  .refine(([x1, y1, x2, y2]) => x1 < x2 && y1 < y2, "bbox inválido");
+
+export const MAX_PUNTOS_MAPA = 5000;
 
 const uuid = z.string().uuid();
 const LIMITE_ESCRITURA = { rateLimit: { max: 20, timeWindow: "1 minute" } };
 
 export function rutasTortillerias(app: FastifyInstance) {
-  // Búsqueda pública por municipio, nombre o calle y cercanía (solo datos no personales). Con el catálogo del DENUE
-  // hay miles por municipio: con km se devuelven todas las del radio, ordenadas por distancia; q filtra en tiempo real.
+  // Búsqueda pública por municipio, nombre o calle y cercanía (solo datos no personales). Con km devuelve TODAS las del radio.
   app.get("/tortillerias", async (req, reply) => {
     const p = busquedaSchema.safeParse(req.query);
     if (!p.success) return reply.code(400).send({ error: "Parámetros inválidos" });
-    const { municipio, estado, q, lat, lng, km } = p.data;
+    const { municipio, estado, q, lat, lng, km, limite } = p.data;
     const cercania = lat !== undefined && lng !== undefined;
-    // Con radio: TODAS las del círculo (sin importar el municipio). Sin radio: las del municipio/estado.
     const radio = cercania && km ? km * 1000 : null;
     if (!radio && !municipio && !estado && (q?.length ?? 0) < 3) return [];
     // El rectángulo (&&) usa el índice espacial; ST_DWithin afina el círculo exacto. 1° de latitud ≈ 111 km.
     const grados = radio ? radio / 111000 / Math.cos(((lat ?? 0) * Math.PI) / 180) + 0.001 : null;
     const { rows } = await pool.query(
-      `SELECT id, nombre, domicilio, estatus,
-              ST_Y(geom) AS lat, ST_X(geom) AS lng,
+      `SELECT t.id, t.nombre, t.domicilio, t.estatus,
+              ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng, d.razon_social,
               CASE WHEN $4::float8 IS NULL THEN NULL
-                   ELSE ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint($5,$4),4326)::geography) END AS distancia_m
-         FROM tortillerias
-        WHERE ($6::float8 IS NOT NULL OR $1::text IS NULL OR municipio_clave = $1)
-          AND ($6::float8 IS NOT NULL OR $2::text IS NULL OR estado_clave = $2)
+                   ELSE ST_Distance(t.geom::geography, ST_SetSRID(ST_MakePoint($5,$4),4326)::geography) END AS distancia_m
+         FROM tortillerias t
+         LEFT JOIN denue_catalogo d ON d.id_denue = t.id_denue
+        WHERE ($6::float8 IS NOT NULL OR $1::text IS NULL OR t.municipio_clave = $1)
+          AND ($6::float8 IS NOT NULL OR $2::text IS NULL OR t.estado_clave = $2)
           AND ($6::float8 IS NULL OR (
-                geom && ST_Expand(ST_SetSRID(ST_MakePoint($5,$4),4326), $7::float8)
-                AND ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint($5,$4),4326)::geography, $6::float8)))
-          AND ($3::text IS NULL OR nombre ILIKE '%' || $3 || '%' OR domicilio ILIKE '%' || $3 || '%')
-          AND estatus <> 'rechazada'
-        ORDER BY distancia_m NULLS LAST, nombre
-        LIMIT 10000`,
-      [municipio ?? null, estado ?? null, q ?? null, cercania ? lat : null, cercania ? lng : null, radio, grados],
+                t.geom && ST_Expand(ST_SetSRID(ST_MakePoint($5,$4),4326), $7::float8)
+                AND ST_DWithin(t.geom::geography, ST_SetSRID(ST_MakePoint($5,$4),4326)::geography, $6::float8)))
+          AND ($3::text IS NULL OR t.nombre ILIKE '%' || $3 || '%' OR t.domicilio ILIKE '%' || $3 || '%')
+          AND t.estatus <> 'rechazada'
+        ORDER BY distancia_m NULLS LAST, t.nombre
+        LIMIT $8`,
+      [municipio ?? null, estado ?? null, q ?? null, cercania ? lat : null, cercania ? lng : null, radio, grados, limite ?? 10000],
     );
     return rows;
   });
 
-  // Alta de tortillería nueva por un usuario registrado (queda pendiente de validación)
+  // Tortillerías de lo que se ve en el mapa. Si el área tiene demasiadas, se pide acercarse.
+  app.get("/tortillerias/mapa", async (req, reply) => {
+    const b = bboxSchema.safeParse((req.query as any)?.bbox);
+    if (!b.success) return reply.code(400).send({ error: "bbox inválido: minLng,minLat,maxLng,maxLat" });
+    const [x1, y1, x2, y2] = b.data;
+    const { rows } = await pool.query(
+      `SELECT t.id, t.nombre, t.domicilio, t.estatus, ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng, d.razon_social
+         FROM tortillerias t
+         LEFT JOIN denue_catalogo d ON d.id_denue = t.id_denue
+        WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada'
+        LIMIT $5`,
+      [x1, y1, x2, y2, MAX_PUNTOS_MAPA + 1],
+    );
+    if (rows.length > MAX_PUNTOS_MAPA) return { demasiadas: true };
+    return rows;
+  });
+
+  // Alta de tortillería nueva por un usuario registrado (queda pendiente de validación; la foto es obligatoria para validarla)
   app.post("/tortillerias", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
-    const p = nuevaSchema.safeParse(req.body);
+    const p = nuevaTortilleriaSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
     const d = p.data;
     const punto = "ST_SetSRID(ST_MakePoint($1,$2),4326)";
@@ -70,47 +88,84 @@ export function rutasTortillerias(app: FastifyInstance) {
       [d.lng, d.lat, d.nombre],
     );
     if (cercanas.rowCount) return reply.code(409).send({ error: "Posible duplicado", posibles: cercanas.rows });
+
+    // El domicilio se arma igual que el del DENUE para que la búsqueda por texto y las listas funcionen igual
+    const domicilio = domicilioDe({
+      tipo_vial: d.tipoVial, calle: d.calle, numero_ext: d.numeroExt, numero_int: d.numeroInt ?? "", colonia: d.colonia, codigo_postal: d.codigoPostal,
+    } as Fila);
+
     const { rows } = await pool.query(
-      `INSERT INTO tortillerias(nombre, domicilio, estado_clave, municipio_clave, geom, origen, estatus, creado_por)
-       VALUES ($3,$4,$5,$6,${punto},'nueva','pendiente',$7) RETURNING id`,
-      [d.lng, d.lat, d.nombre, d.domicilio, d.estadoClave, d.municipioClave, req.user.sub],
+      `INSERT INTO tortillerias(nombre, domicilio, estado_clave, municipio_clave, geom, origen, estatus, creado_por,
+                                localidad, tipo_vial, calle, numero_ext, numero_int, colonia, codigo_postal, telefono, correo,
+                                personal_ocupado, codigo_scian, fecha_alta)
+       VALUES ($3,$4,$5,$6,${punto},'nueva','pendiente',$7,
+               $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'311830', to_char(now() AT TIME ZONE 'America/Mexico_City', 'YYYY-MM'))
+       RETURNING id`,
+      [
+        d.lng, d.lat, d.nombre, domicilio, d.estadoClave, d.municipioClave, req.user.sub,
+        d.localidad, d.tipoVial, d.calle, d.numeroExt, d.numeroInt ?? null, d.colonia, d.codigoPostal, d.telefono ?? null, d.correo ?? null,
+        d.personalOcupado,
+      ],
     );
+    await auditar(req.user.sub, "crear_tortilleria", "tortillerias", rows[0].id);
     return reply.code(201).send({ id: rows[0].id, estatus: "pendiente" });
   });
 
-  // Alta del responsable por un usuario registrado: datos personales cifrados
-  app.post<{ Params: { id: string } }>("/tortillerias/:id/responsable", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
-    if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
-    const body = req.body as { aceptoAviso?: boolean };
-    if (body?.aceptoAviso !== true) return reply.code(400).send({ error: "Falta aceptar el aviso de privacidad" });
-    const p = responsableSchema.safeParse(req.body);
-    if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
-    const r = p.data;
-    const t = await pool.query("SELECT 1 FROM tortillerias WHERE id = $1", [req.params.id]);
-    if (!t.rowCount) return reply.code(404).send({ error: "Tortillería no existe" });
+  /* ------------------------------------------------------------------ datos fiscales (de la tortillería) */
 
-    const hash = hashBusqueda(r.curp);
-    const dup = await pool.query("SELECT id, tortilleria_id FROM responsables WHERE curp_hash = $1", [hash]);
-    if (dup.rowCount) {
-      // Mismo responsable en la misma tortillería: no se duplica (reintentos y capturas repetidas)
-      if (dup.rows[0].tortilleria_id === req.params.id) return reply.code(200).send({ id: dup.rows[0].id });
-      return reply.code(409).send({ error: "Estos datos ya están registrados en otra tortillería" });
-    }
+  // ¿Ya tiene datos fiscales? También cuenta el registro viejo de `responsables`.
+  app.get<{ Params: { id: string } }>("/tortillerias/:id/fiscal/existe", { preHandler: app.autenticar }, async (req, reply) => {
+    if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const { rows } = await pool.query(
-      `INSERT INTO responsables(tortilleria_id, nombre, apellidos, curp_cifrado, curp_hash, telefono_cifrado,
-                                telefono_hash, tipo_persona, rfc_cifrado, rfc_hash, razon_social)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-      [
-        req.params.id, r.nombre, r.apellidos, cifrar(r.curp), hash, cifrar(r.telefono),
-        hashBusqueda(r.telefono), r.tipoPersona, cifrar(r.rfc), hashBusqueda(r.rfc), r.razonSocial ?? null,
-      ],
+      `SELECT (EXISTS (SELECT 1 FROM tortilleria_fiscal WHERE tortilleria_id = $1)
+            OR EXISTS (SELECT 1 FROM responsables WHERE tortilleria_id = $1)) AS tiene`,
+      [req.params.id],
     );
-    await pool.query("INSERT INTO consentimientos(responsable_id, version) VALUES ($1,$2)", [rows[0].id, "v1"]);
-    await auditar(req.user.sub, "crear_responsable", "responsables", rows[0].id);
-    return reply.code(201).send({ id: rows[0].id });
+    return { tiene: !!rows[0]?.tiene };
   });
 
-  // Lectura de datos personales: SOLO con sesión. Capturista enmascarado; supervisor y admin completos (con auditoría).
+  // Los crea una sola vez: si ya existen, no se sobrescriben (las correcciones las hace el admin)
+  app.post<{ Params: { id: string } }>("/tortillerias/:id/fiscal", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
+    if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+    if ((req.body as { aceptoAviso?: boolean })?.aceptoAviso !== true) return reply.code(400).send({ error: "Falta aceptar el aviso de privacidad" });
+    const p = fiscalSchema.safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
+    const t = await pool.query("SELECT 1 FROM tortillerias WHERE id = $1", [req.params.id]);
+    if (!t.rowCount) return reply.code(404).send({ error: "Tortillería no existe" });
+    const f = p.data;
+
+    const ins = await pool.query(
+      `INSERT INTO tortilleria_fiscal(tortilleria_id, tipo_persona, rfc_cifrado, rfc_hash, razon_social, celular_cifrado, celular_hash, capturado_por)
+       SELECT $1,$2,$3,$4,$5,$6,$7,$8
+        WHERE NOT EXISTS (SELECT 1 FROM responsables WHERE tortilleria_id = $1)
+       ON CONFLICT (tortilleria_id) DO NOTHING
+       RETURNING tortilleria_id`,
+      [
+        req.params.id, f.tipoPersona, cifrar(f.rfc), hashBusqueda(f.rfc), f.razonSocial,
+        f.celular ? cifrar(f.celular) : null, f.celular ? hashBusqueda(f.celular) : null, req.user.sub,
+      ],
+    );
+    if (ins.rowCount) {
+      await pool.query("INSERT INTO consentimientos(tortilleria_id, usuario_id, version) VALUES ($1,$2,$3)", [req.params.id, req.user.sub, "v1"]);
+      await auditar(req.user.sub, "crear_datos_fiscales", "tortilleria_fiscal", req.params.id);
+      return reply.code(201).send({ tipoPersona: f.tipoPersona, razonSocial: f.razonSocial, rfc: enmascarar(f.rfc), celular: f.celular ? enmascarar(f.celular) : null, existente: false });
+    }
+    // Ya los tenía: se responde con lo que hay, enmascarado, sin sobrescribir
+    const ya = await leerFiscal(req.params.id, false);
+    return reply.code(200).send({ ...ya, existente: true });
+  });
+
+  // Lectura: capturista enmascarado; supervisor y admin completos (con auditoría)
+  app.get<{ Params: { id: string } }>("/tortillerias/:id/fiscal", { preHandler: app.autenticar }, async (req, reply) => {
+    if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+    const completo = req.user.rol !== "capturista";
+    const r = await leerFiscal(req.params.id, completo);
+    if (!r) return reply.code(404).send({ error: "Sin datos fiscales" });
+    if (completo) await auditar(req.user.sub, "ver_datos_fiscales", "tortilleria_fiscal", req.params.id);
+    return r;
+  });
+
+  // Registro viejo (antes de la revisión): solo lectura
   app.get<{ Params: { id: string } }>("/tortillerias/:id/responsable", { preHandler: app.autenticar }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const { rows } = await pool.query("SELECT * FROM responsables WHERE tortilleria_id = $1 LIMIT 1", [req.params.id]);
@@ -125,13 +180,47 @@ export function rutasTortillerias(app: FastifyInstance) {
     };
   });
 
-  // Validación por supervisor
+  // Validación por supervisor. Una tortillería nueva no se valida sin foto.
   app.patch<{ Params: { id: string } }>("/tortillerias/:id/estatus", { preHandler: app.soloRoles("supervisor", "admin") }, async (req, reply) => {
     const p = z.object({ estatus: z.enum(["validada", "rechazada"]) }).safeParse(req.body);
     if (!p.success || !uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Datos inválidos" });
+    if (p.data.estatus === "validada") {
+      const t = await pool.query(
+        `SELECT t.origen, (SELECT count(*) FROM fotos f WHERE f.tortilleria_id = t.id)::int AS fotos FROM tortillerias t WHERE t.id = $1`,
+        [req.params.id],
+      );
+      if (!t.rowCount) return reply.code(404).send({ error: "No existe" });
+      if (t.rows[0].origen === "nueva" && !t.rows[0].fotos) return reply.code(400).send({ error: "La tortillería no tiene foto" });
+    }
     const r = await pool.query("UPDATE tortillerias SET estatus = $1 WHERE id = $2", [p.data.estatus, req.params.id]);
     if (!r.rowCount) return reply.code(404).send({ error: "No existe" });
     await auditar(req.user.sub, `tortilleria_${p.data.estatus}`, "tortillerias", req.params.id);
     return { ok: true };
   });
+}
+
+type FiscalSalida = {
+  tipoPersona: string; razonSocial: string; rfc: string; celular: string | null; legado?: boolean; responsable?: { nombre: string; apellidos: string };
+};
+
+/** Datos fiscales de una tortillería: de `tortilleria_fiscal` o, si solo hay registro viejo, de `responsables` */
+async function leerFiscal(id: string, completo: boolean): Promise<FiscalSalida | null> {
+  const f = await pool.query("SELECT * FROM tortilleria_fiscal WHERE tortilleria_id = $1", [id]);
+  if (f.rows[0]) {
+    const r = f.rows[0];
+    const rfc = descifrar(r.rfc_cifrado);
+    const cel = r.celular_cifrado ? descifrar(r.celular_cifrado) : null;
+    return { tipoPersona: r.tipo_persona, razonSocial: r.razon_social, rfc: completo ? rfc : enmascarar(rfc), celular: cel ? (completo ? cel : enmascarar(cel)) : null };
+  }
+  const v = await pool.query("SELECT * FROM responsables WHERE tortilleria_id = $1 LIMIT 1", [id]);
+  if (v.rows[0]) {
+    const r = v.rows[0];
+    const rfc = descifrar(r.rfc_cifrado);
+    const cel = r.telefono_cifrado ? descifrar(r.telefono_cifrado) : null;
+    return {
+      tipoPersona: r.tipo_persona, razonSocial: r.razon_social ?? `${r.nombre} ${r.apellidos}`, rfc: completo ? rfc : enmascarar(rfc),
+      celular: cel ? (completo ? cel : enmascarar(cel)) : null, legado: true, responsable: { nombre: r.nombre, apellidos: r.apellidos },
+    };
+  }
+  return null;
 }

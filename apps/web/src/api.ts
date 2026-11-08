@@ -37,7 +37,7 @@ export async function apiImagenUrl(ruta: string): Promise<string> {
 
 export async function api<T = any>(
   ruta: string,
-  op: { metodo?: string; json?: unknown; form?: FormData } = {},
+  op: { metodo?: string; json?: unknown; form?: FormData; signal?: AbortSignal } = {},
 ): Promise<T> {
   const headers: Record<string, string> = {};
   const s = leerSesion();
@@ -49,6 +49,7 @@ export async function api<T = any>(
       method: op.metodo ?? (op.json !== undefined || op.form ? "POST" : "GET"),
       headers,
       body: op.form ?? (op.json !== undefined ? JSON.stringify(op.json) : undefined),
+      signal: op.signal,
     });
   } catch {
     throw new ApiError(0, "Sin conexión con el servidor");

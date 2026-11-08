@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  AlertTriangle, Banknote, BarChart3, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Loader2, MapPin, Phone, Store, TriangleAlert,
+  AlertTriangle, Banknote, BarChart3, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, Loader2, Mail, MapPin, Phone, Store, TriangleAlert,
   UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog,
 } from "lucide-react";
 import { api, type Sesion } from "./api";
@@ -16,13 +16,17 @@ type Resumen = {
 type TortilleriaAdm = {
   id: string; nombre: string; domicilio: string | null; estatus: string; origen: string; creado_en: string; lat: number | null; lng: number | null;
   municipio: string | null; estado: string | null; creador: string | null; n_fotos: number;
+  localidad: string | null; tipo_vial: string | null; calle: string | null; numero_ext: string | null; numero_int: string | null; colonia: string | null;
+  codigo_postal: string | null; telefono: string | null; correo: string | null; personal_ocupado: string | null; codigo_scian: string | null;
+  fecha_alta: string | null; tiene_fiscal: boolean;
 };
 type CapturaAdm = {
   id: string; producto: "maiz" | "harina" | "masa"; precio_kg: string; fecha: string; estatus: string; alerta: boolean; tortilleria_id: string;
   nombre: string; municipio: string | null; estado: string | null; capturista: string | null;
 };
 type UsuarioAdm = { id: string; correo: string | null; usuario: string; nombre: string; apellidos: string; rol: string; activo: boolean; creado_en: string; capturas: number };
-type Responsable = { nombre: string; apellidos: string; tipoPersona: string; razonSocial: string | null; curp: string; telefono: string; rfc: string };
+/** Datos fiscales de la tortillería; si solo hay un registro viejo de responsable, llega con legado = true */
+type Fiscal = { tipoPersona: string; razonSocial: string; rfc: string; celular: string | null; legado?: boolean; responsable?: { nombre: string; apellidos: string } };
 
 const PRODUCTO = { maiz: { t: "Maíz", i: Wheat }, harina: { t: "Harina", i: PackageOpen }, masa: { t: "Masa", i: Layers } };
 const fecha = (s: string) => new Date(s).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
@@ -264,12 +268,13 @@ function DetalleTortilleria({
   t, trabajando, alCerrar, alResolver,
 }: { t: TortilleriaAdm; trabajando: boolean; alCerrar: () => void; alResolver: (id: string, e: "validada" | "rechazada") => void }) {
   const [fotos, setFotos] = useState<{ id: string }[]>();
-  const [resp, setResp] = useState<Responsable | null>();
+  const [fiscal, setFiscal] = useState<Fiscal | null>();
   const [foto, setFoto] = useState(0);
+  const sinFoto = t.origen === "nueva" && (fotos === undefined ? t.n_fotos === 0 : fotos.length === 0);
 
   useEffect(() => {
     api<{ id: string }[]>(`/admin/tortillerias/${t.id}/fotos`).then(setFotos).catch(() => setFotos([]));
-    api<Responsable>(`/tortillerias/${t.id}/responsable`).then(setResp).catch(() => setResp(null));
+    api<Fiscal>(`/tortillerias/${t.id}/fiscal`).then(setFiscal).catch(() => setFiscal(null));
   }, [t.id]);
 
   const Fila = ({ i: I, k, v }: { i: typeof Store; k: string; v: string }) => (
@@ -311,6 +316,15 @@ function DetalleTortilleria({
       <Tarjeta className="divide-y divide-stone-100 !py-1">
         <Fila i={Building2} k="Ubicación" v={[t.municipio, t.estado].filter(Boolean).join(", ") || "—"} />
         <Fila i={MapPin} k="Domicilio" v={t.domicilio ?? "—"} />
+        {t.localidad && <Fila i={Building2} k="Localidad" v={t.localidad} />}
+        {(t.tipo_vial || t.calle) && <Fila i={MapPin} k="Vialidad" v={[t.tipo_vial, t.calle].filter(Boolean).join(" ")} />}
+        {(t.numero_ext || t.numero_int) && <Fila i={Hash} k="Número" v={[t.numero_ext && `Ext. ${t.numero_ext}`, t.numero_int && `Int. ${t.numero_int}`].filter(Boolean).join(" · ")} />}
+        {t.colonia && <Fila i={Building2} k="Colonia" v={t.colonia} />}
+        {t.codigo_postal && <Fila i={Hash} k="Código postal" v={t.codigo_postal} />}
+        {t.telefono && <Fila i={Phone} k="Teléfono de la tortillería" v={t.telefono} />}
+        {t.correo && <Fila i={Mail} k="Correo de la tortillería" v={t.correo} />}
+        {t.personal_ocupado && <Fila i={Users} k="Personal ocupado" v={t.personal_ocupado} />}
+        {t.fecha_alta && <Fila i={CalendarDays} k="Fecha de alta" v={t.fecha_alta} />}
         <Fila i={UserRound} k="Registrada por" v={t.creador ?? "DENUE"} />
       </Tarjeta>
       {t.lat != null && t.lng != null && (
@@ -325,28 +339,32 @@ function DetalleTortilleria({
       )}
 
       <Tarjeta className="!py-2">
-        <h3 className="flex items-center gap-2 py-1 text-sm font-bold"><ShieldCheck className="h-4 w-4 text-verde" aria-hidden /> Responsable</h3>
-        {resp === undefined ? (
+        <h3 className="flex items-center gap-2 py-1 text-sm font-bold"><ShieldCheck className="h-4 w-4 text-verde" aria-hidden /> Datos fiscales</h3>
+        {fiscal === undefined ? (
           <p className="py-2 text-sm text-stone-400">Cargando…</p>
-        ) : resp === null ? (
-          <p className="py-2 text-sm text-stone-500">Sin datos de responsable.</p>
+        ) : fiscal === null ? (
+          <p className="py-2 text-sm text-stone-500">Aún no tiene datos fiscales: se piden la primera vez que se captura su precio.</p>
         ) : (
           <div className="divide-y divide-stone-100">
-            <Fila i={UserRound} k="Nombre" v={`${resp.nombre} ${resp.apellidos}`} />
-            <Fila i={Fingerprint} k="CURP" v={resp.curp} />
-            <Fila i={FileText} k={`RFC (${resp.tipoPersona === "fisica" ? "persona física" : "persona moral"})`} v={resp.rfc} />
-            {resp.razonSocial && <Fila i={Building2} k="Razón social" v={resp.razonSocial} />}
-            <Fila i={Phone} k="Teléfono" v={resp.telefono} />
+            <Fila i={FileText} k={`RFC (${fiscal.tipoPersona === "fisica" ? "persona física" : "persona moral"})`} v={fiscal.rfc} />
+            <Fila i={Building2} k={fiscal.tipoPersona === "moral" ? "Razón social" : "Titular del RFC"} v={fiscal.razonSocial} />
+            {fiscal.celular && <Fila i={Phone} k="Celular de contacto" v={fiscal.celular} />}
+            {fiscal.legado && fiscal.responsable && <Fila i={UserRound} k="Responsable (registro anterior)" v={`${fiscal.responsable.nombre} ${fiscal.responsable.apellidos}`} />}
           </div>
         )}
-        <p className="pt-1 text-[11px] text-stone-400">La consulta de datos personales queda registrada en la auditoría.</p>
+        <p className="pt-1 text-[11px] text-stone-400">La consulta de datos fiscales queda registrada en la auditoría.</p>
       </Tarjeta>
 
       {t.estatus === "pendiente" && (
         <div className="grid grid-cols-2 gap-2">
           <Boton variante="peligro" disabled={trabajando} icono={X} onClick={() => alResolver(t.id, "rechazada")}>Rechazar</Boton>
-          <Boton disabled={trabajando} icono={trabajando ? Loader2 : Check} onClick={() => alResolver(t.id, "validada")}>Validar</Boton>
+          <Boton disabled={trabajando || sinFoto} icono={trabajando ? Loader2 : Check} onClick={() => alResolver(t.id, "validada")}>Validar</Boton>
         </div>
+      )}
+      {t.estatus === "pendiente" && sinFoto && (
+        <p className="flex items-center gap-1.5 text-xs text-amber-700">
+          <Camera className="h-3.5 w-3.5 shrink-0" aria-hidden /> Una tortillería nueva no se puede validar sin foto.
+        </p>
       )}
     </HojaModal>
   );

@@ -4,6 +4,7 @@ import { borrar, borrarTodo, CLAVES, guardar, leer } from "./persist";
 import Inicio from "./Inicio";
 import Login from "./Login";
 import Captura from "./Captura";
+import type { Punto } from "./MapaTortillerias";
 import PanelUsuario from "./PanelUsuario";
 import PanelAdmin from "./PanelAdmin";
 
@@ -21,6 +22,12 @@ function vistaInicial(sesion: Sesion | null): Vista {
 export default function App() {
   const [sesion, setSesion] = useState<Sesion | null>(leerSesion());
   const [vista, setVista] = useState<Vista>(() => vistaInicial(leerSesion()));
+  // Caso C: actualizar el precio de una tortillería ya visitada (desde el panel)
+  const [paraActualizar, setParaActualizar] = useState<Punto | undefined>(() => {
+    // tras una recarga (p. ej. al actualizarse la app) se sigue donde se estaba
+    const b = leer<{ caso?: string; d?: { tortilleria?: Punto } }>(CLAVES.borrador);
+    return leer<Vista>(CLAVES.vista) === "captura" && b?.caso === "actualizar" ? b.d?.tortilleria : undefined;
+  });
 
   useEffect(() => {
     guardar(CLAVES.vista, vista);
@@ -53,6 +60,13 @@ export default function App() {
   // Un registro nuevo siempre empieza limpio (descarta cualquier borrador anterior)
   const nuevoRegistro = () => {
     borrar(CLAVES.borrador);
+    setParaActualizar(undefined);
+    setVista("captura");
+  };
+
+  const actualizarPrecio = (t: Punto) => {
+    borrar(CLAVES.borrador);
+    setParaActualizar(t);
     setVista("captura");
   };
 
@@ -61,6 +75,7 @@ export default function App() {
     return (
       <Captura
         sesion={sesion}
+        tortilleriaInicial={paraActualizar}
         alSesion={setSesion}
         alSalir={() => {
           borrar(CLAVES.borrador);
@@ -85,6 +100,6 @@ export default function App() {
 
   const actualizar = (s: Sesion) => setSesion(s);
   if (sesion.usuario.rol === "capturista")
-    return <PanelUsuario sesion={sesion} alCapturar={nuevoRegistro} alActualizarSesion={actualizar} alSalir={salir} />;
+    return <PanelUsuario sesion={sesion} alCapturar={nuevoRegistro} alActualizarPrecio={actualizarPrecio} alActualizarSesion={actualizar} alSalir={salir} />;
   return <PanelAdmin sesion={sesion} alActualizarSesion={actualizar} alSalir={salir} />;
 }

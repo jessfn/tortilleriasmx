@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-export const CURP_REGEX =
-  /^[A-Z][AEIOUX][A-Z]{2}\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])[HM](AS|BC|BS|CC|CL|CM|CS|CH|DF|DG|GT|GR|HG|JC|MC|MN|MS|NT|NL|OC|PL|QT|QR|SP|SL|SR|TC|TS|TL|VZ|YN|ZS|NE)[B-DF-HJ-NP-TV-Z]{3}[A-Z\d]\d$/;
 export const RFC_FISICA_REGEX = /^[A-ZÑ&]{4}\d{6}[A-Z\d]{3}$/;
 export const RFC_MORAL_REGEX = /^[A-ZÑ&]{3}\d{6}[A-Z\d]{3}$/;
 export const NOMBRE_REGEX = /^[A-ZÑ]+(?:[ '\-][A-ZÑ]+)*$/;
@@ -26,12 +24,6 @@ export const nombreSchema = z
   .pipe(z.string().min(1, "Obligatorio").max(80).regex(NOMBRE_REGEX, "Solo letras"));
 
 export const telefonoSchema = z.string().regex(/^\d{10}$/, "Debe tener 10 dígitos");
-export const curpSchema = z
-  .string()
-  .trim()
-  .toUpperCase()
-  .length(18, "18 caracteres")
-  .regex(CURP_REGEX, "CURP inválida");
 export const precioSchema = z
   .number()
   .min(PRECIO_MIN, `Mínimo $${PRECIO_MIN}`)
@@ -53,33 +45,75 @@ export const cambioPasswordSchema = z
   .object({ actual: z.string().min(1), nueva: passwordSchema, confirmar: z.string() })
   .refine((v) => v.nueva === v.confirmar, { path: ["confirmar"], message: "Las contraseñas no coinciden" });
 
-export const responsableSchema = z
+/** Productos que se pueden capturar (la tortilla de harina ya no se captura; las capturas viejas se siguen mostrando) */
+export const PRODUCTOS = ["maiz", "masa"] as const;
+export type ProductoCaptura = (typeof PRODUCTOS)[number];
+
+export const capturaPrecioSchema = z.object({
+  tortilleriaId: z.string().uuid(),
+  producto: z.enum(PRODUCTOS),
+  precioKg: precioSchema,
+  // GPS del teléfono: solo como evidencia, nunca bloquea la captura
+  lat: z.number().min(-90).max(90).optional(),
+  lng: z.number().min(-180).max(180).optional(),
+  precisionGps: z.number().nonnegative().optional(),
+});
+
+/* ---------------- datos fiscales (de la tortillería, no de quien captura) ---------------- */
+
+const vacioAUndefined = (v: unknown) => (typeof v === "string" && v.trim() === "" ? undefined : v);
+
+export const celularOpcionalSchema = z.preprocess(vacioAUndefined, telefonoSchema.optional());
+
+export const fiscalSchema = z
   .object({
-    nombre: nombreSchema,
-    apellidos: nombreSchema,
-    curp: curpSchema,
-    telefono: telefonoSchema,
     tipoPersona: z.enum(["fisica", "moral"]),
     rfc: z.string().trim().toUpperCase(),
     razonSocial: z
       .string()
       .transform((v) => normalizarTexto(v.trim()))
-      .optional(),
+      .pipe(z.string().min(2, "Obligatorio").max(150)),
+    celular: celularOpcionalSchema,
   })
   .superRefine((v, ctx) => {
     const re = v.tipoPersona === "fisica" ? RFC_FISICA_REGEX : RFC_MORAL_REGEX;
     const len = v.tipoPersona === "fisica" ? 13 : 12;
-    if (v.rfc.length !== len || !re.test(v.rfc))
-      ctx.addIssue({ code: "custom", path: ["rfc"], message: `RFC de ${len} caracteres` });
-    if (v.tipoPersona === "moral" && !v.razonSocial)
-      ctx.addIssue({ code: "custom", path: ["razonSocial"], message: "Razón social obligatoria" });
+    if (v.rfc.length !== len || !re.test(v.rfc)) ctx.addIssue({ code: "custom", path: ["rfc"], message: `RFC de ${len} caracteres` });
   });
 
-export const capturaPrecioSchema = z.object({
-  tortilleriaId: z.string().uuid(),
-  producto: z.enum(["maiz", "harina", "masa"]),
-  precioKg: precioSchema,
+/* ---------------- tortillería nueva: mismos datos que el DENUE ---------------- */
+
+/** Valores del DENUE (por frecuencia) */
+export const TIPOS_VIAL = [
+  "CALLE", "AVENIDA", "PRIVADA", "PROLONGACION", "BOULEVARD", "CARRETERA", "CALLEJON", "CALZADA", "ANDADOR", "CERRADA", "CIRCUITO",
+  "EJE VIAL", "PERIFERICO", "PEATONAL", "DIAGONAL", "RETORNO", "PASAJE", "AMPLIACION", "VIADUCTO", "CONTINUACION", "AUTOPISTA",
+  "CORREDOR", "CIRCUNVALACION", "OTRO(ESPECIFIQUE)",
+] as const;
+
+export const PERSONAL_OCUPADO = [
+  "0 a 5 personas", "6 a 10 personas", "11 a 30 personas", "31 a 50 personas", "51 a 100 personas", "101 a 250 personas", "251 y más personas",
+] as const;
+
+const texto = (min: number, max: number, msg = "Obligatorio") =>
+  z.string().transform((v) => normalizarTexto(v.trim())).pipe(z.string().min(min, msg).max(max));
+const textoOpcional = (max: number) =>
+  z.preprocess(vacioAUndefined, z.string().transform((v) => normalizarTexto(v.trim())).pipe(z.string().max(max)).optional());
+
+export const nuevaTortilleriaSchema = z.object({
+  nombre: texto(2, 120),
+  estadoClave: z.string().min(1),
+  municipioClave: z.string().min(1),
+  localidad: texto(1, 120),
+  tipoVial: z.enum(TIPOS_VIAL),
+  calle: texto(1, 120),
+  numeroExt: texto(1, 20), // "SN" = sin número
+  numeroInt: textoOpcional(20),
+  colonia: texto(1, 120),
+  codigoPostal: z.string().regex(/^[0-9]{5}$/, "5 dígitos"),
+  telefono: celularOpcionalSchema,
+  correo: z.preprocess(vacioAUndefined, correoSchema.optional()),
+  personalOcupado: z.enum(PERSONAL_OCUPADO),
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
-  precisionGps: z.number().nonnegative().optional(),
 });
+export type NuevaTortilleria = z.infer<typeof nuevaTortilleriaSchema>;

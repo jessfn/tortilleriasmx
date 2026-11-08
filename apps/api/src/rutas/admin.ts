@@ -36,7 +36,11 @@ export function rutasAdmin(app: FastifyInstance) {
       `SELECT t.id, t.nombre, t.domicilio, t.estatus, t.origen, t.creado_en,
               ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng,
               m.nombre AS municipio, e.nombre AS estado, u.correo AS creador,
-              (SELECT count(*)::int FROM fotos f WHERE f.tortilleria_id = t.id) AS n_fotos
+              t.localidad, t.tipo_vial, t.calle, t.numero_ext, t.numero_int, t.colonia, t.codigo_postal, t.telefono, t.correo,
+              t.personal_ocupado, t.codigo_scian, t.fecha_alta,
+              (SELECT count(*)::int FROM fotos f WHERE f.tortilleria_id = t.id) AS n_fotos,
+              (EXISTS (SELECT 1 FROM tortilleria_fiscal x WHERE x.tortilleria_id = t.id)
+               OR EXISTS (SELECT 1 FROM responsables r WHERE r.tortilleria_id = t.id)) AS tiene_fiscal
          FROM tortillerias t
          LEFT JOIN municipios m ON m.clave = t.municipio_clave
          LEFT JOIN estados e ON e.clave = t.estado_clave
