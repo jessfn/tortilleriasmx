@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { ClipboardPlus, LayoutDashboard, LogIn, LogOut } from "lucide-react";
 import type { Sesion } from "./api";
 import "./inicio3d.css";
+
+const Escena3D = lazy(() => import("./Escena3D"));
 
 /** Logotipos oficiales: Gobierno de México y Secretaría de Agricultura y Desarrollo Rural (administración 2024-2030, fuente: gob.mx) */
 function LogoGobierno() {
@@ -14,8 +16,8 @@ function LogoGobierno() {
   );
 }
 
-/** Escena 3D de la tortillería. Se inclina con el dedo o el cursor y se ajusta al espacio disponible. */
-function Tortilleria3D() {
+/** Escena CSS de respaldo: se ve mientras carga el modelo 3D o si el equipo no soporta WebGL. Se inclina con el dedo o el cursor y se ajusta al espacio disponible. */
+function Tortilleria3DCss() {
   const marco = useRef<HTMLDivElement>(null);
   const rotor = useRef<HTMLDivElement>(null);
   const [escala, setEscala] = useState(1);
@@ -92,7 +94,9 @@ export default function Inicio({ sesion, alRegistrar, alIniciar, alPanel, alCerr
         <LogoGobierno />
       </div>
 
-      <Tortilleria3D />
+      <Suspense fallback={<Tortilleria3DCss />}>
+        <Escena3D fallback={<Tortilleria3DCss />} />
+      </Suspense>
 
       <div className="flex flex-col lg:col-start-2 lg:row-start-2 lg:justify-center lg:pb-6">
       <div className="relative text-center lg:text-left">
