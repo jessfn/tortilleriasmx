@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { Check, List, Loader2, LocateFixed, Map as MapaIcono, MapPin, Navigation, Plus, ShieldAlert, Store, X } from "lucide-react";
+import { Check, List, Loader2, LocateFixed, Map as MapaIcono, MapPin, Navigation, Plus, ShieldAlert, Store, WifiOff, X } from "lucide-react";
 import { api } from "./api";
+import { alCambiarCatalogo, cercanas, cubre, delMunicipio } from "./catalogo";
 import { Aviso, Boton, Buscador, Cabecera, Hoja, Opcion } from "./ui";
 import BuscadorLugar from "./BuscadorLugar";
 import type { EstadoMapa, MapaRef, Punto } from "./MapaTortillerias";
@@ -49,6 +50,10 @@ export default function PasoTortilleria(p: Props) {
   const [eligiendo, setEligiendo] = useState(false);
   const [error, setError] = useState("");
   const [centroMapa, setCentroMapa] = useState<{ lat: number; lng: number }>();
+  const [sinMapaBase, setSinMapaBase] = useState(false);
+  // Cambia cuando termina una descarga de estado o se agrega una tortillería nueva del teléfono
+  const [versionCatalogo, setVersionCatalogo] = useState(0);
+  useEffect(() => alCambiarCatalogo(() => setVersionCatalogo((v) => v + 1)), []);
 
   // Lista de respaldo
   const [km, setKm] = useState(5);
@@ -67,6 +72,13 @@ export default function PasoTortilleria(p: Props) {
     if (t.length < 2) return setResultados([]);
     let vigente = true;
     setBuscando(true);
+    // Con el estado descargado se busca en el teléfono (sin internet y más rápido)
+    const local = referencia && cubre(referencia) ? cercanas(referencia, 50, t, 30) : p.zona.municipio && delMunicipio(p.zona.municipio.clave, "", undefined, 1).length ? delMunicipio(p.zona.municipio.clave, t, undefined, 30) : null;
+    if (local) {
+      setResultados(local);
+      setBuscando(false);
+      return;
+    }
     const timer = setTimeout(() => {
       const qs = new URLSearchParams({ q: t, limite: "30" });
       if (referencia) {
@@ -84,7 +96,7 @@ export default function PasoTortilleria(p: Props) {
       clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, marcando, referencia?.lat, referencia?.lng, p.zona.municipio?.clave]);
+  }, [q, marcando, referencia?.lat, referencia?.lng, p.zona.municipio?.clave, versionCatalogo]);
 
   // Lista de respaldo: radio alrededor de mi ubicación o el municipio
   useEffect(() => {
@@ -106,6 +118,18 @@ export default function PasoTortilleria(p: Props) {
       qs.set("lng", String(centroMapa.lng));
       qs.set("km", "5");
     } else return;
+
+    // Con el estado descargado la lista sale del teléfono: cercanía calculada con el GPS, funciona sin señal
+    const delTelefono = miPos && km > 0 ? (cubre(miPos) ? cercanas(miPos, km, q.trim()) : null)
+      : p.zona.municipio ? (delMunicipio(p.zona.municipio.clave, "", undefined, 1).length ? delMunicipio(p.zona.municipio.clave, q.trim(), miPos) : null)
+      : centroMapa && cubre(centroMapa) ? cercanas(centroMapa, 5, q.trim())
+      : null;
+    if (delTelefono) {
+      setLista(delTelefono);
+      setVisibles(60);
+      setCargandoLista(false);
+      return;
+    }
     let vigente = true;
     setCargandoLista(true);
     const t = setTimeout(
@@ -121,7 +145,7 @@ export default function PasoTortilleria(p: Props) {
       clearTimeout(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vista, marcando, q, km, miPos?.lat, miPos?.lng, p.zona.municipio?.clave, centroMapa?.lat, centroMapa?.lng]);
+  }, [vista, marcando, q, km, miPos?.lat, miPos?.lng, p.zona.municipio?.clave, centroMapa?.lat, centroMapa?.lng, versionCatalogo]);
 
   const elegirResultado = (r: Resultado) => {
     setQ("");
@@ -243,8 +267,17 @@ export default function PasoTortilleria(p: Props) {
                 onPin={(lat, lng) => p.setPin({ lat, lng })}
                 onEstado={setEstadoMapa}
                 onCentro={(lat, lng) => setCentroMapa({ lat, lng })}
+                onRespaldo={setSinMapaBase}
               />
             </Suspense>
+
+            {sinMapaBase && (
+              <div className="pointer-events-none absolute inset-x-0 top-14 flex justify-center px-3">
+                <p className="flex max-w-sm items-center gap-1.5 rounded-xl bg-stone-900/85 px-3 py-1.5 text-center text-[11px] font-medium leading-snug text-white shadow-lg">
+                  <WifiOff className="h-3.5 w-3.5 shrink-0" aria-hidden /> Sin conexión: el mapa no muestra calles, pero puedes elegir por cercanía
+                </p>
+              </div>
+            )}
 
             {/* Estado del mapa */}
             {!marcando && (
@@ -303,6 +336,7 @@ export default function PasoTortilleria(p: Props) {
                       {t.domicilio ?? "Sin domicilio"}
                       {t.distancia_m != null && ` · ${metros(t.distancia_m)}`}
                       {t.estatus === "pendiente" && " · por validar"}
+                      {t.estatus === "porenviar" && " · por enviar"}
                     </div>
                   </Opcion>
                 ))}
@@ -359,6 +393,7 @@ export default function PasoTortilleria(p: Props) {
                           </span>
                         )}
                         {sel.estatus === "pendiente" && <span className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700 ring-1 ring-amber-200">Por validar</span>}
+                        {sel.estatus === "porenviar" && <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600 ring-1 ring-slate-300">Por enviar</span>}
                       </p>
                     </div>
                     <button onClick={() => setSel(null)} aria-label="Cerrar" className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-stone-400 hover:bg-stone-100">

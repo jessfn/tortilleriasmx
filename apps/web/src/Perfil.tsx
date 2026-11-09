@@ -1,10 +1,104 @@
 import { useState } from "react";
-import { CalendarDays, KeyRound, Loader2, LogOut, Mail, Save, ShieldCheck, UserRound } from "lucide-react";
+import { CalendarDays, CloudOff, KeyRound, Loader2, LogOut, Mail, RefreshCw, Save, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { cambioPasswordSchema, normalizarTexto, perfilSchema, PASSWORD_MIN } from "@tortillerias/shared";
 import { api, guardarSesion, leerSesion, type Sesion } from "./api";
 import { Aviso, Boton, Campo, Tarjeta } from "./ui";
+import { actualizarCatalogos, quitarEstado } from "./catalogo";
+import { SelectorDescarga, useEstadosDescargados } from "./Arranque";
+import { useEnLinea } from "./Conexion";
+
 
 const ROLES: Record<string, string> = { capturista: "Usuario", supervisor: "Supervisor", admin: "Administrador" };
+
+const cuandoSeBajo = (iso: string) => {
+  const d = new Date(iso);
+  const hora = d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return d.toDateString() === new Date().toDateString() ? `hoy ${hora}` : `${d.toLocaleDateString("es-MX", { day: "2-digit", month: "short" })} ${hora}`;
+};
+
+/** Estados guardados en el teléfono para trabajar sin señal (solo capturistas) */
+function TrabajarSinSenal() {
+  const estados = useEstadosDescargados();
+  const enLinea = useEnLinea();
+  const [actualizando, setActualizando] = useState(false);
+  const [quitando, setQuitando] = useState<string>();
+  const [msg, setMsg] = useState<string>();
+
+  async function actualizar() {
+    setActualizando(true);
+    setMsg(undefined);
+    try {
+      const n = await actualizarCatalogos();
+      setMsg(n ? `Se actualizaron ${n} ${n === 1 ? "estado" : "estados"}` : "Todo está al día");
+    } catch {
+      setMsg("No se pudo actualizar. Intenta de nuevo con señal.");
+    } finally {
+      setActualizando(false);
+    }
+  }
+
+  return (
+    <Tarjeta className="space-y-3">
+      <h2 className="flex items-center gap-2 text-sm font-bold">
+        <CloudOff className="h-4 w-4 text-guinda" aria-hidden /> Trabajar sin señal
+      </h2>
+      {estados.length === 0 ? (
+        <p className="text-xs text-stone-500">Aún no tienes ningún estado en tu teléfono. Descárgalo con señal para ver el mapa y elegir tortillerías sin internet.</p>
+      ) : (
+        <ul className="space-y-2">
+          {estados.map((e) => (
+            <li key={e.clave} className="rounded-xl bg-stone-50 p-2.5 ring-1 ring-stone-200">
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 text-sm">
+                  <b className="block truncate">{e.nombre}</b>
+                  <span className="text-xs text-stone-500">
+                    {e.total.toLocaleString("es-MX")} tortillerías · actualizado {cuandoSeBajo(e.descargado)}
+                  </span>
+                </span>
+                {quitando !== e.clave && (
+                  <button onClick={() => setQuitando(e.clave)} className="grid h-9 shrink-0 place-items-center rounded-lg px-2.5 text-xs font-semibold text-red-600 hover:bg-red-50" aria-label={`Quitar ${e.nombre}`}>
+                    <span className="flex items-center gap-1">
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden /> Quitar
+                    </span>
+                  </button>
+                )}
+              </div>
+              {quitando === e.clave && (
+                <div className="mt-2 space-y-2 rounded-lg bg-red-50 p-2 ring-1 ring-red-200">
+                  <p className="text-xs font-semibold text-red-800">¿Quitar {e.nombre} del teléfono? Sin señal ya no podrás elegir sus tortillerías hasta volver a descargarlo.</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Boton variante="secundario" className="!min-h-10 !text-sm" onClick={() => setQuitando(undefined)}>
+                      Cancelar
+                    </Boton>
+                    <Boton
+                      variante="peligro"
+                      className="!min-h-10 !text-sm"
+                      onClick={() => {
+                        void quitarEstado(e.clave);
+                        setQuitando(undefined);
+                      }}
+                    >
+                      Sí, quitar
+                    </Boton>
+                  </div>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {estados.length > 0 && (
+        <Boton variante="secundario" onClick={actualizar} disabled={actualizando || !enLinea} icono={actualizando ? Loader2 : RefreshCw}>
+          Actualizar ahora
+        </Boton>
+      )}
+      {msg && <Aviso tipo="info">{msg}</Aviso>}
+      <div className="border-t border-stone-200 pt-3">
+        <SelectorDescarga yaDescargados={estados.map((e) => e.clave)} etiqueta="Agregar otro estado" />
+      </div>
+    </Tarjeta>
+  );
+}
 
 /** Pestaña de perfil: datos de la cuenta, cambio de contraseña y cierre de sesión (usuarios y personal) */
 export default function Perfil({ sesion, alActualizar, alSalir }: { sesion: Sesion; alActualizar: (s: Sesion) => void; alSalir: () => void }) {
@@ -68,6 +162,8 @@ export default function Perfil({ sesion, alActualizar, alSalir }: { sesion: Sesi
           </p>
         </div>
       </Tarjeta>
+
+      {u.rol === "capturista" && <TrabajarSinSenal />}
 
       <Tarjeta className="space-y-3">
         <h2 className="flex items-center gap-2 text-sm font-bold">

@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
-import { Check, CheckCircle2, ClipboardList, Clock, Home, MapPin, PackageOpen, Plus, RefreshCw, Store, UserRound, Wheat, XCircle, Layers, Loader2 } from "lucide-react";
-import { api, type Sesion } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Check, CheckCircle2, ClipboardList, Clock, Home, MapPin, PackageOpen, Plus, RefreshCw, Store, UserRound, Wheat, XCircle, Layers, Loader2, WifiOff } from "lucide-react";
+import { api, ApiError, type Sesion } from "./api";
 import Perfil from "./Perfil";
 import { CLAVES, usePersistente } from "./persist";
 import { Boton, Dato, HojaModal, Insignia, PanelShell, Tarjeta, Vacio } from "./ui";
+import { TarjetaBandeja, useBandeja } from "./BandejaPendientes";
+import { TarjetaDescargaEstado } from "./Arranque";
+import { diaMexico, type Paquete } from "./bd";
+import { guardarMisTortillerias, idReal, leerMisTortillerias, pideAtencion } from "./bandeja";
 import type { Punto } from "./MapaTortillerias";
 
 type Resumen = { registros: number; pendientes: number; aprobados: number; rechazados: number; tortillerias: number };
@@ -11,6 +15,8 @@ type Ultimo = { precio: number; fecha: string } | null;
 type MiTortilleria = {
   id: string; nombre: string; domicilio: string | null; estatus: string; origen: string; municipio: string | null; estado: string | null;
   lat: number | null; lng: number | null; ultimo_maiz: Ultimo; ultima_masa: Ultimo; maiz_hoy: boolean; masa_hoy: boolean;
+  /** tiene capturas guardadas en este teléfono que todavía no llegan al servidor */
+  porEnviar?: boolean;
 };
 type Registro = {
   tortilleria_id: string;
@@ -19,12 +25,47 @@ type Registro = {
 };
 
 const PRODUCTO = { maiz: { t: "Maíz", i: Wheat }, harina: { t: "Harina", i: PackageOpen }, masa: { t: "Masa", i: Layers } };
+const fechaHora = (s: string) => (s.length <= 10 ? fechaDia(s) : new Date(s).toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }));
 const fecha = (s: string) => new Date(s).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
 /** Las fechas de captura vienen como "AAAA-MM-DD" (día en hora de México): se arman sin pasar por UTC para no recorrer el día */
 const fechaDia = (s: string) => {
   const [a, m, d] = s.slice(0, 10).split("-").map(Number);
   return new Date(a, m - 1, d).toLocaleDateString("es-MX", { day: "2-digit", month: "short" });
 };
+
+/**
+ * Mezcla lo que está en la bandeja del teléfono con la lista del servidor: lo pendiente cuenta para "Capturado hoy",
+ * se marca "Por enviar" y las tortillerías nuevas que aún no llegan al servidor también aparecen.
+ */
+async function mezclarBandeja(filas: MiTortilleria[], paquetes: Paquete[]): Promise<MiTortilleria[]> {
+  const hoy = diaMexico();
+  const lista = filas.map((f) => ({ ...f }));
+  const nuevas: MiTortilleria[] = [];
+  // más antiguo primero: si hay dos precios del mismo producto, queda el más reciente
+  for (const p of [...paquetes].sort((a, b) => a.capturadoEn.localeCompare(b.capturadoEn))) {
+    if (!pideAtencion(p) || p.estado === "error") continue;
+    const id = (await idReal(p.tortilleria.id)) ?? p.tortilleria.id;
+    let f = lista.find((x) => x.id === id) ?? nuevas.find((x) => x.id === id);
+    if (!f) {
+      f = {
+        id, nombre: p.tortilleria.nombre, domicilio: p.tortilleria.domicilio, estatus: "pendiente", origen: p.nueva ? "nueva" : "denue", municipio: null, estado: null,
+        lat: p.tortilleria.lat, lng: p.tortilleria.lng, ultimo_maiz: null, ultima_masa: null, maiz_hoy: false, masa_hoy: false,
+      };
+      nuevas.push(f);
+    }
+    f.porEnviar = true;
+    const dia = diaMexico(p.capturadoEn);
+    for (const pr of p.precios) {
+      if (pr.estado === "conflicto") continue;
+      const campo = pr.producto === "maiz" ? "ultimo_maiz" : "ultima_masa";
+      const actual = f[campo];
+      if (!actual || actual.fecha.slice(0, 10) <= dia) f[campo] = { precio: pr.precioKg, fecha: dia };
+      if (dia === hoy) f[pr.producto === "maiz" ? "maiz_hoy" : "masa_hoy"] = true;
+    }
+  }
+  // lo que tiene algo por enviar va primero
+  return [...nuevas.reverse(), ...lista.filter((x) => x.porEnviar), ...lista.filter((x) => !x.porEnviar)];
+}
 
 /** Una tortillería del censador, con su último precio de cada producto y el botón para actualizarlo */
 function TarjetaTortilleria({ t, alActualizar, alAbrir }: { t: MiTortilleria; alActualizar: (t: MiTortilleria) => void; alAbrir: (t: MiTortilleria) => void }) {
@@ -51,7 +92,10 @@ function TarjetaTortilleria({ t, alActualizar, alAbrir }: { t: MiTortilleria; al
         <span className="min-w-0 flex-1">
           <span className="flex items-start justify-between gap-2">
             <span className="truncate font-semibold leading-tight">{t.nombre}</span>
-            <Insignia estatus={t.estatus} />
+            <span className="flex shrink-0 items-center gap-1">
+              {t.porEnviar && <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-300">Por enviar</span>}
+              <Insignia estatus={t.estatus} />
+            </span>
           </span>
           <span className="mt-0.5 flex items-center gap-1 truncate text-xs text-stone-500">
             <MapPin className="h-3 w-3 shrink-0" aria-hidden /> {t.domicilio || [t.municipio, t.estado].filter(Boolean).join(", ") || "Sin domicilio"}
@@ -78,18 +122,57 @@ export default function PanelUsuario({
   const [tortillerias, setTortillerias] = useState<MiTortilleria[]>();
   const [detalle, setDetalle] = useState<MiTortilleria>();
   const [error, setError] = useState("");
+  // Copia guardada en el teléfono (cuando no hay señal): se muestra con la fecha en que se guardó
+  const [guardadoEn, setGuardadoEn] = useState<string>();
+  const [delServidor, setDelServidor] = useState<MiTortilleria[]>();
+  const paquetes = useBandeja(sesion.usuario.id);
 
   const cargar = useCallback(() => {
     Promise.all([api<Resumen>("/mis/resumen"), api<Registro[]>("/mis/registros"), api<MiTortilleria[]>("/mis/tortillerias")])
       .then(([a, b, c]) => {
         setResumen(a);
         setRegistros(b);
-        setTortillerias(c);
+        setDelServidor(c);
+        setGuardadoEn(undefined);
         setError("");
+        void guardarMisTortillerias(c); // sirve para verlas y para el límite diario sin conexión
       })
-      .catch((e) => setError(e.message));
+      .catch(async (e) => {
+        if (e instanceof ApiError && e.status === 0) {
+          const m = await leerMisTortillerias<MiTortilleria>();
+          if (m) {
+            setDelServidor(m.filas);
+            setGuardadoEn(m.guardadoEn ?? m.fecha);
+            return setError("");
+          }
+        }
+        setError(e.message);
+      });
   }, []);
   useEffect(cargar, [cargar]);
+
+  // La lista que se ve = lo del servidor (o su última copia) + lo que hay en la bandeja
+  useEffect(() => {
+    if (!delServidor) return;
+    let vigente = true;
+    void mezclarBandeja(delServidor, paquetes).then((m) => vigente && setTortillerias(m));
+    return () => {
+      vigente = false;
+    };
+  }, [delServidor, paquetes]);
+
+  // Cuando se envía algo de la bandeja, la lista del servidor se pone al día
+  const enviados = paquetes.filter((p) => p.estado === "enviado").length;
+  const primeraVez = useRef(true);
+  useEffect(() => {
+    if (primeraVez.current) return void (primeraVez.current = false);
+    if (navigator.onLine) cargar();
+  }, [enviados, cargar]);
+  // Al volver la señal también
+  useEffect(() => {
+    window.addEventListener("online", cargar);
+    return () => window.removeEventListener("online", cargar);
+  }, [cargar]);
 
   const actualizar = (t: MiTortilleria) =>
     alActualizarPrecio({ id: t.id, nombre: t.nombre, domicilio: t.domicilio, estatus: t.estatus, lat: t.lat ?? 0, lng: t.lng ?? 0, razon_social: null });
@@ -111,8 +194,16 @@ export default function PanelUsuario({
     >
       {error && <Tarjeta className="text-sm text-red-600">{error}</Tarjeta>}
 
+      {guardadoEn && (
+        <Tarjeta className="flex items-center gap-2 text-xs text-stone-600">
+          <WifiOff className="h-4 w-4 shrink-0 text-stone-400" aria-hidden /> Datos guardados el {fechaHora(guardadoEn)}
+        </Tarjeta>
+      )}
+
       {tab === "inicio" && (
         <>
+          <TarjetaBandeja paquetes={paquetes} />
+          <TarjetaDescargaEstado />
           <button
             onClick={alCapturar}
             className="relative flex w-full items-center gap-4 overflow-hidden rounded-3xl bg-gradient-to-br from-guinda to-guinda-oscuro p-5 text-left text-white shadow-lg shadow-guinda/30 transition active:scale-[.98]"

@@ -110,10 +110,10 @@ type MisFilas = { fecha: string; filas: { id: string; maiz_hoy: boolean; masa_ho
 
 /** Copia de "Mis tortillerías" guardada en el teléfono: sirve para el límite diario y para verlas sin conexión */
 export async function guardarMisTortillerias(filas: any[]) {
-  await kvGuardar("misTortillerias", { fecha: diaMexico(), usuarioId: leerSesion()?.usuario.id, filas });
+  await kvGuardar("misTortillerias", { fecha: diaMexico(), guardadoEn: new Date().toISOString(), usuarioId: leerSesion()?.usuario.id, filas });
 }
-export async function leerMisTortillerias<T = any>(): Promise<{ fecha: string; usuarioId?: string; filas: T[] } | undefined> {
-  const m = await kvLeer<{ fecha: string; usuarioId?: string; filas: T[] }>("misTortillerias");
+export async function leerMisTortillerias<T = any>(): Promise<{ fecha: string; guardadoEn?: string; usuarioId?: string; filas: T[] } | undefined> {
+  const m = await kvLeer<{ fecha: string; guardadoEn?: string; usuarioId?: string; filas: T[] }>("misTortillerias");
   return m && m.usuarioId === leerSesion()?.usuario.id ? m : undefined;
 }
 

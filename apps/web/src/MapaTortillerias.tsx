@@ -1,7 +1,8 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import maplibregl, { type GeoJSONSource } from "maplibre-gl";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import maplibregl, { type GeoJSONSource, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { api } from "./api";
+import { alCambiarCatalogo, cubre, enCaja } from "./catalogo";
 
 export type Punto = { id: string; nombre: string; domicilio: string | null; estatus: string; lat: number; lng: number; razon_social: string | null };
 export type EstadoMapa = { lejano: boolean; cargando: boolean; total: number };
@@ -22,10 +23,15 @@ type Props = {
   onPin: (lat: number, lng: number) => void;
   onEstado: (e: EstadoMapa) => void;
   onCentro?: (lat: number, lng: number) => void;
+  /** true cuando no hay mapa base (sin señal y sin caché): solo se ve un fondo liso con los puntos */
+  onRespaldo?: (activo: boolean) => void;
 };
 
 // Estilo vectorial moderno y gratuito (OpenFreeMap)
 const ESTILO = "https://tiles.openfreemap.org/styles/positron";
+// Sin señal (y sin el mapa en caché): fondo liso crema. Sin "glyphs" no hay texto, por eso los grupos se dibujan sin número.
+const ESTILO_RESPALDO: StyleSpecification = { version: 8, sources: {}, layers: [{ id: "fondo", type: "background", paint: { "background-color": "#F5F1EA" } }] };
+const POR_ENVIAR = "#64748B";
 const MEXICO = { lat: 23.6, lng: -102.5 };
 const ZOOM_MIN_DATOS = 9.5; // más lejos que esto el área tiene demasiadas tortillerías
 const GUINDA = "#9D2449";
@@ -53,6 +59,8 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
   const cont = useRef<HTMLDivElement>(null);
   const mapa = useRef<maplibregl.Map | null>(null);
   const listo = useRef(false);
+  const respaldo = useRef(false);
+  const [creado, setCreado] = useState(false);
   const pinM = useRef<maplibregl.Marker | null>(null);
   const azul = useRef<maplibregl.Marker | null>(null);
   const datos = useRef<Punto[]>([]);
@@ -93,6 +101,18 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
     }
     const b = m.getBounds();
     ctrl.current?.abort();
+    // Con el estado descargado se usa el catálogo del teléfono: más rápido y funciona sin internet
+    if (cubre({ lat: c.lat, lng: c.lng })) {
+      const r = enCaja(b.getWest(), b.getSouth(), b.getEast(), b.getNorth());
+      if (r === "demasiadas") {
+        datos.current = [];
+        pintar();
+        return p.current.onEstado({ lejano: true, cargando: false, total: 0 });
+      }
+      datos.current = r;
+      pintar();
+      return p.current.onEstado({ lejano: false, cargando: false, total: r.length });
+    }
     const c1 = new AbortController();
     ctrl.current = c1;
     p.current.onEstado({ lejano: false, cargando: true, total: datos.current.length });
@@ -119,10 +139,35 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
 
   // Crear el mapa
   useEffect(() => {
+    let cancelado = false;
+    let limpiar = () => {};
+    void (async () => {
+      // Sin señal: si el mapa base no está en caché se usa de una vez el fondo liso (el mapa nunca queda en blanco ni con error)
+      let estilo: string | StyleSpecification = ESTILO;
+      if (!navigator.onLine) {
+        const enCache = await caches.match(ESTILO).catch(() => undefined);
+        if (!enCache) {
+          estilo = ESTILO_RESPALDO;
+          respaldo.current = true;
+          p.current.onRespaldo?.(true);
+        }
+      }
+      if (cancelado || !cont.current) return;
+      limpiar = crearMapa(estilo);
+      setCreado(true);
+    })();
+    return () => {
+      cancelado = true;
+      limpiar();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function crearMapa(estilo: string | StyleSpecification) {
     const inicio = props.pos ?? props.centro ?? MEXICO;
     const m = new maplibregl.Map({
       container: cont.current!,
-      style: ESTILO,
+      style: estilo,
       center: [inicio.lng, inicio.lat],
       zoom: props.pos ? 16 : props.centro ? 13 : 4.5,
       attributionControl: { compact: true },
@@ -141,19 +186,26 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
           "circle-radius": ["step", ["get", "point_count"], 16, 10, 20, 50, 25, 200, 30],
         },
       });
+      // El número del grupo necesita fuentes del servidor de mapas: en el fondo liso el tamaño del círculo indica cuántas hay
+      if (!respaldo.current)
+        m.addLayer({
+          id: "grupos-n", type: "symbol", source: "tortillerias", filter: ["has", "point_count"],
+          layout: { "text-field": ["get", "point_count_abbreviated"], "text-font": ["Noto Sans Bold"], "text-size": 12, "text-allow-overlap": true },
+          paint: { "text-color": "#fff" },
+        });
       m.addLayer({
-        id: "grupos-n", type: "symbol", source: "tortillerias", filter: ["has", "point_count"],
-        layout: { "text-field": ["get", "point_count_abbreviated"], "text-font": ["Noto Sans Bold"], "text-size": 12, "text-allow-overlap": true },
-        paint: { "text-color": "#fff" },
-      });
-      m.addLayer({
-        id: "puntos", type: "circle", source: "tortillerias", filter: ["all", ["!", ["has", "point_count"]], ["!=", ["get", "estatus"], "pendiente"]],
+        id: "puntos", type: "circle", source: "tortillerias", filter: ["all", ["!", ["has", "point_count"]], ["!=", ["get", "estatus"], "pendiente"], ["!=", ["get", "estatus"], "porenviar"]],
         paint: { "circle-color": GUINDA, "circle-radius": 8, "circle-stroke-color": "#fff", "circle-stroke-width": 2.5 },
       });
       // "por validar": dorado con borde oscuro (se distingue de las validadas)
       m.addLayer({
         id: "puntos-pendientes", type: "circle", source: "tortillerias", filter: ["all", ["!", ["has", "point_count"]], ["==", ["get", "estatus"], "pendiente"]],
         paint: { "circle-color": DORADO, "circle-radius": 8.5, "circle-stroke-color": "#611232", "circle-stroke-width": 2.5 },
+      });
+      // "por enviar": alta hecha en este teléfono que todavía no llega al servidor
+      m.addLayer({
+        id: "puntos-porenviar", type: "circle", source: "tortillerias", filter: ["all", ["!", ["has", "point_count"]], ["==", ["get", "estatus"], "porenviar"]],
+        paint: { "circle-color": POR_ENVIAR, "circle-radius": 8.5, "circle-stroke-color": DORADO, "circle-stroke-width": 3 },
       });
       m.addLayer({
         id: "seleccion", type: "circle", source: "tortillerias", filter: ["==", ["get", "id"], p.current.seleccionId ?? ""],
@@ -174,7 +226,7 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
         fuente.getClusterExpansionZoom(g.properties!.cluster_id).then((z) => m.easeTo({ center: (g.geometry as any).coordinates, zoom: z + 0.5 }));
         return;
       }
-      const f = m.queryRenderedFeatures(e.point, { layers: ["puntos", "puntos-pendientes"] })[0];
+      const f = m.queryRenderedFeatures(e.point, { layers: ["puntos", "puntos-pendientes", "puntos-porenviar"] })[0];
       if (f) {
         const [lng, lat] = (f.geometry as any).coordinates as [number, number];
         const pr = f.properties as any;
@@ -182,22 +234,46 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
       }
       p.current.onSeleccion(null);
     });
-    for (const capa of ["grupos", "puntos", "puntos-pendientes"]) {
+    for (const capa of ["grupos", "puntos", "puntos-pendientes", "puntos-porenviar"]) {
       m.on("mouseenter", capa, () => p.current.modo === "elegir" && (m.getCanvas().style.cursor = "pointer"));
       m.on("mouseleave", capa, () => (m.getCanvas().style.cursor = ""));
     }
+
+    // Si el mapa base no carga (sin señal y sin caché) se cambia al fondo liso para que nunca quede en blanco
+    m.on("error", () => {
+      if (listo.current || respaldo.current) return;
+      respaldo.current = true;
+      p.current.onRespaldo?.(true);
+      m.setStyle(ESTILO_RESPALDO);
+    });
+    // Al volver la señal se intenta recuperar el mapa con calles
+    const alVolver = () => {
+      if (!respaldo.current) return;
+      respaldo.current = false;
+      listo.current = false;
+      p.current.onRespaldo?.(false);
+      m.once("style.load", iniciar);
+      m.setStyle(ESTILO);
+    };
+    window.addEventListener("online", alVolver);
+    // Cuando termina una descarga o se agrega una tortillería nueva del teléfono, se redibuja
+    const sinCatalogo = alCambiarCatalogo(() => {
+      if (listo.current) programar();
+    });
 
     const ro = new ResizeObserver(() => m.resize());
     ro.observe(cont.current!);
     return () => {
       ro.disconnect();
+      sinCatalogo();
+      window.removeEventListener("online", alVolver);
       window.clearTimeout(temporizador.current);
       ctrl.current?.abort();
       m.remove();
+      mapa.current = null;
       listo.current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }
 
   // Punto azul "Estás aquí" y vuelo a la primera ubicación
   const primeraPos = useRef(true);
@@ -210,12 +286,12 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
       primeraPos.current = false;
       m.flyTo({ center: [props.pos.lng, props.pos.lat], zoom: 16, duration: 900 });
     }
-  }, [props.pos?.lat, props.pos?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [creado, props.pos?.lat, props.pos?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sin GPS: mirar al municipio elegido
   useEffect(() => {
     if (!props.pos && props.centro) mapa.current?.flyTo({ center: [props.centro.lng, props.centro.lat], zoom: 13, duration: 800 });
-  }, [props.centro?.lat, props.centro?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [creado, props.centro?.lat, props.centro?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Filtro por nombre o calle
   useEffect(() => {
@@ -252,7 +328,7 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
     } else {
       pinM.current.setLngLat([props.pin.lng, props.pin.lat]);
     }
-  }, [props.modo, props.pin?.lat, props.pin?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [creado, props.modo, props.pin?.lat, props.pin?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return <div ref={cont} className="h-full w-full overflow-hidden" role="application" aria-label="Mapa de tortillerías" />;
 });

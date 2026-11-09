@@ -31,6 +31,18 @@ export default defineConfig({
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
+        // Mapa sin señal: lo que el censador ya vio con internet (estilo, sprites, fuentes y teselas de OpenFreeMap) queda en el teléfono
+        runtimeCaching: [
+          {
+            urlPattern: ({ url }: { url: URL }) => url.hostname === "tiles.openfreemap.org",
+            handler: "CacheFirst",
+            options: {
+              cacheName: "mapa",
+              expiration: { maxEntries: 3000, maxAgeSeconds: 30 * 24 * 3600 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+        ],
       },
     }),
   ],
