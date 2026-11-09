@@ -7,10 +7,11 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "echo \"sin pruebas aun\""
+    "test": "vitest run"
   },
   "dependencies": {
     "@tortillerias/shared": "workspace:*",
+    "idb": "8.0.0",
     "lucide-react": "^0.460.0",
     "maplibre-gl": "^4.7.1",
     "react": "^18.3.1",

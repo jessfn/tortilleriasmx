@@ -25,7 +25,7 @@ const bboxSchema = z
 export const MAX_PUNTOS_MAPA = 5000;
 
 const uuid = z.string().uuid();
-const LIMITE_ESCRITURA = { rateLimit: { max: 20, timeWindow: "1 minute" } };
+const LIMITE_ESCRITURA = { rateLimit: { max: 60, timeWindow: "1 minute" } };
 
 export function rutasTortillerias(app: FastifyInstance) {
   // Búsqueda pública por municipio, nombre o calle y cercanía (solo datos no personales). Con km devuelve TODAS las del radio.
@@ -81,8 +81,13 @@ export function rutasTortillerias(app: FastifyInstance) {
     const p = nuevaTortilleriaSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
     const d = p.data;
+    // Reintento de algo que ya llegó: se responde con la misma tortillería
+    if (d.idCliente) {
+      const ya = await pool.query("SELECT id, estatus FROM tortillerias WHERE id_cliente = $1", [d.idCliente]);
+      if (ya.rowCount) return reply.code(200).send({ id: ya.rows[0].id, estatus: ya.rows[0].estatus, existente: true });
+    }
     const punto = "ST_SetSRID(ST_MakePoint($1,$2),4326)";
-    const cercanas = await pool.query(
+    const cercanas = d.confirmoNoDuplicado ? { rowCount: 0, rows: [] } : await pool.query(
       `SELECT id, nombre, domicilio FROM tortillerias
         WHERE ST_DWithin(geom::geography, ${punto}::geography, 50) AND lower(nombre) = lower($3)`,
       [d.lng, d.lat, d.nombre],
@@ -97,17 +102,17 @@ export function rutasTortillerias(app: FastifyInstance) {
     const { rows } = await pool.query(
       `INSERT INTO tortillerias(nombre, domicilio, estado_clave, municipio_clave, geom, origen, estatus, creado_por,
                                 localidad, tipo_vial, calle, numero_ext, numero_int, colonia, codigo_postal, telefono, correo,
-                                personal_ocupado, codigo_scian, fecha_alta)
+                                personal_ocupado, codigo_scian, fecha_alta, id_cliente)
        VALUES ($3,$4,$5,$6,${punto},'nueva','pendiente',$7,
-               $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'311830', to_char(now() AT TIME ZONE 'America/Mexico_City', 'YYYY-MM'))
+               $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'311830', to_char(now() AT TIME ZONE 'America/Mexico_City', 'YYYY-MM'), $18)
        RETURNING id`,
       [
         d.lng, d.lat, d.nombre, domicilio, d.estadoClave, d.municipioClave, req.user.sub,
         d.localidad, d.tipoVial, d.calle, d.numeroExt, d.numeroInt ?? null, d.colonia, d.codigoPostal, d.telefono ?? null, d.correo ?? null,
-        d.personalOcupado,
+        d.personalOcupado, d.idCliente ?? null,
       ],
     );
-    await auditar(req.user.sub, "crear_tortilleria", "tortillerias", rows[0].id);
+    await auditar(req.user.sub, d.confirmoNoDuplicado ? "crear_tortilleria_confirmada" : "crear_tortilleria", "tortillerias", rows[0].id);
     return reply.code(201).send({ id: rows[0].id, estatus: "pendiente" });
   });
 
@@ -148,6 +153,7 @@ export function rutasTortillerias(app: FastifyInstance) {
       ],
     );
     if (ins.rowCount) {
+      await pool.query("UPDATE tortillerias SET actualizado_en = now() WHERE id = $1", [req.params.id]);
       await pool.query("INSERT INTO consentimientos(tortilleria_id, usuario_id, version) VALUES ($1,$2,$3)", [req.params.id, req.user.sub, "v1"]);
       await auditar(req.user.sub, "crear_datos_fiscales", "tortilleria_fiscal", req.params.id);
       return reply.code(201).send({ tipoPersona: f.tipoPersona, razonSocial: f.razonSocial, rfc: enmascarar(f.rfc), celular: f.celular ? enmascarar(f.celular) : null, existente: false });

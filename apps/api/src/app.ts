@@ -10,6 +10,7 @@ import { rutasFotos } from "./rutas/fotos.js";
 import { rutasPanel } from "./rutas/panel.js";
 import { rutasAdmin } from "./rutas/admin.js";
 import { rutasAdminMapa } from "./rutas/admin-mapa.js";
+import { rutasCatalogoEstado } from "./rutas/catalogo-estado.js";
 
 export async function crearApp() {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test", bodyLimit: 1_000_000 });
@@ -32,5 +33,6 @@ export async function crearApp() {
   rutasPanel(app);
   rutasAdmin(app);
   rutasAdminMapa(app);
+  rutasCatalogoEstado(app);
   return app;
 }

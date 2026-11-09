@@ -39,7 +39,7 @@ export function registrarAuth(app: FastifyInstance) {
   app.decorate("soloRoles", (...roles: Rol[]) => (req: FastifyRequest, reply: FastifyReply) => verificar(req, reply, roles));
 
   const sesion = (u: { id: string; nombre: string; apellidos: string; rol: Rol; correo: string | null; usuario: string }) => ({
-    token: app.jwt.sign({ sub: u.id, rol: u.rol }, { expiresIn: "12h" }),
+    token: app.jwt.sign({ sub: u.id, rol: u.rol }, { expiresIn: u.rol === "capturista" ? "7d" : "12h" }),
     usuario: { id: u.id, nombre: u.nombre, apellidos: u.apellidos, rol: u.rol, correo: u.correo ?? u.usuario },
   });
 

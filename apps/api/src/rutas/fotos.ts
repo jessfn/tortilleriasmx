@@ -14,13 +14,23 @@ export async function rutasFotos(app: FastifyInstance) {
   await app.register(multipart, { limits: { fileSize: MAX_BYTES, files: 1 } });
 
   // Subida por usuarios registrados (con límite); la consulta exige sesión
-  app.post<{ Params: { id: string } }>("/tortillerias/:id/fotos", { preHandler: app.autenticar, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
+  app.post<{ Params: { id: string } }>("/tortillerias/:id/fotos", { preHandler: app.autenticar, config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const t = await pool.query("SELECT 1 FROM tortillerias WHERE id = $1", [req.params.id]);
     if (!t.rowCount) return reply.code(404).send({ error: "Tortillería no existe" });
 
     const archivo = await req.file();
     if (!archivo) return reply.code(400).send({ error: "Falta el archivo" });
+    // El id del teléfono viaja como campo de texto del formulario (antes del archivo) o en la cabecera
+    const idCliente = (req.headers["x-id-cliente"] as string | undefined) ?? (archivo.fields?.idCliente as { value?: string } | undefined)?.value;
+    if (idCliente !== undefined && !uuid.safeParse(idCliente).success) return reply.code(400).send({ error: "idCliente inválido" });
+    if (idCliente) {
+      const ya = await pool.query("SELECT id FROM fotos WHERE id_cliente = $1", [idCliente]);
+      if (ya.rowCount) {
+        await archivo.file.resume();
+        return reply.code(200).send({ id: ya.rows[0].id, existente: true });
+      }
+    }
     let buf: Buffer;
     try {
       buf = await archivo.toBuffer(); // lanza si excede el límite
@@ -43,8 +53,8 @@ export async function rutasFotos(app: FastifyInstance) {
     await writeFile(path.join(carpeta(), `${id}_min.jpg`), img.miniatura);
 
     await pool.query(
-      "INSERT INTO fotos(id, tortilleria_id, archivo, miniatura, capturista_id) VALUES ($1,$2,$3,$4,$5)",
-      [id, req.params.id, `${id}.jpg`, `${id}_min.jpg`, req.user.sub],
+      "INSERT INTO fotos(id, tortilleria_id, archivo, miniatura, capturista_id, id_cliente) VALUES ($1,$2,$3,$4,$5,$6)",
+      [id, req.params.id, `${id}.jpg`, `${id}_min.jpg`, req.user.sub, idCliente ?? null],
     );
     await pool.query("UPDATE tortillerias SET foto_principal = $1 WHERE id = $2 AND foto_principal IS NULL", [`${id}.jpg`, req.params.id]);
     await auditar(req.user.sub, "subir_foto", "fotos", id);

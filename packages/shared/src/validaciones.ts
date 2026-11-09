@@ -57,6 +57,9 @@ export const capturaPrecioSchema = z.object({
   lat: z.number().min(-90).max(90).optional(),
   lng: z.number().min(-180).max(180).optional(),
   precisionGps: z.number().nonnegative().optional(),
+  // Captura sin conexión: id generado en el teléfono (un reintento no duplica) y hora en que se capturó
+  idCliente: z.string().uuid().optional(),
+  capturadoEn: z.string().datetime({ offset: true }).optional(),
 });
 
 /* ---------------- datos fiscales (de la tortillería, no de quien captura) ---------------- */
@@ -115,5 +118,8 @@ export const nuevaTortilleriaSchema = z.object({
   personalOcupado: z.enum(PERSONAL_OCUPADO),
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
+  idCliente: z.string().uuid().optional(),
+  // El censador ya vio las parecidas y confirma que es otra
+  confirmoNoDuplicado: z.boolean().optional(),
 });
 export type NuevaTortilleria = z.infer<typeof nuevaTortilleriaSchema>;

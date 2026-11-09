@@ -2,6 +2,10 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import sharp from "sharp";
+import { auditar } from "./db.js";
 import { PGlite } from "@electric-sql/pglite";
 import type { FastifyInstance } from "fastify";
 
@@ -23,6 +27,8 @@ vi.mock("./db.js", () => ({
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
 const migracion = readFileSync(path.join(aqui, "../../../db/migrations/006_limite_diario_y_datos_nuevos.sql"), "utf8");
+
+const migracion7 = readFileSync(path.join(aqui, "../../../db/migrations/007_sin_conexion.sql"), "utf8");
 
 const PRE = `
 CREATE DOMAIN geometry AS point;
@@ -61,7 +67,7 @@ CREATE TABLE capturas_precio (
   estatus text NOT NULL DEFAULT 'pendiente', alerta boolean NOT NULL DEFAULT false, origen text NOT NULL DEFAULT 'publica',
   creado_en timestamptz NOT NULL DEFAULT now()
 );
-CREATE TABLE fotos (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tortilleria_id uuid NOT NULL REFERENCES tortillerias(id), archivo text NOT NULL);
+CREATE TABLE fotos (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tortilleria_id uuid NOT NULL REFERENCES tortillerias(id), archivo text NOT NULL, miniatura text, capturista_id uuid);
 CREATE TABLE alertas (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tipo text NOT NULL, captura_id uuid REFERENCES capturas_precio(id));
 CREATE TABLE consentimientos (id bigserial PRIMARY KEY, responsable_id uuid REFERENCES responsables(id), version text NOT NULL, aceptado_en timestamptz NOT NULL DEFAULT now());
 `;
@@ -87,6 +93,8 @@ beforeAll(async () => {
   h.db = new PGlite();
   await h.db.exec(PRE);
   await h.db.exec(migracion); // la migración real
+  await h.db.exec(migracion7);
+  process.env.UPLOADS_DIR = mkdtempSync(path.join(tmpdir(), "fotos-"));
   const u = async (nombre: string, rol: string) => (await q("INSERT INTO usuarios(usuario, rol, correo) VALUES ($1,$2,$1) RETURNING id", [nombre, rol]))[0].id;
   ana = await u("ana@correo.com", "capturista");
   beto = await u("beto@correo.com", "capturista");
@@ -99,7 +107,7 @@ beforeAll(async () => {
   const { crearApp } = await import("./app.js");
   app = await crearApp();
   base = await app.listen({ port: 0, host: "127.0.0.1" });
-}, 60000);
+}, 170000);
 afterAll(async () => {
   await app.close();
 });
@@ -427,5 +435,134 @@ describe("mapa por área visible", () => {
     await q("INSERT INTO tortillerias(nombre, origen, estatus, geom) SELECT 'P' || g, 'denue', 'validada', point(-90 + g * 0.0001, 20) FROM generate_series(1, 5001) g");
     const r = await (await fetch(`${base}/tortillerias/mapa?bbox=-91,19,-89,21`)).json();
     expect(r).toEqual({ demasiadas: true });
+  });
+});
+
+/* ------------------------------------------------------------------ modo sin conexión (C12) */
+
+describe("sin conexión: idempotencia y fecha real de captura", () => {
+  const maiz = (id: string, extra: object = {}) => ({ tortilleriaId: id, producto: "maiz", precioKg: 23, ...extra });
+  let tC: string;
+  const uid1 = "11111111-1111-4111-8111-111111111111";
+  const uid2 = "22222222-2222-4222-8222-222222222222";
+
+  beforeAll(async () => {
+    tC = (await q("INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus) VALUES ('LA SENAL','09','09015', point(-99.15, 19.45),'denue','validada') RETURNING id"))[0].id;
+  });
+
+  it("el mismo idCliente enviado dos veces a /precios deja un solo registro y responde 200 con el mismo id", async () => {
+    const a = await post("/precios", ana, maiz(tC, { idCliente: uid1 }));
+    expect(a.status).toBe(201);
+    const idA = (await a.json()).id;
+    const b = await post("/precios", ana, maiz(tC, { idCliente: uid1 }));
+    expect(b.status).toBe(200);
+    expect(await b.json()).toMatchObject({ id: idA, existente: true });
+    expect((await q("SELECT count(*)::int AS n FROM capturas_precio WHERE tortilleria_id = $1", [tC]))[0].n).toBe(1);
+  });
+
+  it("capturadoEn de ayer 23:30 (México) enviado hoy queda con la fecha de ayer", async () => {
+    const [{ ayer }] = await q("SELECT ((now() AT TIME ZONE 'America/Mexico_City')::date - 1)::text AS ayer");
+    const r = await post("/precios", ana, { tortilleriaId: tC, producto: "masa", precioKg: 15, idCliente: uid2, capturadoEn: `${ayer}T23:30:00-06:00` });
+    expect(r.status).toBe(201);
+    const [c] = await q("SELECT fecha::text AS fecha, capturado_en FROM capturas_precio WHERE id_cliente = $1", [uid2]);
+    expect(c.fecha).toBe(ayer);
+    expect(c.capturado_en).not.toBeNull();
+  });
+
+  it("el precio de ayer (sin conexión) y el de hoy del mismo producto entran los dos; dos de ayer no", async () => {
+    const [{ ayer }] = await q("SELECT ((now() AT TIME ZONE 'America/Mexico_City')::date - 1)::text AS ayer");
+    expect((await post("/precios", ana, { tortilleriaId: tC, producto: "masa", precioKg: 16 })).status).toBe(201); // hoy
+    const otra = await post("/precios", ana, { tortilleriaId: tC, producto: "masa", precioKg: 17, capturadoEn: `${ayer}T10:00:00-06:00` });
+    expect(otra.status).toBe(409); // ayer ya estaba capturado
+  });
+
+  it("rechaza una captura de hace 8 días o de 20 minutos en el futuro", async () => {
+    const hace8 = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    const futuro = new Date(Date.now() + 20 * 60 * 1000).toISOString();
+    expect((await post("/precios", beto, maiz(tC, { capturadoEn: hace8 }))).status).toBe(400);
+    expect((await post("/precios", beto, maiz(tC, { capturadoEn: futuro }))).status).toBe(400);
+    expect((await post("/precios", beto, maiz(tC, { capturadoEn: new Date(Date.now() - 3600 * 1000).toISOString() }))).status).toBe(201);
+  });
+});
+
+describe("sin conexión: tortillería nueva y foto con idCliente", () => {
+  const nueva = {
+    nombre: "Tortilleria Sin Senal", estadoClave: "09", municipioClave: "09015", localidad: "Ciudad de Mexico", tipoVial: "CALLE",
+    calle: "Norte", numeroExt: "SN", colonia: "Centro", codigoPostal: "09700", personalOcupado: "0 a 5 personas", lat: 19.6, lng: -99.3,
+  };
+  const idT = "33333333-3333-4333-8333-333333333333";
+  const idF = "44444444-4444-4444-8444-444444444444";
+  let id: string;
+
+  it("el mismo idCliente no crea otra tortillería", async () => {
+    const a = await post("/tortillerias", ana, { ...nueva, idCliente: idT });
+    expect(a.status).toBe(201);
+    id = (await a.json()).id;
+    const b = await post("/tortillerias", ana, { ...nueva, idCliente: idT });
+    expect(b.status).toBe(200);
+    expect(await b.json()).toMatchObject({ id, existente: true });
+    expect((await q("SELECT count(*)::int AS n FROM tortillerias WHERE id_cliente = $1", [idT]))[0].n).toBe(1);
+  });
+
+  it("confirmoNoDuplicado deja pasar un duplicado a 50 m y queda en auditoría", async () => {
+    const sin = await post("/tortillerias", beto, nueva);
+    expect(sin.status).toBe(409);
+    const con = await post("/tortillerias", beto, { ...nueva, confirmoNoDuplicado: true });
+    expect(con.status).toBe(201);
+    expect(auditar).toHaveBeenCalledWith(beto, "crear_tortilleria_confirmada", "tortillerias", (await con.json()).id);
+  });
+
+  it("la misma foto (idCliente) enviada dos veces deja una sola", async () => {
+    const jpg = await sharp({ create: { width: 900, height: 700, channels: 3, background: "#cc3333" } }).jpeg().toBuffer();
+    const enviar = () => {
+      const fd = new FormData();
+      fd.append("file", new Blob([jpg], { type: "image/jpeg" }), "f.jpg");
+      return fetch(`${base}/tortillerias/${id}/fotos`, { method: "POST", headers: { authorization: auth(ana).authorization, "x-id-cliente": idF }, body: fd });
+    };
+    const a = await enviar();
+    expect(a.status).toBe(201);
+    const idA = (await a.json()).id;
+    const b = await enviar();
+    expect(b.status).toBe(200);
+    expect(await b.json()).toMatchObject({ id: idA, existente: true });
+    expect((await q("SELECT count(*)::int AS n FROM fotos WHERE id_cliente = $1", [idF]))[0].n).toBe(1);
+  });
+});
+
+describe("catálogo por estado para el teléfono", () => {
+  it("solo trae ese estado, sin rechazadas ni sin ubicación, y con tiene_fiscal correcto", async () => {
+    const r = await (await get("/catalogo/estado/09", ana)).json();
+    expect(r.columnas).toEqual(["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal"]);
+    const nombres = r.filas.map((f: any[]) => f[1]);
+    expect(nombres).toContain("LA GUERA");
+    expect(nombres).not.toContain("RECHAZADA");
+    expect(nombres).not.toContain("SIN GEOM");
+    const guera = r.filas.find((f: any[]) => f[1] === "LA GUERA");
+    expect(guera.slice(3, 5)).toEqual([19.43, -99.13]);
+    expect(guera[7]).toBe("JUAN PEREZ SA DE CV");
+    expect((await (await get("/catalogo/estado/99", ana)).json()).filas).toEqual([]);
+  });
+
+  it("pide sesión y valida la clave", async () => {
+    expect((await fetch(`${base}/catalogo/estado/09`)).status).toBe(401);
+    expect((await get("/catalogo/estado/abc", ana)).status).toBe(400);
+  });
+
+  it("la versión cambia al agregar datos fiscales o una tortillería, y sin cambios no vuelve a mandar todo", async () => {
+    const v0 = (await (await get("/catalogo/estado/09", ana)).json()).version;
+    expect(await (await get(`/catalogo/estado/09?version=${v0}`, ana)).json()).toEqual({ sinCambios: true, version: v0 });
+
+    await new Promise((x) => setTimeout(x, 15));
+    const t = (await q("INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus) VALUES ('SIN FISCAL','09','09015', point(-99.3, 19.3),'denue','validada') RETURNING id"))[0].id;
+    const f = await post(`/tortillerias/${t}/fiscal`, ana, { tipoPersona: "moral", rfc: "ABC100101AB1", razonSocial: "El Maiz SA", aceptoAviso: true });
+    expect([200, 201]).toContain(f.status);
+    const c1 = await (await get(`/catalogo/estado/09?version=${v0}`, ana)).json();
+    expect(c1.version).not.toBe(v0);
+    expect(c1.filas.find((x: any[]) => x[0] === t)[8]).toBe(1);
+
+    await new Promise((x) => setTimeout(x, 15));
+    await q("INSERT INTO tortillerias(nombre, estado_clave, geom, origen, estatus) VALUES ('OTRA MAS','09', point(-99.2, 19.4),'nueva','pendiente')");
+    const c2 = await (await get(`/catalogo/estado/09?version=${c1.version}`, ana)).json();
+    expect(c2.version).not.toBe(c1.version);
   });
 });

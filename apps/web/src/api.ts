@@ -22,7 +22,7 @@ export function guardarSesion(s: Sesion | null) {
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string, public cuerpo?: any) {
+  constructor(public status: number, message: string, public cuerpo?: any, public reintentarEnSeg?: number) {
     super(message);
   }
 }
@@ -37,9 +37,9 @@ export async function apiImagenUrl(ruta: string): Promise<string> {
 
 export async function api<T = any>(
   ruta: string,
-  op: { metodo?: string; json?: unknown; form?: FormData; signal?: AbortSignal } = {},
+  op: { metodo?: string; json?: unknown; form?: FormData; signal?: AbortSignal; headers?: Record<string, string> } = {},
 ): Promise<T> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...op.headers };
   const s = leerSesion();
   if (s) headers.authorization = `Bearer ${s.token}`;
   if (op.json !== undefined) headers["content-type"] = "application/json";
@@ -59,6 +59,9 @@ export async function api<T = any>(
     guardarSesion(null);
     window.dispatchEvent(new Event("sesion-expirada"));
   }
-  if (!r.ok) throw new ApiError(r.status, cuerpo?.error ?? "Error del servidor", cuerpo);
+  if (!r.ok) {
+    const ra = Number(r.headers.get("retry-after"));
+    throw new ApiError(r.status, cuerpo?.error ?? "Error del servidor", cuerpo, Number.isFinite(ra) && ra > 0 ? ra : undefined);
+  }
   return cuerpo as T;
 }

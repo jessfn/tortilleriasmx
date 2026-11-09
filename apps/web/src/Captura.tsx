@@ -6,10 +6,14 @@ import {
 import {
   fiscalSchema, nuevaTortilleriaSchema, normalizarTexto, PASSWORD_MIN, PERSONAL_OCUPADO, PRECIO_MAX, PRECIO_MIN, registroSchema, TIPOS_VIAL,
 } from "@tortillerias/shared";
-import { api, ApiError, guardarSesion, type Sesion } from "./api";
+import { api, ApiError, guardarSesion, leerSesion, type Sesion } from "./api";
 import { buscarLugar } from "./geocoder";
-import { blobADataUrl, comprimirFoto } from "./imagen";
-import { borrar, CLAVES, guardar, leer } from "./persist";
+import { comprimirFoto } from "./imagen";
+import { borrarBorrador, guardarBorrador } from "./borrador";
+import { diaMexico, nuevoId, type Paquete } from "./bd";
+import { capturadoHoyLocal, esTemporal, guardarPaquete, idTemporal, listarPaquetes, sincronizar } from "./bandeja";
+import { delMunicipio, listaEstados, listaMunicipios, marcarFiscalLocal, masCercana, parecidas, porId, type Item as ItemCat } from "./catalogo";
+import type { Local } from "./bd";
 import PasoTortilleria from "./PasoTortilleria";
 import type { Punto } from "./MapaTortillerias";
 import { Aviso, Barra, Boton, Buscador, Cabecera, Campo, Hoja, Opcion, Selector } from "./ui";
@@ -86,17 +90,21 @@ const META: Record<string, { titulo: string; sub: string; icono: LucideIcon }> =
   resumen: { titulo: "Resumen", sub: "Revisa y envía", icono: ListChecks },
 };
 
-/** Lo que ya se envió, para que un reintento no duplique nada */
-type Creada = { cuenta?: boolean; tortilleriaId?: string; foto?: boolean; fiscal?: boolean; precios?: { maiz?: boolean; masa?: boolean } };
-type Borrador = {
-  v: 2;
+/** Lo que ya se hizo (la cuenta se crea con conexión; lo demás pasa por la bandeja de pendientes) */
+type Creada = { cuenta?: boolean };
+export type Borrador = {
+  v: 3;
   d: Omit<Datos, "foto" | "fotoUrl">; // la contraseña NUNCA se guarda
   pasoId: string;
   creada: Creada;
-  fotoDataUrl?: string;
+  /** la foto se guarda como archivo en IndexedDB */
+  foto?: Blob;
   caso: Caso;
   tieneFiscal?: boolean;
 };
+
+/** Cómo terminó el envío: enviado al servidor, guardado en el teléfono (sin señal) o con un problema que el censador debe ver */
+type Resultado = { tipo: "enviado" | "guardado" | "conflicto" | "error"; mensaje?: string; pendientes: number };
 
 type Props = {
   /** null = aún no tiene cuenta: el asistente le pedirá correo y contraseña al final */
@@ -108,19 +116,21 @@ type Props = {
   alTerminar: () => void;
   /** Caso C: actualizar el precio de una tortillería ya visitada (desde el panel) */
   tortilleriaInicial?: Punto;
+  /** Registro a medias que se guardó en el teléfono (lo carga App antes de abrir el asistente) */
+  borrador?: Borrador | null;
 };
 
 const precioNumero = (s: string) => Number(s.replace(",", "."));
 const precioValido = (s: string) => s !== "" && precioNumero(s) >= PRECIO_MIN && precioNumero(s) <= PRECIO_MAX;
 const dinero = (n: number) => `$${n.toFixed(2)}`;
 
-export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortilleriaInicial }: Props) {
+export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortilleriaInicial, borrador: borradorGuardado }: Props) {
   const [conCuenta, setConCuenta] = useState(!sesion); // se fija al entrar: los pasos no cambian aunque se cree la cuenta a mitad del envío
   const [verPass, setVerPass] = useState(false);
   const [borrador] = useState(() => {
-    const b = leer<Borrador>(CLAVES.borrador);
+    const b = borradorGuardado;
     // El borrador de un formato anterior no se puede restaurar; el de actualizar precio no aplica a otra tortillería
-    if (!b || b.v !== 2) return null;
+    if (!b || b.v !== 3) return null;
     if (tortilleriaInicial && (b.caso !== "actualizar" || b.d.tortilleria?.id !== tortilleriaInicial.id)) return null;
     if (!tortilleriaInicial && b.caso === "actualizar") return null;
     return b;
@@ -132,8 +142,9 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   const [tieneFiscal, setTieneFiscal] = useState<boolean | undefined>(borrador?.tieneFiscal);
   const [pasoId, setPasoId] = useState<string>(() => borrador?.pasoId ?? (tortilleriaInicial ? "precio" : "tortilleria"));
   const [preparando, setPreparando] = useState(!!tortilleriaInicial && !borrador); // caso C: se averigua si faltan los datos fiscales
-  const [fotoDataUrl, setFotoDataUrl] = useState<string | undefined>(borrador?.fotoDataUrl);
   const [estados, setEstados] = useState<Item[]>([]);
+  const [resultado, setResultado] = useState<Resultado>();
+  const [parecidasLocal, setParecidasLocal] = useState<Local[] | null>(null);
   const [municipios, setMunicipios] = useState<Item[]>([]);
   const [filtro, setFiltro] = useState("");
   const [centro, setCentro] = useState<{ lat: number; lng: number }>();
@@ -192,12 +203,12 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   useEffect(() => {
     if (id !== "estado" && id !== "nueva") return;
     if (estados.length) return;
-    api<Item[]>("/estados").then(setEstados).catch((e) => setError(e.message));
+    listaEstados().then(setEstados).catch((e) => setError(e.message));
   }, [id, estados.length]);
 
   useEffect(() => {
     if (!d.estado) return setMunicipios([]);
-    api<Item[]>(`/estados/${d.estado.clave}/municipios`).then(setMunicipios).catch((e) => setError(e.message));
+    listaMunicipios(d.estado.clave).then(setMunicipios).catch((e) => setError(e.message));
   }, [d.estado?.clave]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Centro del mapa cuando la zona se eligió a mano
@@ -210,11 +221,14 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
         if (r[0]) return setCentro({ lat: r[0].lat, lng: r[0].lng });
         throw new Error("sin resultado");
       })
-      .catch(() =>
-        api<{ lat: number; lng: number }[]>(`/tortillerias?municipio=${d.municipio!.clave}&limite=1`)
+      .catch(() => {
+        // sin internet (o sin resultado): se mira hacia una tortillería del catálogo guardado en el teléfono
+        const loc = delMunicipio(d.municipio!.clave, "", undefined, 1)[0];
+        if (loc) return vigente && setCentro({ lat: loc.lat, lng: loc.lng });
+        return api<{ lat: number; lng: number }[]>(`/tortillerias?municipio=${d.municipio!.clave}&limite=1`)
           .then((r) => vigente && r[0] && setCentro({ lat: r[0].lat, lng: r[0].lng }))
-          .catch(() => {}),
-      );
+          .catch(() => {});
+      });
     return () => {
       vigente = false;
     };
@@ -223,18 +237,42 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   // Tortillería nueva: estado y municipio se precargan con los del punto marcado (editables)
   useEffect(() => {
     if (id !== "nueva" || d.estado || !d.pin) return;
+    const pon = (r: { estado: Item | null; municipio: Item | null }) => r.estado && r.municipio && setD((x) => (x.estado ? x : { ...x, estado: r.estado!, municipio: r.municipio! }));
+    // Primero con el catálogo del teléfono (funciona sin internet); si no hay, con el servidor
+    const cerca = masCercana(d.pin);
+    if (cerca) {
+      Promise.all([listaEstados(), listaMunicipios(cerca.estado)])
+        .then(([es, ms]) => pon({ estado: es.find((e) => e.clave === cerca.estado) ?? null, municipio: ms.find((m) => m.clave === cerca.municipio) ?? null }))
+        .catch(() => {});
+      return;
+    }
     api<{ estado: Item | null; municipio: Item | null }>(`/ubicacion/cercana?lat=${d.pin.lat}&lng=${d.pin.lng}`)
-      .then((r) => r.estado && r.municipio && setD((x) => (x.estado ? x : { ...x, estado: r.estado!, municipio: r.municipio! })))
+      .then(pon)
       .catch(() => {});
   }, [id, d.estado, d.pin?.lat, d.pin?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---------------- ¿ya tiene datos fiscales? Con internet se pregunta al servidor; sin él se usa lo guardado en el teléfono ---------------- */
+  async function tieneFiscalDe(tortilleriaId: string): Promise<boolean> {
+    const local = porId(tortilleriaId)?.tiene_fiscal;
+    if (esTemporal(tortilleriaId)) return local ?? false; // tortillería nueva de este teléfono: el servidor aún no la conoce
+    if (navigator.onLine) {
+      try {
+        return (await api<{ tiene: boolean }>(`/tortillerias/${tortilleriaId}/fiscal/existe`)).tiene;
+      } catch (e) {
+        if (e instanceof ApiError && e.status > 0) throw e;
+      }
+    }
+    // Sin señal: si estaba desactualizado no pasa nada, el servidor no sobrescribe datos fiscales ya capturados
+    return local ?? false;
+  }
 
   /* ---------------- caso C: ¿faltan los datos fiscales? ---------------- */
   useEffect(() => {
     if (!tortilleriaInicial || !preparando) return;
-    api<{ tiene: boolean }>(`/tortillerias/${tortilleriaInicial.id}/fiscal/existe`)
-      .then((r) => {
-        setTieneFiscal(r.tiene);
-        setPasoId(r.tiene ? "precio" : "fiscal");
+    tieneFiscalDe(tortilleriaInicial.id)
+      .then((tiene) => {
+        setTieneFiscal(tiene);
+        setPasoId(tiene ? "precio" : "fiscal");
       })
       .catch((e) => setError(e.message))
       .finally(() => setPreparando(false));
@@ -246,9 +284,20 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     // sin cuenta todavía (se crea al enviar) no hay nada capturado hoy
     if (!d.tortilleria?.id || d.nueva || !sesion) return setHoy({ maiz: null, masa: null });
     let vigente = true;
-    api<{ maiz: number | null; masa: number | null }>(`/tortillerias/${d.tortilleria.id}/mis-precios-hoy`)
-      .then((r) => vigente && setHoy(r))
-      .catch(() => vigente && setHoy({ maiz: null, masa: null }));
+    const tid = d.tortilleria.id;
+    // Lo que el teléfono ya sabe (bandeja de pendientes + última copia del servidor) cuenta igual que lo que diga el servidor
+    capturadoHoyLocal(tid, sesion.usuario.id).then(async (loc) => {
+      let r = loc;
+      if (navigator.onLine && !esTemporal(tid)) {
+        try {
+          const s = await api<{ maiz: number | null; masa: number | null }>(`/tortillerias/${tid}/mis-precios-hoy`);
+          r = { maiz: s.maiz ?? loc.maiz, masa: s.masa ?? loc.masa };
+        } catch {
+          /* se queda con lo del teléfono */
+        }
+      }
+      if (vigente) setHoy(r);
+    });
     return () => {
       vigente = false;
     };
@@ -263,25 +312,22 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
 
   /* ---------------- foto y borrador ---------------- */
   useEffect(() => {
-    if (!borrador?.fotoDataUrl) return;
-    fetch(borrador.fotoDataUrl)
-      .then((r) => r.blob())
-      .then((b) => setD((x) => (x.foto ? x : { ...x, foto: b, fotoUrl: URL.createObjectURL(b) })))
-      .catch(() => {});
+    if (!borrador?.foto) return;
+    setD((x) => (x.foto ? x : { ...x, foto: borrador.foto, fotoUrl: URL.createObjectURL(borrador.foto!) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // El registro a medias se guarda en el teléfono (IndexedDB): sobrevive aunque se cierre la app
   useEffect(() => {
     if (listo || preparando) return;
     const t = setTimeout(() => {
-      const { foto: _f, fotoUrl: _u, ...resto } = d;
+      const { foto, fotoUrl: _u, ...resto } = d;
       const sinClave = { ...resto, cuenta: { correo: d.cuenta.correo, password: "", confirmar: "" } };
-      const base: Borrador = { v: 2, d: sinClave, pasoId: id, creada, caso, tieneFiscal };
-      const ok = guardar(CLAVES.borrador, { ...base, fotoDataUrl });
-      if (!ok && fotoDataUrl) guardar(CLAVES.borrador, base); // sin foto si no cabe
-    }, 300);
+      const base: Borrador = { v: 3, d: sinClave, pasoId: id, creada, caso, tieneFiscal, foto };
+      void guardarBorrador(sesion?.usuario.id ?? null, base);
+    }, 400);
     return () => clearTimeout(t);
-  }, [d, id, creada, fotoDataUrl, listo, preparando, caso, tieneFiscal]);
+  }, [d, id, creada, listo, preparando, caso, tieneFiscal, sesion]);
 
   // Registro nuevo terminado: entrar solo al panel después de un momento
   useEffect(() => {
@@ -344,7 +390,8 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
 
   /** Mapa → tortillería existente elegida. Antes de seguir se averigua si ya tiene datos fiscales. */
   async function elegirTortilleria(punto: Punto) {
-    const r = await api<{ tiene: boolean }>(`/tortillerias/${punto.id}/fiscal/existe`);
+    const tiene = await tieneFiscalDe(punto.id);
+    const r = { tiene };
     setTieneFiscal(r.tiene);
     setHoy(undefined);
     setD((x) => ({
@@ -352,8 +399,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
       fiscal: x.tortilleria?.id === punto.id ? x.fiscal : { ...inicial.fiscal },
       precioMaiz: x.tortilleria?.id === punto.id ? x.precioMaiz : "", precioMasa: x.tortilleria?.id === punto.id ? x.precioMasa : "",
     }));
-    setCreada({});
-    setFotoDataUrl(undefined);
+    setCreada((c) => ({ cuenta: c.cuenta }));
     setModoMapa("elegir");
     // el siguiente paso depende del resultado: fiscal si faltan, si no el precio
     setPasoId(r.tiene ? "precio" : "fiscal");
@@ -362,7 +408,6 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   function confirmarPin() {
     setD((x) => ({ ...x, nueva: true, tortilleria: undefined }));
     setTieneFiscal(false);
-    setCreada((c) => ({ ...c, tortilleriaId: undefined }));
     setPasoId("nueva");
   }
 
@@ -377,81 +422,92 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
       const blob = await comprimirFoto(archivo);
       if (d.fotoUrl) URL.revokeObjectURL(d.fotoUrl);
       set({ foto: blob, fotoUrl: URL.createObjectURL(blob) });
-      blobADataUrl(blob).then(setFotoDataUrl).catch(() => setFotoDataUrl(undefined));
       setError("");
     } catch (e: any) {
       setError(e.message);
     }
   }
 
-  /* ---------------- envío por etapas: un reintento no duplica lo ya guardado ---------------- */
-  async function enviar() {
+  /* ---------------- envío: todo pasa por la bandeja de pendientes, con o sin conexión ---------------- */
+  const domicilioLocal = () =>
+    normalizarTexto(`${d.nv.tipoVial} ${d.nv.calle} ${d.nv.sinNumero ? "SN" : d.nv.numeroExt}${d.nv.numeroInt ? ` INT. ${d.nv.numeroInt}` : ""}, COL. ${d.nv.colonia}, C.P. ${d.nv.codigoPostal}`);
+
+  function armarPaquete(usuarioId: string, confirmoNoDuplicado: boolean): Paquete {
+    const precios = PRODUCTOS.filter((p) => activo(p) && d[p.clave] !== "").map((p) => ({
+      producto: p.id, precioKg: precioNumero(d[p.clave]), idCliente: nuevoId(), estado: "pendiente" as const,
+    }));
+    const base = {
+      id: nuevoId(), usuarioId, capturadoEn: new Date().toISOString(), estado: "por_enviar" as const, intentos: 0, hecho: {}, precios,
+      ...(gps.pos ? { gps: { lat: gps.pos.lat, lng: gps.pos.lng, precision: gps.pos.precision } } : {}),
+      ...(faltaFiscal
+        ? { fiscal: { tipoPersona: d.fiscal.tipoPersona, rfc: d.fiscal.rfc, razonSocial: d.fiscal.razonSocial, celular: d.fiscal.celular || undefined, aceptoAviso: d.fiscal.aviso } }
+        : {}),
+    };
+    if (d.nueva) {
+      const idCliente = nuevoId();
+      return {
+        ...base,
+        tortilleria: { id: idTemporal(idCliente), nombre: normalizarTexto(d.nv.nombre), domicilio: domicilioLocal(), lat: d.pin!.lat, lng: d.pin!.lng },
+        nueva: { idCliente, datos: pedirNv(), fotoIdCliente: nuevoId(), foto: d.foto, ...(confirmoNoDuplicado ? { confirmoNoDuplicado: true } : {}) },
+      };
+    }
+    const t = d.tortilleria!;
+    return { ...base, tortilleria: { id: t.id, nombre: t.nombre, domicilio: t.domicilio, lat: t.lat, lng: t.lng } };
+  }
+
+  async function enviar(confirmoNoDuplicado = false) {
     setEnviando(true);
     setError("");
     setAvisos([]);
     let etapa = "";
     try {
-      // 0) Cuenta nueva: se crea con el mismo formulario y la sesión inicia sola
+      // 0) Cuenta nueva: se crea con el mismo formulario y la sesión inicia sola. Requiere conexión.
+      let usuarioId = sesion?.usuario.id ?? leerSesion()?.usuario.id;
       if (conCuenta && !creada.cuenta) {
         etapa = "cuenta";
+        if (!navigator.onLine) throw new Error("Necesitas conexión para crear tu cuenta o iniciar sesión. Hazlo antes de salir a campo.");
         const s = await api<Sesion>("/auth/registro", { json: d.cuenta });
         guardarSesion(s); // desde aquí las llamadas siguientes ya van con la sesión
         alSesion(s);
+        usuarioId = s.usuario.id;
         setCreada((c) => ({ ...c, cuenta: true }));
       }
-      // 1) Tortillería nueva
-      etapa = "tortilleria";
-      let tid = creada.tortilleriaId ?? d.tortilleria?.id;
-      if (!tid) {
-        const r = await api<{ id: string }>("/tortillerias", { json: pedirNv() });
-        tid = r.id;
-        setCreada((c) => ({ ...c, tortilleriaId: tid }));
-      }
-      // 2) Foto: solo para las nuevas
-      if (d.nueva && !creada.foto) {
-        etapa = "foto";
-        const f = new FormData();
-        f.append("file", d.foto!, "foto.jpg");
-        await api(`/tortillerias/${tid}/fotos`, { form: f });
-        setCreada((c) => ({ ...c, foto: true }));
-      }
-      // 3) Datos fiscales: una sola vez por tortillería
-      if (faltaFiscal && !creada.fiscal) {
-        etapa = "fiscal";
-        await api(`/tortillerias/${tid}/fiscal`, {
-          json: { tipoPersona: d.fiscal.tipoPersona, rfc: d.fiscal.rfc, razonSocial: d.fiscal.razonSocial, celular: d.fiscal.celular || undefined, aceptoAviso: d.fiscal.aviso },
-        });
-        setCreada((c) => ({ ...c, fiscal: true }));
-      }
-      // 4) Un precio por cada producto lleno (el GPS del teléfono solo va como evidencia)
-      etapa = "precio";
-      const avisosLocales: string[] = [];
-      for (const p of PRODUCTOS) {
-        if (!activo(p) || d[p.clave] === "" || creada.precios?.[p.id]) continue;
-        try {
-          await api("/precios", {
-            json: {
-              tortilleriaId: tid, producto: p.id, precioKg: precioNumero(d[p.clave]),
-              ...(gps.pos ? { lat: gps.pos.lat, lng: gps.pos.lng, precisionGps: gps.pos.precision } : {}),
-            },
-          });
-        } catch (e) {
-          if (!(e instanceof ApiError && e.status === 409)) throw e;
-          avisosLocales.push(`${p.texto}: ya la capturaste hoy en esta tortillería${e.cuerpo?.precioKg != null ? ` (${dinero(e.cuerpo.precioKg)})` : ""}. Podrás actualizarla mañana.`);
+      etapa = "guardar";
+      if (!usuarioId) throw new Error("Necesitas conexión para crear tu cuenta o iniciar sesión. Hazlo antes de salir a campo.");
+
+      // Tortillería nueva: si el catálogo del teléfono ya tiene una parecida a 50 m, se le pregunta al censador
+      if (d.nueva && !confirmoNoDuplicado && d.pin) {
+        const par = parecidas(d.pin, d.nv.nombre);
+        if (par.length) {
+          setParecidasLocal(par);
+          return;
         }
-        setCreada((c) => ({ ...c, precios: { ...c.precios, [p.id]: true } }));
       }
-      setAvisos(avisosLocales);
-      borrar(CLAVES.borrador);
+
+      const paquete = armarPaquete(usuarioId, confirmoNoDuplicado);
+      await guardarPaquete(paquete);
+      if (paquete.fiscal && !esTemporal(paquete.tortilleria.id)) await marcarFiscalLocal(paquete.tortilleria.id);
+      await borrarBorrador();
+
+      // Con señal se envía en seguida; sin ella queda guardado y sale solo cuando regrese
+      if (navigator.onLine) await sincronizar({ forzar: true });
+      const p = (await listarPaquetes(usuarioId)).find((x) => x.id === paquete.id);
+      const pendientes = (await listarPaquetes(usuarioId)).filter((x) => x.estado !== "enviado").length;
+      const dia = (n: string) => n;
+      void dia;
+      setResultado(
+        p?.estado === "enviado"
+          ? { tipo: "enviado", pendientes }
+          : p?.estado === "conflicto" || p?.estado === "error"
+            ? { tipo: p.estado, mensaje: p.mensaje, pendientes }
+            : { tipo: "guardado", pendientes },
+      );
+      setAvisos(p?.precios.filter((x) => x.estado === "conflicto").map((x) => `${x.mensaje ?? ""} Podrás actualizarla mañana.`) ?? []);
       setListo(true);
     } catch (e) {
       if (etapa === "cuenta") {
         setPasoId("cuenta");
         setError(e instanceof ApiError && e.status === 429 ? "Demasiados intentos. Inténtalo más tarde." : (e as Error).message);
-      } else if (e instanceof ApiError && e.status === 409 && e.cuerpo?.posibles) {
-        setError(`Ya existe una tortillería parecida en ese lugar: ${e.cuerpo.posibles.map((p: any) => p.nombre).join(", ")}. Regresa al mapa y elígela.`);
-      } else if (e instanceof ApiError && e.status === 429) {
-        setError("Demasiados envíos seguidos. Espera un minuto e inténtalo de nuevo.");
       } else {
         setError((e as Error).message);
       }
@@ -460,11 +516,22 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     }
   }
 
+  /** "Sí, usar esa": la parecida del catálogo es la misma; se sigue con ella en lugar de dar de alta otra */
+  function usarParecida(t: Local) {
+    setParecidasLocal(null);
+    setD((x) => ({
+      ...x, nueva: false, tortilleria: { id: t.id, nombre: t.nombre, domicilio: t.domicilio, estatus: t.estatus, lat: t.lat, lng: t.lng, razon_social: t.razon_social },
+      foto: undefined, fotoUrl: undefined, precioMaiz: "", precioMasa: "",
+    }));
+    setTieneFiscal(esTemporal(t.id) ? t.tiene_fiscal : t.tiene_fiscal);
+    setHoy(undefined);
+    setPasoId(t.tiene_fiscal ? "precio" : "fiscal");
+  }
+
   function otra() {
     if (d.fotoUrl) URL.revokeObjectURL(d.fotoUrl);
     setD({ ...inicial, estado: d.estado, municipio: d.municipio, zonaManual: d.zonaManual });
-    setFotoDataUrl(undefined);
-    setCreada({});
+    setCreada((c) => ({ cuenta: c.cuenta }));
     setTieneFiscal(undefined);
     setHoy(undefined);
     setFiltro("");
@@ -472,6 +539,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     setCaso("mapa");
     setModoMapa("elegir");
     setAvisos([]);
+    setResultado(undefined);
     setListo(false);
     setPasoId("tortilleria");
     pedirGps();
@@ -812,7 +880,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
 
       <Barra>
         {id === "resumen" ? (
-          <Boton onClick={enviar} disabled={enviando} icono={enviando ? Loader2 : Send}>
+          <Boton onClick={() => enviar()} disabled={enviando} icono={enviando ? Loader2 : Send}>
             {enviando ? "Enviando…" : conCuenta ? "Crear cuenta y enviar" : "Enviar captura"}
           </Boton>
         ) : (
