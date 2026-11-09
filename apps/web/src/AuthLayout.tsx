@@ -26,7 +26,7 @@ export default function AuthLayout({
   return (
     <div className="marco-pc mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro lg:max-w-2xl">
       <header className="relative shrink-0 overflow-hidden bg-guinda-oscuro pb-12 pt-[max(.5rem,env(safe-area-inset-top))] text-white">
-        <img src="/login-tortilleria.jpg" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover object-[35%_50%]" />
+        <img src="/login-tortillas.jpg" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover object-[50%_58%]" />
         {/* Filtro guinda oscuro: más cerrado arriba, deja ver la foto hacia abajo */}
         <div className="absolute inset-0 bg-gradient-to-b from-[#3a081e]/95 via-guinda-oscuro/80 to-guinda-oscuro/40" aria-hidden />
 
