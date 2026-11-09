@@ -8,7 +8,7 @@ export default defineConfig({
     VitePWA({
       // La versión nueva se activa sola y la app se recarga (el borrador de captura se conserva)
       registerType: "autoUpdate",
-      includeAssets: ["icon.svg"],
+      includeAssets: ["apple-touch-icon.png", "favicon-48.png"],
       manifest: {
         name: "TortilleríasMX",
         short_name: "TortilleríasMX",

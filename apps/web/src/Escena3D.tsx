@@ -6,7 +6,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
  */
 export default function Escena3D({ fallback }: { fallback: ReactNode }) {
   const marco = useRef<HTMLDivElement>(null);
-  const [listo, setListo] = useState(false);
+  const [estado, setEstado] = useState<"cargando" | "listo" | "fallo">("cargando");
+  const listo = estado === "listo";
 
   useEffect(() => {
     const el = marco.current!;
@@ -16,7 +17,10 @@ export default function Escena3D({ fallback }: { fallback: ReactNode }) {
     (async () => {
       try {
         const probe = document.createElement("canvas");
-        if (!(probe.getContext("webgl2") || probe.getContext("webgl"))) return;
+        if (!(probe.getContext("webgl2") || probe.getContext("webgl"))) {
+          setEstado("fallo");
+          return;
+        }
         const [THREE, { GLTFLoader }] = await Promise.all([import("three"), import("three/examples/jsm/loaders/GLTFLoader.js")]);
         if (!vivo) return;
 
@@ -46,7 +50,9 @@ export default function Escena3D({ fallback }: { fallback: ReactNode }) {
         modelo.position.sub(centro);
         const grupo = new THREE.Group(); // gira alrededor del centro del modelo
         grupo.add(modelo);
-        escena.add(grupo);
+        const entrada = new THREE.Group(); // animación de entrada
+        entrada.add(grupo);
+        escena.add(entrada);
         const radio = tam.length() / 2;
 
         // Sombra suave en el piso
@@ -76,14 +82,14 @@ export default function Escena3D({ fallback }: { fallback: ReactNode }) {
         gr.addColorStop(1, "rgba(232,201,135,0)");
         gb.fillStyle = gr;
         gb.fillRect(0, 0, 64, 64);
-        const N = 36;
+        const N = 12;
         const pos = new Float32Array(N * 3);
         const sem = Array.from({ length: N }, () => ({ a: Math.random() * 6.28, r: radio * (0.75 + Math.random() * 0.55), y: (Math.random() - 0.5) * tam.y * 1.3, v: 0.04 + Math.random() * 0.08, f: Math.random() * 6.28 }));
         const geo = new THREE.BufferGeometry();
         geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
         const chispas = new THREE.Points(
           geo,
-          new THREE.PointsMaterial({ map: new THREE.CanvasTexture(cb), size: radio * 0.16, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }),
+          new THREE.PointsMaterial({ map: new THREE.CanvasTexture(cb), size: radio * 0.12, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }),
         );
         chispas.frustumCulled = false;
         grupo.add(chispas);
@@ -128,6 +134,8 @@ export default function Escena3D({ fallback }: { fallback: ReactNode }) {
         let rx = 0;
         let raf = 0;
         const t0 = performance.now();
+        const DUR = 1500; // misma entrada que la escena CSS: sube, crece y gira hasta su sitio
+        const salida = (x: number) => 1 + 2.4 * Math.pow(x - 1, 3) + 1.4 * Math.pow(x - 1, 2); // easeOutBack suave
         const cuadro = (t: number) => {
           raf = requestAnimationFrame(cuadro);
           if (document.hidden) return;
@@ -135,6 +143,12 @@ export default function Escena3D({ fallback }: { fallback: ReactNode }) {
           const vaiven = quieto ? 0 : Math.sin(s * 0.5) * 0.35;
           ry += (objY + vaiven - ry) * 0.06;
           rx += (objX - rx) * 0.06;
+          const pe = quieto ? 1 : Math.min(1, (t - t0) / DUR);
+          const k = salida(pe);
+          const inv = 1 - k;
+          entrada.scale.setScalar(Math.max(0.01, 0.15 + 0.85 * k));
+          entrada.position.y = -inv * tam.y * 0.26;
+          entrada.rotation.set(-inv * 0.7, -inv * 2.44, 0);
           grupo.rotation.set(rx, base * 0 + ry - 0.35, 0);
           grupo.position.y = quieto ? 0 : Math.sin(s * 1.1) * radio * 0.012;
           const lim = tam.y * 0.65;
@@ -145,11 +159,11 @@ export default function Escena3D({ fallback }: { fallback: ReactNode }) {
             pos[i * 3 + 2] = Math.sin(p.a + s * 0.12) * p.r * 0.7;
           });
           geo.attributes.position.needsUpdate = true;
-          chispas.material.opacity = quieto ? 0.9 : 0.65 + Math.sin(s * 2.2) * 0.3;
+          chispas.material.opacity = (quieto ? 0.9 : 0.6 + Math.sin(s * 2.2) * 0.3) * pe;
           render.render(escena, camara);
         };
         raf = requestAnimationFrame(cuadro);
-        setListo(true);
+        setEstado("listo");
 
         limpiar = () => {
           cancelAnimationFrame(raf);
@@ -170,7 +184,8 @@ export default function Escena3D({ fallback }: { fallback: ReactNode }) {
           render.domElement.remove();
         };
       } catch {
-        // Sin WebGL o sin red: se queda la escena CSS
+        // Sin WebGL o sin red: se usa la escena CSS
+        if (vivo) setEstado("fallo");
       }
     })();
 
@@ -182,10 +197,10 @@ export default function Escena3D({ fallback }: { fallback: ReactNode }) {
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      {!listo && fallback}
+      {estado === "fallo" && fallback}
       <div
         ref={marco}
-        className={`absolute inset-0 touch-none transition-opacity duration-500 ${listo ? "opacity-100" : "pointer-events-none opacity-0"}`}
+        className={`absolute inset-0 touch-none ${listo ? "" : "pointer-events-none"}`}
         role="img"
         aria-label="Tortillería en 3D"
       />

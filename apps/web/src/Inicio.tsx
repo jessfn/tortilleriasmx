@@ -94,7 +94,7 @@ export default function Inicio({ sesion, alRegistrar, alIniciar, alPanel, alCerr
         <LogoGobierno />
       </div>
 
-      <Suspense fallback={<Tortilleria3DCss />}>
+      <Suspense fallback={<div className="min-h-0 flex-1" />}>
         <Escena3D fallback={<Tortilleria3DCss />} />
       </Suspense>
 
