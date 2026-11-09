@@ -1,5 +1,12 @@
 const BASE = import.meta.env.VITE_API_URL ?? "https://apitortillerias.geodatos.com.mx";
-const KEY = "tmx_sesion";
+/**
+ * Dos accesos separados: /acceso es el panel administrativo (administración y supervisión) y el resto de la app es para quienes
+ * registran tortillerías. Cada uno guarda su propia sesión, así entrar por un lado no abre el otro.
+ */
+export const ES_ADMIN = typeof location !== "undefined" && location.pathname.startsWith("/acceso");
+const KEY = ES_ADMIN ? "tmx_sesion_admin" : "tmx_sesion";
+/** ¿Esta cuenta corresponde a este acceso? Las del personal solo entran por /acceso; las de tortillerías, por el acceso normal */
+export const cuentaDeEsteAcceso = (rol: Rol) => (ES_ADMIN ? rol !== "capturista" : rol === "capturista");
 
 export type Rol = "capturista" | "supervisor" | "admin";
 export type Sesion = { token: string; usuario: { id: string; nombre: string; apellidos: string; rol: Rol; correo: string } };
@@ -7,7 +14,8 @@ export type Sesion = { token: string; usuario: { id: string; nombre: string; ape
 export function leerSesion(): Sesion | null {
   try {
     const s = localStorage.getItem(KEY);
-    return s ? (JSON.parse(s) as Sesion) : null;
+    const ses = s ? (JSON.parse(s) as Sesion) : null;
+    return ses && cuentaDeEsteAcceso(ses.usuario.rol) ? ses : null;
   } catch {
     return null;
   }

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { guardarSesion, leerSesion, type Sesion } from "./api";
+import { ES_ADMIN, guardarSesion, leerSesion, type Sesion } from "./api";
 import { borrar, borrarTodo, CLAVES, guardar, leer } from "./persist";
 import Inicio from "./Inicio";
 import Login from "./Login";
+import LoginAdmin from "./LoginAdmin";
 import Captura from "./Captura";
 import type { Punto } from "./MapaTortillerias";
 import PanelUsuario from "./PanelUsuario";
@@ -19,6 +20,8 @@ type Vista = "inicio" | "login" | "panel" | "captura";
 function vistaInicial(sesion: Sesion | null): Vista {
   // Tras una recarga (p. ej. al actualizarse la app) se vuelve a la pantalla donde se estaba
   const guardada = leer<Vista>(CLAVES.vista);
+  // El acceso administrativo no tiene bienvenida ni captura: solo su inicio de sesión y su panel
+  if (ES_ADMIN) return sesion && guardada === "panel" ? "panel" : "login";
   if (guardada === "captura") return "captura"; // el registro a medias se restaura (con o sin cuenta)
   if (sesion && guardada === "panel") return "panel";
   // La bienvenida va primero; /acceso lleva directo al inicio de sesión
@@ -126,12 +129,12 @@ export default function App() {
       />
     );
 
-  if (!sesion) return <Login alEntrar={entrar} alVolver={() => setVista("inicio")} alIrARegistro={nuevoRegistro} />;
+  if (!sesion) return ES_ADMIN ? <LoginAdmin alEntrar={entrar} /> : <Login alEntrar={entrar} alVolver={() => setVista("inicio")} alIrARegistro={nuevoRegistro} />;
 
   const actualizar = (s: Sesion) => setSesion(s);
   if (sesion.usuario.rol === "capturista")
     return <PanelUsuario sesion={sesion} alCapturar={nuevoRegistro} alActualizarPrecio={actualizarPrecio} alActualizarSesion={actualizar} alSalir={salir} />;
-  return <PanelAdmin sesion={sesion} alActualizarSesion={actualizar} alSalir={salir} alInicio={() => setVista("inicio")} />;
+  return <PanelAdmin sesion={sesion} alActualizarSesion={actualizar} alSalir={salir} />;
   })();
 
   return (

@@ -1,18 +1,16 @@
 import { useState } from "react";
-import { Eye, EyeOff, KeyRound, Loader2, LogIn, Mail, ShieldCheck } from "lucide-react";
-import { api, guardarSesion, type Sesion } from "./api";
+import { Eye, EyeOff, KeyRound, Loader2, LogIn, Mail } from "lucide-react";
+import { api, cuentaDeEsteAcceso, guardarSesion, type Sesion } from "./api";
 import AuthLayout from "./AuthLayout";
 import { Aviso, Boton, Campo } from "./ui";
 
-/** Inicio de sesión para todos: usuarios registrados (correo) y personal de supervisión (correo o usuario) */
+/** Inicio de sesión de quienes registran tortillerías. El personal administrativo entra por /acceso (LoginAdmin). */
 export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar: (s: Sesion) => void; alVolver: () => void; alIrARegistro: () => void }) {
   const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");
   const [ver, setVer] = useState(false);
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
-  // La dirección /acceso es la entrada de administración y supervisión
-  const administrativo = location.pathname.startsWith("/acceso");
 
   async function entrar(e: React.FormEvent) {
     e.preventDefault();
@@ -21,6 +19,10 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
     setCargando(true);
     try {
       const s = await api<Sesion>("/auth/login", { json: { usuario: usuario.trim(), password } });
+      if (!cuentaDeEsteAcceso(s.usuario.rol)) {
+        setError("Esta cuenta es del personal administrativo. Entra desde el acceso administrativo.");
+        return;
+      }
       guardarSesion(s);
       alEntrar(s);
     } catch (err: any) {
@@ -32,10 +34,9 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
 
   return (
     <AuthLayout
-      titulo={administrativo ? "Panel administrativo" : "Iniciar sesión"}
-      subtitulo={administrativo ? "Acceso de administración y supervisión" : "Entra a tu panel"}
-      icono={administrativo ? ShieldCheck : LogIn}
-      etiqueta={administrativo ? "Acceso administrativo" : undefined}
+      titulo="Iniciar sesión"
+      subtitulo="Entra a tu panel"
+      icono={LogIn}
       alVolver={alVolver}
       pie={
         <div className="space-y-2">
@@ -53,7 +54,7 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
     >
       <form id="form-login" onSubmit={entrar} className="space-y-3">
         <Campo
-          etiqueta="Correo electrónico o usuario"
+          etiqueta="Correo electrónico"
           icono={Mail}
           inputMode="email"
           autoComplete="username"
@@ -61,7 +62,7 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
           autoCorrect="off"
           value={usuario}
           onChange={(e) => { setUsuario(e.target.value); setError(""); }}
-          placeholder="Ej. tucorreo@ejemplo.com o tu usuario"
+          placeholder="Ej. tucorreo@ejemplo.com"
           ayuda="El correo con el que te registraste"
           valido={usuario.trim().length >= 3}
           enterKeyHint="next"
