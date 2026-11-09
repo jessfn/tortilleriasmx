@@ -8,7 +8,7 @@ export default defineConfig({
     VitePWA({
       // La versión nueva se activa sola y la app se recarga (el borrador de captura se conserva)
       registerType: "autoUpdate",
-      includeAssets: ["apple-touch-icon.png", "favicon-48.png"],
+      includeAssets: ["apple-touch-icon.png", "favicon-48.png", "icon-512-maskable.png"],
       manifest: {
         name: "TortilleríasMX",
         short_name: "TortilleríasMX",
@@ -19,9 +19,9 @@ export default defineConfig({
         display: "standalone",
         start_url: "/",
         icons: [
-          { src: "icon-192.png", sizes: "192x192", type: "image/png" },
-          { src: "icon-512.png", sizes: "512x512", type: "image/png" },
-          { src: "icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+          { src: "icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: "icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+          { src: "icon-512-maskable.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
         ],
       },
       workbox: {
