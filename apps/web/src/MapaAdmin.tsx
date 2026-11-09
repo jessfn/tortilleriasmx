@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import maplibregl, { type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { api } from "./api";
+import { agregarRelieve, ESTILO } from "./estiloMapa";
 import { COLOR_ALTO, COLOR_BAJO, COLOR_MEDIO, dinero, diaCorto, rangoPrecios } from "./AdminVivo";
 
 export type Precio = { precio: number; fecha: string } | null;
@@ -34,7 +35,6 @@ type Props = {
   onZoom?: (z: number) => void;
 };
 
-const ESTILO = "https://tiles.openfreemap.org/styles/positron";
 const ZOOM_PUNTOS = 10; // desde aquí se dibuja una tortillería por punto; más lejos, zonas agrupadas por el servidor
 const MEXICO = { lat: 23.6, lng: -102.5 };
 
@@ -221,6 +221,7 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
     // Los puntos se agregan en cuanto el estilo está listo, sin esperar a que lleguen todos los mosaicos del mapa base (en redes lentas tardan)
     const iniciar = () => {
       if (listo.current) return;
+      agregarRelieve(m);
       m.addSource("puntos", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },

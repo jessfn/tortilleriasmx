@@ -40,7 +40,8 @@ export default defineConfig({
             options: { cacheName: "fuentes", expiration: { maxEntries: 10, maxAgeSeconds: 365 * 24 * 3600 }, cacheableResponse: { statuses: [0, 200] } },
           },
           {
-            urlPattern: ({ url }: { url: URL }) => url.hostname === "tiles.openfreemap.org",
+            // Mapa a color: estilo, teselas y fuentes de OpenFreeMap + mosaicos de elevación del relieve
+            urlPattern: ({ url }: { url: URL }) => url.hostname === "tiles.openfreemap.org" || (url.hostname === "s3.amazonaws.com" && url.pathname.startsWith("/elevation-tiles-prod/")),
             handler: "CacheFirst",
             options: {
               cacheName: "mapa",
