@@ -66,6 +66,28 @@ export default function Escena3D({ fallback }: { fallback: ReactNode }) {
         sombra.position.y = -tam.y / 2 + 0.02;
         grupo.add(sombra);
 
+        // Chispas doradas que flotan alrededor, con brillo aditivo
+        const cb = document.createElement("canvas");
+        cb.width = cb.height = 64;
+        const gb = cb.getContext("2d")!;
+        const gr = gb.createRadialGradient(32, 32, 0, 32, 32, 32);
+        gr.addColorStop(0, "rgba(255,236,170,1)");
+        gr.addColorStop(0.25, "rgba(232,201,135,.85)");
+        gr.addColorStop(1, "rgba(232,201,135,0)");
+        gb.fillStyle = gr;
+        gb.fillRect(0, 0, 64, 64);
+        const N = 36;
+        const pos = new Float32Array(N * 3);
+        const sem = Array.from({ length: N }, () => ({ a: Math.random() * 6.28, r: radio * (0.75 + Math.random() * 0.55), y: (Math.random() - 0.5) * tam.y * 1.3, v: 0.04 + Math.random() * 0.08, f: Math.random() * 6.28 }));
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        const chispas = new THREE.Points(
+          geo,
+          new THREE.PointsMaterial({ map: new THREE.CanvasTexture(cb), size: radio * 0.16, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }),
+        );
+        chispas.frustumCulled = false;
+        grupo.add(chispas);
+
         // Cámara como en el visor de ejemplo: azimut 30°, polar 70° (elevación 20°)
         const ajustar = () => {
           const w = el.clientWidth || 1;
@@ -74,7 +96,7 @@ export default function Escena3D({ fallback }: { fallback: ReactNode }) {
           camara.aspect = w / h;
           const vfov = (camara.fov * Math.PI) / 180;
           const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camara.aspect);
-          const dist = (radio * 0.8) / Math.sin(Math.min(vfov, hfov) / 2);
+          const dist = (radio * 0.92) / Math.sin(Math.min(vfov, hfov) / 2);
           const el_ = (20 * Math.PI) / 180;
           camara.position.set(0, Math.sin(el_) * dist, Math.cos(el_) * dist);
           camara.lookAt(0, -radio * 0.04, 0);
@@ -115,6 +137,15 @@ export default function Escena3D({ fallback }: { fallback: ReactNode }) {
           rx += (objX - rx) * 0.06;
           grupo.rotation.set(rx, base * 0 + ry - 0.35, 0);
           grupo.position.y = quieto ? 0 : Math.sin(s * 1.1) * radio * 0.012;
+          const lim = tam.y * 0.65;
+          sem.forEach((p, i) => {
+            const y = ((((p.y + (quieto ? 0 : s * p.v * radio)) + lim) % (2 * lim)) + 2 * lim) % (2 * lim) - lim;
+            pos[i * 3] = Math.cos(p.a + s * 0.12) * p.r;
+            pos[i * 3 + 1] = y;
+            pos[i * 3 + 2] = Math.sin(p.a + s * 0.12) * p.r * 0.7;
+          });
+          geo.attributes.position.needsUpdate = true;
+          chispas.material.opacity = quieto ? 0.9 : 0.65 + Math.sin(s * 2.2) * 0.3;
           render.render(escena, camara);
         };
         raf = requestAnimationFrame(cuadro);
