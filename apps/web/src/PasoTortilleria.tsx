@@ -313,7 +313,7 @@ export default function PasoTortilleria(p: Props) {
           )}
 
           {/* Zona inferior: botón de mi ubicación y tarjeta de la tortillería (o confirmación del pin) */}
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-end gap-2 p-3">
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-end gap-2 p-3 pb-9">
             {!marcando && vista === "mapa" && p.gps.estado !== "pidiendo" && (
               <button
                 onClick={() => {

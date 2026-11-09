@@ -527,7 +527,12 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     return (
       <div className="marco-pc mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro lg:max-w-2xl">
         <PasoTortilleria
-          cab={{ paso: paso + 1, total: pasos.length, atras: paso > 0 ? () => ir(-1) : alSalir }}
+          cab={{
+            paso: paso + 1,
+            // marcando una tortillería nueva, el recorrido ya es el del caso B
+            total: modoMapa === "marcar" ? armarPasos({ caso, zonaManual: d.zonaManual, nueva: true, faltaFiscal: true, conCuenta }).length : pasos.length,
+            atras: paso > 0 ? () => ir(-1) : alSalir,
+          }}
           zona={{ estado: d.estado, municipio: d.municipio, centro, manual: d.zonaManual }}
           gps={gps}
           alMiUbicacion={pedirGps}
