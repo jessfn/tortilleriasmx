@@ -12,7 +12,7 @@ import AdminBarra from "./AdminBarra";
 import AdminResumen, { type Resumen } from "./AdminResumen";
 import AdminMapa, { type FocoMapa } from "./AdminMapa";
 import AdminEstadisticas from "./AdminEstadisticas";
-import { EnVivo, useVivo } from "./AdminVivo";
+import { useVivo } from "./AdminVivo";
 
 type TortilleriaAdm = {
   id: string; nombre: string; domicilio: string | null; estatus: string; origen: string; creado_en: string; lat: number | null; lng: number | null;
@@ -61,8 +61,7 @@ export default function PanelAdmin({
       alSalir={alSalir}
       plano={tab === "mapa"}
       titulo={esAdmin ? "Administración" : "Supervisión"}
-      subtitulo={{ resumen: "Resumen general", mapa: "Mapa de precios por tortillería", estadisticas: "Estadísticas por estado y municipio", revision: "Revisión de registros", usuarios: "Usuarios del sistema", perfil: "Tu cuenta" }[tab]}
-      derecha={<span className="hidden sm:block"><EnVivo oscuro ultima={vivo.ultima} fallo={vivo.fallo} /></span>}
+      vivo={vivo}
       pestañas={[
         { id: "resumen", texto: "Resumen", icono: BarChart3 },
         { id: "mapa", texto: "Mapa", icono: MapaIcono },

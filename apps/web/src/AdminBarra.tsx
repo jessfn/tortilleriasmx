@@ -54,14 +54,11 @@ function MenuCuenta({ usuario, alPerfil, alInicio, alSalir }: { usuario: Sesion[
         aria-haspopup="menu"
         aria-expanded={abierto}
         aria-label="Menú de la cuenta"
-        className="flex items-center gap-2.5 rounded-full bg-white/10 py-1 pl-1 pr-2.5 transition hover:bg-white/15 sm:pr-3"
+        className="flex items-center gap-2 rounded-full py-1 pl-1 pr-2 transition hover:bg-white/10"
       >
         <span className="grid h-8 w-8 place-items-center rounded-full bg-dorado text-xs font-bold text-guinda-oscuro">{iniciales(usuario)}</span>
-        <span className="hidden text-left leading-tight sm:block">
-          <span className="block max-w-[10rem] truncate text-xs font-semibold">{nombre}</span>
-          <span className="block text-[10px] text-white/65">{ROLES[usuario.rol] ?? usuario.rol}</span>
-        </span>
-        <ChevronDown className={`h-3.5 w-3.5 transition ${abierto ? "rotate-180" : ""}`} aria-hidden />
+        <span className="hidden max-w-[9rem] truncate text-[13px] font-medium xl:block">{nombre}</span>
+        <ChevronDown className={`h-3.5 w-3.5 text-white/60 transition ${abierto ? "rotate-180" : ""}`} aria-hidden />
       </button>
       {abierto && (
         <div role="menu" className="paso absolute right-0 top-full z-50 mt-2 w-64 rounded-2xl bg-white p-1.5 text-stone-900 shadow-2xl ring-1 ring-black/5">
@@ -85,11 +82,10 @@ function MenuCuenta({ usuario, alPerfil, alInicio, alSalir }: { usuario: Sesion[
  * en computadora y tableta las secciones van como pestañas debajo de la barra, y en el teléfono como barra inferior.
  */
 export default function AdminBarra({
-  titulo, subtitulo, derecha, pestañas, activa, alCambiar, plano, usuario, pendientes = 0, alInicio, alSalir, children,
+  titulo, pestañas, activa, alCambiar, plano, usuario, pendientes = 0, vivo, alInicio, alSalir, children,
 }: {
+  /** Qué panel es (Administración o Supervisión) */
   titulo: string;
-  subtitulo?: string;
-  derecha?: ReactNode;
   pestañas: PestañaNav[];
   activa: string;
   alCambiar: (id: string) => void;
@@ -98,6 +94,8 @@ export default function AdminBarra({
   usuario: Sesion["usuario"];
   /** Registros por revisar: se muestran en la campana, que lleva a "Revisión" */
   pendientes?: number;
+  /** Estado de la actualización automática de datos */
+  vivo?: { ultima?: number; fallo?: boolean };
   alInicio?: () => void;
   alSalir: () => void;
   children: ReactNode;
@@ -106,53 +104,59 @@ export default function AdminBarra({
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-guinda-oscuro">
-      <header className="relative shrink-0 bg-gradient-to-b from-[#4a0e27] to-guinda-oscuro text-white">
-        <div className="mx-auto flex w-full max-w-[96rem] items-center gap-3 px-4 pb-8 pt-[max(.75rem,env(safe-area-inset-top))] lg:px-8 lg:pb-3.5 lg:pt-3.5">
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold uppercase tracking-[.2em] text-dorado">TortilleríasMX</p>
-            <h1 className="truncate font-patria text-xl font-normal leading-tight lg:text-2xl">{titulo}</h1>
-            {subtitulo && <p className="hidden truncate text-xs text-white/65 sm:block">{subtitulo}</p>}
+      <header className="relative shrink-0 border-b border-white/10 bg-guinda-oscuro pt-[env(safe-area-inset-top)] text-white">
+        <div className="mx-auto flex h-14 w-full max-w-[96rem] items-center gap-2 px-3 lg:gap-6 lg:px-6">
+          {/* Marca + a qué panel se entró */}
+          <div className="flex min-w-0 items-baseline gap-2.5">
+            <span className="font-patria text-[1.35rem] font-normal leading-none">
+              Tortillerías<span className="font-sans font-extrabold text-dorado">MX</span>
+            </span>
+            <span className="hidden border-l border-white/20 pl-2.5 text-xs font-medium text-white/60 sm:block">{titulo}</span>
           </div>
-          {derecha}
+
+          {/* Secciones: una sola fila (en teléfono van abajo) */}
+          <nav className="hidden min-w-0 flex-1 lg:block" aria-label="Secciones">
+            <ul className="flex items-center gap-1">
+              {arriba.map((p) => {
+                const on = p.id === activa;
+                return (
+                  <li key={p.id}>
+                    <button
+                      onClick={() => alCambiar(p.id)}
+                      aria-current={on ? "page" : undefined}
+                      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium transition ${on ? "bg-white/12 text-white" : "text-white/60 hover:bg-white/6 hover:text-white"}`}
+                    >
+                      <p.icono className="h-4 w-4" aria-hidden />
+                      {p.texto}
+                      {!!p.insignia && <span className="rounded-full bg-dorado px-1.5 text-[10px] font-bold leading-4 text-guinda-oscuro">{p.insignia}</span>}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+          <div className="flex-1 lg:hidden" />
+
+          {/* Estado, avisos y cuenta */}
+          {vivo && (
+            <span className="hidden items-center gap-1.5 text-xs text-white/55 xl:flex" title="Los datos se actualizan solos">
+              <span className={`h-1.5 w-1.5 rounded-full ${vivo.fallo ? "bg-red-400" : vivo.ultima ? "bg-emerald-400" : "bg-white/40"}`} />
+              {vivo.fallo ? "Sin conexión" : "En vivo"}
+            </span>
+          )}
           <button
             onClick={() => alCambiar("revision")}
             aria-label={pendientes ? `${pendientes} registros por revisar` : "Revisión de registros"}
-            className="relative grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/10 transition hover:bg-white/15"
+            className="relative grid h-9 w-9 shrink-0 place-items-center rounded-full text-white/80 transition hover:bg-white/10 hover:text-white"
           >
             <Bell className="h-[18px] w-[18px]" aria-hidden />
-            {pendientes > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-dorado px-1 text-[10px] font-bold text-guinda-oscuro ring-2 ring-guinda-oscuro">
-                {pendientes > 99 ? "99+" : pendientes}
-              </span>
-            )}
+            {pendientes > 0 && <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-dorado ring-2 ring-guinda-oscuro" aria-hidden />}
           </button>
           <MenuCuenta usuario={usuario} alPerfil={() => alCambiar("perfil")} alInicio={alInicio} alSalir={alSalir} />
         </div>
-
-        <nav className="hidden border-t border-white/10 bg-black/10 lg:block" aria-label="Secciones">
-          <ul className="mx-auto flex w-full max-w-[96rem] gap-1 px-6">
-            {arriba.map((p) => {
-              const on = p.id === activa;
-              return (
-                <li key={p.id}>
-                  <button
-                    onClick={() => alCambiar(p.id)}
-                    aria-current={on ? "page" : undefined}
-                    className={`relative flex items-center gap-2 px-4 py-3 text-sm font-semibold transition ${on ? "text-white" : "text-white/65 hover:text-white"}`}
-                  >
-                    <p.icono className="h-[18px] w-[18px]" aria-hidden />
-                    {p.texto}
-                    {!!p.insignia && <span className="grid h-[18px] min-w-[18px] place-items-center rounded-full bg-dorado px-1 text-[10px] font-bold text-guinda-oscuro">{p.insignia}</span>}
-                    {on && <span className="absolute inset-x-3 bottom-0 h-[3px] rounded-t-full bg-dorado" aria-hidden />}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
       </header>
 
-      <Hoja className="lg:mt-0 lg:rounded-none lg:shadow-none">
+      <Hoja className="!mt-0 !rounded-none !shadow-none">
         <div key={activa} className={`paso min-h-0 flex-1 ${plano ? "relative overflow-hidden" : "overflow-y-auto overscroll-contain px-3 pb-3 pt-5 lg:px-8 lg:pb-8 lg:pt-8"}`}>
           <div className={plano ? "h-full w-full" : "mx-auto w-full max-w-[92rem] space-y-3"}>{children}</div>
         </div>
