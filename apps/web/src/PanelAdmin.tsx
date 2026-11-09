@@ -7,7 +7,8 @@ import { api, type Sesion } from "./api";
 import FotoAuth from "./FotoAuth";
 import Perfil from "./Perfil";
 import { CLAVES, usePersistente } from "./persist";
-import { Aviso, Boton, HojaModal, Insignia, PanelShell, Tarjeta, Vacio } from "./ui";
+import { Aviso, Boton, HojaModal, Insignia, Tarjeta, Vacio } from "./ui";
+import AdminBarra from "./AdminBarra";
 import AdminResumen, { type Resumen } from "./AdminResumen";
 import AdminMapa, { type FocoMapa } from "./AdminMapa";
 import AdminEstadisticas from "./AdminEstadisticas";
@@ -32,8 +33,8 @@ const PRODUCTO = { maiz: { t: "Maíz", i: Wheat }, harina: { t: "Harina", i: Pac
 const fecha = (s: string) => new Date(s).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
 
 export default function PanelAdmin({
-  sesion, alActualizarSesion, alSalir,
-}: { sesion: Sesion; alActualizarSesion: (s: Sesion) => void; alSalir: () => void }) {
+  sesion, alActualizarSesion, alSalir, alInicio,
+}: { sesion: Sesion; alActualizarSesion: (s: Sesion) => void; alSalir: () => void; alInicio?: () => void }) {
   const esAdmin = sesion.usuario.rol === "admin";
   const [tabGuardada, setTab] = usePersistente(CLAVES.tabAdmin, "resumen");
   const tab = tabGuardada === "usuarios" && !esAdmin ? "resumen" : tabGuardada; // por si cambió su rol
@@ -53,8 +54,11 @@ export default function PanelAdmin({
   const pendientes = (resumen?.tortillerias_pendientes ?? 0) + (resumen?.capturas_pendientes ?? 0);
 
   return (
-    <PanelShell
-      completo
+    <AdminBarra
+      usuario={sesion.usuario}
+      pendientes={pendientes}
+      alInicio={alInicio}
+      alSalir={alSalir}
       plano={tab === "mapa"}
       titulo={esAdmin ? "Administración" : "Supervisión"}
       subtitulo={{ resumen: "Resumen general", mapa: "Mapa de precios por tortillería", estadisticas: "Estadísticas por estado y municipio", revision: "Revisión de registros", usuarios: "Usuarios del sistema", perfil: "Tu cuenta" }[tab]}
@@ -77,7 +81,7 @@ export default function PanelAdmin({
       {tab === "usuarios" && esAdmin && <VistaUsuarios miId={sesion.usuario.id} />}
       {tab === "perfil" && <Perfil sesion={sesion} alActualizar={alActualizarSesion} alSalir={alSalir} />}
       {detalleId && <DetalleDesdeMapa id={detalleId} alCerrar={() => setDetalleId(undefined)} alCambio={cargarResumen} />}
-    </PanelShell>
+    </AdminBarra>
   );
 }
 

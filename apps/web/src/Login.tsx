@@ -35,6 +35,7 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
       titulo={administrativo ? "Panel administrativo" : "Iniciar sesión"}
       subtitulo={administrativo ? "Acceso de administración y supervisión" : "Entra a tu panel"}
       icono={administrativo ? ShieldCheck : LogIn}
+      etiqueta={administrativo ? "Acceso administrativo" : undefined}
       alVolver={alVolver}
       pie={
         <div className="space-y-2">

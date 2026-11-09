@@ -131,7 +131,7 @@ export default function App() {
   const actualizar = (s: Sesion) => setSesion(s);
   if (sesion.usuario.rol === "capturista")
     return <PanelUsuario sesion={sesion} alCapturar={nuevoRegistro} alActualizarPrecio={actualizarPrecio} alActualizarSesion={actualizar} alSalir={salir} />;
-  return <PanelAdmin sesion={sesion} alActualizarSesion={actualizar} alSalir={salir} />;
+  return <PanelAdmin sesion={sesion} alActualizarSesion={actualizar} alSalir={salir} alInicio={() => setVista("inicio")} />;
   })();
 
   return (
