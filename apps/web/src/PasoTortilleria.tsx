@@ -295,6 +295,10 @@ export default function PasoTortilleria(p: Props) {
                     <>
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-guinda" aria-hidden /> Cargando…
                     </>
+                  ) : estadoMapa.zonas ? (
+                    <>
+                      <Store className="h-3.5 w-3.5 text-guinda" aria-hidden /> {estadoMapa.total.toLocaleString("es-MX")} tortillerías · toca una zona para acercarte
+                    </>
                   ) : (
                     <>
                       <Store className="h-3.5 w-3.5 text-guinda" aria-hidden /> {estadoMapa.total.toLocaleString("es-MX")} {estadoMapa.total === 1 ? "tortillería aquí" : "tortillerías aquí"}

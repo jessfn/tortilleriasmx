@@ -9,7 +9,14 @@ export type PuntoAdm = {
   id: string; nombre: string; domicilio: string | null; estatus: string; origen: string; lat: number; lng: number;
   n_capturas: number; ultimo_maiz: Precio; ultima_masa: Precio; alerta: boolean;
 };
-export type VistaMapa = { puntos: PuntoAdm[]; lejano: boolean; cargando: boolean; rango: [number, number] };
+/** Zona a poco zoom: tortillerías agrupadas en una celda, con la suma de precios para sacar el promedio */
+export type CeldaAdm = {
+  lat: number; lng: number; n: number; pendientes: number;
+  maiz_n: number; maiz_suma: number; masa_n: number; masa_suma: number;
+  bbox: [number, number, number, number];
+};
+/** puntos = una tortillería por punto (zoom alto) · celdas = zonas agrupadas (zoom bajo) */
+export type VistaMapa = { puntos: PuntoAdm[]; celdas: CeldaAdm[]; modo: "puntos" | "celdas"; lejano: boolean; cargando: boolean; rango: [number, number] };
 export type MapaAdminRef = {
   ajustarA: (bbox: [number, number, number, number]) => void;
   volarA: (lat: number, lng: number, zoom?: number) => void;
@@ -28,7 +35,7 @@ type Props = {
 };
 
 const ESTILO = "https://tiles.openfreemap.org/styles/positron";
-const ZOOM_MIN = 8.5; // más lejos hay demasiadas tortillerías para dibujar
+const ZOOM_PUNTOS = 10; // desde aquí se dibuja una tortillería por punto; más lejos, zonas agrupadas por el servidor
 const MEXICO = { lat: 23.6, lng: -102.5 };
 
 /** Mapa de supervisión: puntos coloreados por precio, grupos con su promedio y ventana con el detalle al tocar un punto */
@@ -48,67 +55,109 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
     volarA: (lat, lng, zoom = 15) => mapa.current?.flyTo({ center: [lng, lat], zoom, duration: 800 }),
   }));
 
+  const celdas = useRef<CeldaAdm[]>([]);
+  const modo = useRef<"puntos" | "celdas">("celdas");
+  const rangoRef = useRef<[number, number]>([20, 32]);
+
+  const emitir = (cargando = false) =>
+    p.current.onVista({
+      puntos: modo.current === "puntos" ? datos.current : [],
+      celdas: modo.current === "celdas" ? celdas.current : [],
+      modo: modo.current, lejano: false, cargando, rango: rangoRef.current,
+    });
+
   const precioDe = (x: PuntoAdm) => (p.current.producto === "maiz" ? x.ultimo_maiz?.precio : x.ultima_masa?.precio) ?? 0;
+  const promedioDe = (c: CeldaAdm) => {
+    const [n, suma] = p.current.producto === "maiz" ? [c.maiz_n, c.maiz_suma] : [c.masa_n, c.masa_suma];
+    return n > 0 ? suma / n : 0;
+  };
+  const abreviar = (n: number) => (n >= 10000 ? `${Math.round(n / 1000)} mil` : n >= 1000 ? `${(n / 1000).toFixed(1)} mil` : String(n));
 
   const pintar = () => {
     const m = mapa.current;
     if (!m || !listo.current) return;
-    const precios = datos.current.map(precioDe).filter((v) => v > 0);
-    const rango = rangoPrecios(precios, p.current.producto === "maiz" ? [20, 32] : [14, 24]);
-    const fuente = m.getSource("puntos") as GeoJSONSource | undefined;
-    fuente?.setData({
-      type: "FeatureCollection",
-      features: datos.current.map((x) => ({
-        type: "Feature" as const,
-        geometry: { type: "Point" as const, coordinates: [x.lng, x.lat] },
-        properties: { id: x.id, p: precioDe(x), n: x.n_capturas, estatus: x.estatus, alerta: x.alerta ? 1 : 0 },
-      })),
-    });
-    const escala = ["interpolate", ["linear"], ["get", "p"], rango[0], COLOR_BAJO, (rango[0] + rango[1]) / 2, COLOR_MEDIO, rango[1], COLOR_ALTO];
-    m.setPaintProperty("pts-con", "circle-color", escala as any);
+    const esCeldas = modo.current === "celdas";
+    const porDefecto: [number, number] = p.current.producto === "maiz" ? [20, 32] : [14, 24];
+    const precios = esCeldas ? celdas.current.map(promedioDe).filter((v) => v > 0) : datos.current.map(precioDe).filter((v) => v > 0);
+    const rango = rangoPrecios(precios, porDefecto);
+    rangoRef.current = rango;
+    const escalaDe = (campo: unknown) => ["interpolate", ["linear"], campo, rango[0], COLOR_BAJO, (rango[0] + rango[1]) / 2, COLOR_MEDIO, rango[1], COLOR_ALTO];
+
+    // Se muestra solo la capa del nivel actual
+    for (const id of ["grupos", "grupos-n", "pts-sin", "pts-con"]) if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", esCeldas ? "none" : "visible");
+    for (const id of ["celdas-c", "celdas-n"]) if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", esCeldas ? "visible" : "none");
+
+    const vacio = { type: "FeatureCollection" as const, features: [] };
+    (m.getSource("puntos") as GeoJSONSource | undefined)?.setData(
+      esCeldas
+        ? vacio
+        : {
+            type: "FeatureCollection",
+            features: datos.current.map((x) => ({
+              type: "Feature" as const,
+              geometry: { type: "Point" as const, coordinates: [x.lng, x.lat] },
+              properties: { id: x.id, p: precioDe(x), n: x.n_capturas, estatus: x.estatus, alerta: x.alerta ? 1 : 0 },
+            })),
+          },
+    );
+    (m.getSource("celdas") as GeoJSONSource | undefined)?.setData(
+      esCeldas
+        ? {
+            type: "FeatureCollection",
+            features: celdas.current.map((c, i) => ({
+              type: "Feature" as const,
+              geometry: { type: "Point" as const, coordinates: [c.lng, c.lat] },
+              properties: { i, n: c.n, p: promedioDe(c), txt: abreviar(c.n), pend: c.pendientes },
+            })),
+          }
+        : vacio,
+    );
+    m.setPaintProperty("pts-con", "circle-color", escalaDe(["get", "p"]) as any);
     m.setPaintProperty("grupos", "circle-color", [
-      "case", [">", ["get", "con"], 0],
-      ["interpolate", ["linear"], ["/", ["get", "suma"], ["get", "con"]], rango[0], COLOR_BAJO, (rango[0] + rango[1]) / 2, COLOR_MEDIO, rango[1], COLOR_ALTO],
-      "#a8a29e",
+      "case", [">", ["get", "con"], 0], escalaDe(["/", ["get", "suma"], ["get", "con"]]), "#a8a29e",
     ] as any);
-    p.current.onVista({ puntos: datos.current, lejano: false, cargando: false, rango });
+    m.setPaintProperty("celdas-c", "circle-color", ["case", [">", ["get", "p"], 0], escalaDe(["get", "p"]), "#a8a29e"] as any);
+    emitir(false);
   };
 
   const cargar = () => {
     const m = mapa.current;
     if (!m || !listo.current) return;
-    p.current.onZoom?.(m.getZoom());
-    if (m.getZoom() < ZOOM_MIN) {
-      ctrl.current?.abort();
-      datos.current = [];
-      pintar();
-      p.current.onVista({ puntos: [], lejano: true, cargando: false, rango: [20, 32] });
-      return;
-    }
+    const z = m.getZoom();
+    p.current.onZoom?.(z);
     const b = m.getBounds();
     ctrl.current?.abort();
     const c = new AbortController();
     ctrl.current = c;
-    p.current.onVista({ puntos: datos.current, lejano: false, cargando: true, rango: [20, 32] });
+    emitir(true);
     const q = new URLSearchParams({
       bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((n) => n.toFixed(6)).join(","),
       dias: String(p.current.dias),
       ...(p.current.soloConPrecios ? { solo: "precios" } : {}),
     });
-    api<{ puntos: PuntoAdm[] } | { demasiadas: true }>(`/admin/mapa?${q}`, { signal: c.signal })
-      .then((r) => {
+    // A poco zoom (o si hay demasiadas tortillerías en pantalla) el servidor las agrupa por zonas
+    const pedirZonas = () =>
+      api<{ celdas: CeldaAdm[] }>(`/admin/mapa/celdas?${q}&zoom=${z.toFixed(2)}`, { signal: c.signal }).then((r) => {
         if (c.signal.aborted) return;
-        if (!("puntos" in r)) {
-          datos.current = [];
-          pintar();
-          return p.current.onVista({ puntos: [], lejano: true, cargando: false, rango: [20, 32] });
-        }
-        datos.current = r.puntos;
+        modo.current = "celdas";
+        celdas.current = r.celdas;
+        datos.current = [];
         pintar();
-      })
-      .catch(() => {
-        if (!c.signal.aborted) p.current.onVista({ puntos: datos.current, lejano: false, cargando: false, rango: [20, 32] });
       });
+    const peticion =
+      z >= ZOOM_PUNTOS
+        ? api<{ puntos: PuntoAdm[] } | { demasiadas: true }>(`/admin/mapa?${q}`, { signal: c.signal }).then((r) => {
+            if (c.signal.aborted) return;
+            if (!("puntos" in r)) return pedirZonas();
+            modo.current = "puntos";
+            datos.current = r.puntos;
+            celdas.current = [];
+            pintar();
+          })
+        : pedirZonas();
+    peticion.catch(() => {
+      if (!c.signal.aborted) emitir(false);
+    });
   };
   const programar = () => {
     window.clearTimeout(temporizador.current);
@@ -179,6 +228,20 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
         // para colorear cada grupo con el promedio de lo que contiene
         clusterProperties: { suma: ["+", ["get", "p"]], con: ["+", ["case", [">", ["get", "p"], 0], 1, 0]] },
       });
+      // Zonas agrupadas por el servidor (zoom bajo): tamaño = cuántas tortillerías, color = precio promedio
+      m.addSource("celdas", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      m.addLayer({
+        id: "celdas-c", type: "circle", source: "celdas",
+        paint: {
+          "circle-color": "#a8a29e", "circle-opacity": 0.9, "circle-stroke-color": "#fff", "circle-stroke-width": 2.5,
+          "circle-radius": ["interpolate", ["linear"], ["sqrt", ["get", "n"]], 1, 9, 6, 14, 20, 22, 60, 32, 140, 42],
+        },
+      });
+      m.addLayer({
+        id: "celdas-n", type: "symbol", source: "celdas",
+        layout: { "text-field": ["get", "txt"], "text-font": ["Noto Sans Bold"], "text-size": 11, "text-allow-overlap": true },
+        paint: { "text-color": "#1c1917", "text-halo-color": "rgba(255,255,255,.9)", "text-halo-width": 1.5 },
+      });
       m.addLayer({
         id: "grupos", type: "circle", source: "puntos", filter: ["has", "point_count"],
         paint: {
@@ -213,6 +276,16 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
 
     m.on("moveend", programar);
     m.on("click", (e) => {
+      const z = m.queryRenderedFeatures(e.point, { layers: ["celdas-c"] })[0];
+      if (z) {
+        const c = celdas.current[(z.properties as any).i];
+        if (!c) return;
+        const [x1, y1, x2, y2] = c.bbox;
+        // una zona de un solo punto no tiene área: se acerca directo; si no, se encuadra su contenido
+        if (x2 - x1 < 1e-4 && y2 - y1 < 1e-4) m.easeTo({ center: [c.lng, c.lat], zoom: Math.min(m.getZoom() + 3, 16), duration: 700 });
+        else m.fitBounds([[x1, y1], [x2, y2]], { padding: 80, duration: 800, maxZoom: 16 });
+        return;
+      }
       const g = m.queryRenderedFeatures(e.point, { layers: ["grupos"] })[0];
       if (g) {
         (m.getSource("puntos") as GeoJSONSource).getClusterExpansionZoom(g.properties!.cluster_id).then((z) => m.easeTo({ center: (g.geometry as any).coordinates, zoom: z + 0.4 }));
@@ -223,7 +296,7 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
       const x = datos.current.find((d) => d.id === (f.properties as any).id);
       if (x) abrirPopup(x, m);
     });
-    for (const capa of ["grupos", "pts-con", "pts-sin"]) {
+    for (const capa of ["celdas-c", "grupos", "pts-con", "pts-sin"]) {
       m.on("mouseenter", capa, () => (m.getCanvas().style.cursor = "pointer"));
       m.on("mouseleave", capa, () => (m.getCanvas().style.cursor = ""));
     }

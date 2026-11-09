@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Bell, ChevronDown, Home, KeyRound, LogOut, UserRound } from "lucide-react";
 import type { Sesion } from "./api";
 import { Hoja, type PestañaNav } from "./ui";
@@ -60,8 +60,14 @@ function MenuCuenta({ usuario, alPerfil, alInicio, alSalir }: { usuario: Sesion[
         <span className="hidden max-w-[9rem] truncate text-[13px] font-medium xl:block">{nombre}</span>
         <ChevronDown className={`h-3.5 w-3.5 text-white/60 transition ${abierto ? "rotate-180" : ""}`} aria-hidden />
       </button>
-      {abierto && (
-        <div role="menu" className="paso absolute right-0 top-full z-50 mt-2 w-64 rounded-2xl bg-white p-1.5 text-stone-900 shadow-2xl ring-1 ring-black/5">
+      {(
+        <div
+          role="menu"
+          aria-hidden={!abierto}
+          className={`absolute right-0 top-full z-50 mt-2 w-64 origin-top-right rounded-2xl bg-white p-1.5 text-stone-900 shadow-2xl ring-1 ring-black/5 transition duration-200 ease-[cubic-bezier(.2,.9,.3,1.15)] ${
+            abierto ? "visible translate-y-0 scale-100 opacity-100" : "invisible -translate-y-1.5 scale-95 opacity-0"
+          }`}
+        >
           <div className="mb-1 border-b border-stone-100 px-2.5 pb-2.5 pt-2">
             <p className="truncate text-sm font-bold">{nombre}</p>
             <p className="truncate text-xs text-stone-500">{usuario.correo}</p>
@@ -102,6 +108,20 @@ export default function AdminBarra({
 }) {
   const arriba = pestañas.filter((p) => p.id !== "perfil"); // el perfil vive en el menú de la cuenta
 
+  // La pastilla de la sección activa se desliza de una pestaña a otra
+  const lista = useRef<HTMLUListElement>(null);
+  const [pastilla, setPastilla] = useState<{ x: number; w: number }>();
+  useLayoutEffect(() => {
+    const medir = () => {
+      const on = lista.current?.querySelector<HTMLElement>('[aria-current="page"]');
+      setPastilla(on ? { x: on.offsetLeft, w: on.offsetWidth } : undefined);
+    };
+    medir();
+    const ro = new ResizeObserver(medir);
+    if (lista.current) ro.observe(lista.current);
+    return () => ro.disconnect();
+  }, [activa, arriba.length, pestañas.map((p) => p.insignia).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-guinda-oscuro">
       <header className="relative shrink-0 border-b border-white/10 bg-guinda-oscuro pt-[env(safe-area-inset-top)] text-white">
@@ -116,7 +136,8 @@ export default function AdminBarra({
 
           {/* Secciones: una sola fila (en teléfono van abajo) */}
           <nav className="hidden min-w-0 flex-1 lg:block" aria-label="Secciones">
-            <ul className="flex items-center gap-1">
+            <ul ref={lista} className="relative flex items-center gap-1">
+              <li aria-hidden className={`pointer-events-none absolute left-0 top-0 h-full rounded-lg bg-white/12 ring-1 ring-white/10 transition-[transform,width,opacity] duration-300 ease-[cubic-bezier(.34,1.3,.5,1)] ${pastilla ? "opacity-100" : "opacity-0"}`} style={{ width: pastilla?.w ?? 0, transform: `translateX(${pastilla?.x ?? 0}px)` }} />
               {arriba.map((p) => {
                 const on = p.id === activa;
                 return (
@@ -124,7 +145,7 @@ export default function AdminBarra({
                     <button
                       onClick={() => alCambiar(p.id)}
                       aria-current={on ? "page" : undefined}
-                      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium transition ${on ? "bg-white/12 text-white" : "text-white/60 hover:bg-white/6 hover:text-white"}`}
+                      className={`relative z-10 flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors duration-200 ${on ? "text-white" : "text-white/60 hover:bg-white/6 hover:text-white"}`}
                     >
                       <p.icono className="h-4 w-4" aria-hidden />
                       {p.texto}
@@ -150,15 +171,20 @@ export default function AdminBarra({
             className="relative grid h-9 w-9 shrink-0 place-items-center rounded-full text-white/80 transition hover:bg-white/10 hover:text-white"
           >
             <Bell className="h-[18px] w-[18px]" aria-hidden />
-            {pendientes > 0 && <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-dorado ring-2 ring-guinda-oscuro" aria-hidden />}
+            {pendientes > 0 && (
+              <span className="absolute right-1 top-1 h-2 w-2" aria-hidden>
+                <span className="absolute inset-0 animate-ping rounded-full bg-dorado/70" />
+                <span className="absolute inset-0 rounded-full bg-dorado ring-2 ring-guinda-oscuro" />
+              </span>
+            )}
           </button>
           <MenuCuenta usuario={usuario} alPerfil={() => alCambiar("perfil")} alInicio={alInicio} alSalir={alSalir} />
         </div>
       </header>
 
       <Hoja className="!mt-0 !rounded-none !shadow-none">
-        <div key={activa} className={`paso min-h-0 flex-1 ${plano ? "relative overflow-hidden" : "overflow-y-auto overscroll-contain px-3 pb-3 pt-5 lg:px-8 lg:pb-8 lg:pt-8"}`}>
-          <div className={plano ? "h-full w-full" : "mx-auto w-full max-w-[92rem] space-y-3"}>{children}</div>
+        <div key={activa} className={`paso min-h-0 flex-1 ${plano ? "relative overflow-hidden" : "overflow-y-auto overscroll-contain px-3 pb-3 pt-4 lg:px-6 lg:pb-5 lg:pt-4"}`}>
+          <div className={plano ? "h-full w-full" : "mx-auto w-full max-w-[92rem] space-y-2.5"}>{children}</div>
         </div>
       </Hoja>
 

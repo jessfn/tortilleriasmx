@@ -365,6 +365,28 @@ describe("supervisión: mapa, estadísticas y tendencia", () => {
     expect(todas.puntos.find((x: any) => x.n_capturas === 0)).toBeTruthy();
   });
 
+  it("a poco zoom el mapa agrupa en celdas con el precio promedio; al acercarse se separan", async () => {
+    const lejos = await (await staffGet("/admin/mapa/celdas?bbox=-100,19,-98,20&zoom=4")).json();
+    const total = lejos.celdas.reduce((a: number, c: any) => a + c.n, 0);
+    expect(total).toBeGreaterThanOrEqual(2);
+    expect(lejos.celdas.length).toBeLessThanOrEqual(total);
+    const conMaiz = lejos.celdas.filter((c: any) => c.maiz_n > 0);
+    expect(conMaiz.length).toBeGreaterThan(0);
+    expect(conMaiz[0].maiz_suma / conMaiz[0].maiz_n).toBeGreaterThan(5); // precio promedio razonable
+    expect(conMaiz[0].bbox).toHaveLength(4);
+    const cerca = await (await staffGet("/admin/mapa/celdas?bbox=-100,19,-98,20&zoom=17")).json();
+    expect(cerca.celdas.length).toBeGreaterThan(lejos.celdas.length);
+    expect(cerca.celdas.reduce((a: number, c: any) => a + c.n, 0)).toBe(total); // nada se pierde al cambiar de nivel
+  });
+
+  it("las celdas respetan 'solo con precios' y rechazan un bbox inválido", async () => {
+    const todas = await (await staffGet("/admin/mapa/celdas?bbox=-100,19,-98,20&zoom=17")).json();
+    const con = await (await staffGet("/admin/mapa/celdas?bbox=-100,19,-98,20&zoom=17&solo=precios")).json();
+    expect(con.celdas.length).toBeLessThan(todas.celdas.length);
+    expect(con.celdas.every((c: any) => c.maiz_n + c.masa_n > 0)).toBe(true);
+    expect((await staffGet("/admin/mapa/celdas?bbox=xx")).status).toBe(400);
+  });
+
   it("las capturas rechazadas no cuentan en el mapa ni en las estadísticas", async () => {
     await q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, capturista_id, estatus, fecha) VALUES ($1,'maiz',55,$2,'rechazada', current_date - 3)", [tB, sup]);
     const mapa = await (await staffGet("/admin/mapa?bbox=-99.145,19.435,-99.135,19.445")).json();
@@ -422,6 +444,17 @@ describe("mapa por área visible", () => {
     expect(dos.map((x: any) => x.nombre).sort()).toEqual(["EL MAIZ", "LA GUERA", "TORTILLERIA NUEVA ESPERANZA"].sort());
     const ninguno = await (await fetch(`${base}/tortillerias/mapa?bbox=10,10,11,11`)).json();
     expect(ninguno).toEqual([]);
+  });
+
+  it("el mapa del censador a poco zoom agrupa por zonas y conserva el total", async () => {
+    const lejos = await (await fetch(`${base}/tortillerias/mapa/celdas?bbox=-100,19,-98,20&zoom=4`)).json();
+    const cerca = await (await fetch(`${base}/tortillerias/mapa/celdas?bbox=-100,19,-98,20&zoom=17`)).json();
+    const suma = (r: any[]) => r.reduce((a, c) => a + c.n, 0);
+    expect(suma(lejos)).toBeGreaterThanOrEqual(2);
+    expect(suma(cerca)).toBe(suma(lejos));
+    expect(cerca.length).toBeGreaterThan(lejos.length);
+    expect(lejos[0].bbox).toHaveLength(4);
+    expect((await fetch(`${base}/tortillerias/mapa/celdas?bbox=xx`)).status).toBe(400);
   });
 
   it("excluye las rechazadas y las que no tienen ubicación", async () => {

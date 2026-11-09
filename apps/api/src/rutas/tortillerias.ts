@@ -4,6 +4,7 @@ import { fiscalSchema, nuevaTortilleriaSchema } from "@tortillerias/shared";
 import { auditar, pool } from "../db.js";
 import { cifrar, descifrar, enmascarar, hashBusqueda } from "../crypto.js";
 import { domicilioDe, type Fila } from "../denue.js";
+import { MAX_CELDAS, tamanoCelda, zoomSchema } from "../celdas.js";
 
 const busquedaSchema = z.object({
   municipio: z.string().optional(),
@@ -74,6 +75,24 @@ export function rutasTortillerias(app: FastifyInstance) {
     );
     if (rows.length > MAX_PUNTOS_MAPA) return { demasiadas: true };
     return rows;
+  });
+
+  // Mapa a poco zoom: cuántas tortillerías hay en cada zona (celdas de una cuadrícula que depende del zoom)
+  app.get("/tortillerias/mapa/celdas", async (req, reply) => {
+    const q = req.query as Record<string, string | undefined>;
+    const b = bboxSchema.safeParse(q.bbox);
+    if (!b.success) return reply.code(400).send({ error: "bbox inválido: minLng,minLat,maxLng,maxLat" });
+    const [x1, y1, x2, y2] = b.data;
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n, avg(ST_X(t.geom)) AS lng, avg(ST_Y(t.geom)) AS lat,
+              min(ST_X(t.geom)) AS x1, min(ST_Y(t.geom)) AS y1, max(ST_X(t.geom)) AS x2, max(ST_Y(t.geom)) AS y2
+         FROM tortillerias t
+        WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada'
+        GROUP BY floor(ST_X(t.geom) / $5::float8), floor(ST_Y(t.geom) / $5::float8)
+        LIMIT $6`,
+      [x1, y1, x2, y2, tamanoCelda(zoomSchema.parse(q.zoom)), MAX_CELDAS],
+    );
+    return rows.map((r) => ({ lat: r.lat, lng: r.lng, n: r.n, bbox: [r.x1, r.y1, r.x2, r.y2] }));
   });
 
   // Alta de tortillería nueva por un usuario registrado (queda pendiente de validación; la foto es obligatoria para validarla)

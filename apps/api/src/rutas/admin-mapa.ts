@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { pool } from "../db.js";
+import { MAX_CELDAS, tamanoCelda, zoomSchema } from "../celdas.js";
 
 const staff = (app: FastifyInstance) => app.soloRoles("supervisor", "admin");
 const uuid = z.string().uuid();
@@ -61,6 +62,43 @@ export function rutasAdminMapa(app: FastifyInstance) {
       puntos: rows.map((r) => ({
         id: r.id, nombre: r.nombre, domicilio: r.domicilio, estatus: r.estatus, origen: r.origen, lat: r.lat, lng: r.lng,
         n_capturas: r.n_capturas, ultimo_maiz: precio(r.maiz, r.maiz_fecha), ultima_masa: precio(r.masa, r.masa_fecha), alerta: r.alerta,
+      })),
+    };
+  });
+
+  // Mapa a poco zoom: tortillerías agrupadas en celdas, con cuántas hay y el precio promedio de cada producto en la celda
+  app.get("/admin/mapa/celdas", { preHandler: staff(app) }, async (req, reply) => {
+    const q = req.query as Record<string, string | undefined>;
+    const b = bboxSchema.safeParse(q.bbox);
+    if (!b.success) return reply.code(400).send({ error: "bbox inválido: minLng,minLat,maxLng,maxLat" });
+    const dias = periodo.safeParse(q.dias);
+    const [x1, y1, x2, y2] = b.data;
+    const { rows } = await pool.query(
+      `WITH cap AS (
+         SELECT DISTINCT ON (c.tortilleria_id, c.producto) c.tortilleria_id, c.producto, c.precio_kg::float8 AS precio
+           FROM capturas_precio c
+          WHERE c.estatus <> 'rechazada' AND c.producto IN ('maiz','masa') AND c.fecha >= ${HOY_MX} - $6::int
+          ORDER BY c.tortilleria_id, c.producto, c.fecha DESC, c.creado_en DESC
+       )
+       SELECT count(*)::int AS n, avg(ST_X(t.geom)) AS lng, avg(ST_Y(t.geom)) AS lat,
+              min(ST_X(t.geom)) AS x1, min(ST_Y(t.geom)) AS y1, max(ST_X(t.geom)) AS x2, max(ST_Y(t.geom)) AS y2,
+              (count(*) FILTER (WHERE t.estatus = 'pendiente'))::int AS pendientes,
+              count(m.precio)::int AS maiz_n, COALESCE(sum(m.precio), 0)::float8 AS maiz_suma,
+              count(a.precio)::int AS masa_n, COALESCE(sum(a.precio), 0)::float8 AS masa_suma
+         FROM tortillerias t
+         LEFT JOIN cap m ON m.tortilleria_id = t.id AND m.producto = 'maiz'
+         LEFT JOIN cap a ON a.tortilleria_id = t.id AND a.producto = 'masa'
+        WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada'
+          AND ($7::boolean IS NOT TRUE OR m.precio IS NOT NULL OR a.precio IS NOT NULL)
+        GROUP BY floor(ST_X(t.geom) / $5::float8), floor(ST_Y(t.geom) / $5::float8)
+        LIMIT $8`,
+      [x1, y1, x2, y2, tamanoCelda(zoomSchema.parse(q.zoom)), desde(dias.success ? dias.data : 30), q.solo === "precios", MAX_CELDAS],
+    );
+    return {
+      celdas: rows.map((r) => ({
+        lat: r.lat, lng: r.lng, n: r.n, pendientes: r.pendientes,
+        maiz_n: r.maiz_n, maiz_suma: r.maiz_suma, masa_n: r.masa_n, masa_suma: r.masa_suma,
+        bbox: [r.x1, r.y1, r.x2, r.y2],
       })),
     };
   });

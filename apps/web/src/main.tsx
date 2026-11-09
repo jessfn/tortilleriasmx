@@ -4,8 +4,10 @@ import { registerSW } from "virtual:pwa-register";
 import App from "./App";
 import "./index.css";
 import { activarDiagnostico, ajustarMargenInferior } from "./pantalla";
+import { ES_ADMIN } from "./api";
 
 ajustarMargenInferior();
+document.documentElement.dataset.ambito = ES_ADMIN ? "admin" : "app";
 activarDiagnostico();
 
 // Actualización reactiva: la app busca versiones nuevas cada minuto y cada vez que vuelve a primer plano.

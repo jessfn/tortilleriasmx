@@ -7,6 +7,11 @@
   src: url(https://framework-gb.cdn.gob.mx/applications/cms/fonts/Patria_Regular.otf) format("opentype");
 }
 
+/* Panel administrativo en pantallas grandes: todo (texto, espacios, tarjetas) se escala ~12 % hacia abajo para ver más sin amontonar */
+@media (min-width: 1024px) {
+  html[data-ambito="admin"] { font-size: 87.5%; }
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

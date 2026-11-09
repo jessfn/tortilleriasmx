@@ -24,7 +24,7 @@ export default function AdminMapa({ foco, alDetalle }: { foco?: FocoMapa; alDeta
   const [dias, setDias] = useState(30);
   const [solo, setSolo] = useState(false);
   const [tick, setTick] = useState(0);
-  const [vista, setVista] = useState<VistaMapa>({ puntos: [], lejano: true, cargando: true, rango: [20, 32] });
+  const [vista, setVista] = useState<VistaMapa>({ puntos: [], celdas: [], modo: "celdas", lejano: false, cargando: true, rango: [20, 32] });
   const [abierto, setAbierto] = useState(false); // hoja inferior en celular
 
   const [estados, setEstados] = useState<FilaZona[]>([]);
@@ -61,6 +61,16 @@ export default function AdminMapa({ foco, alDetalle }: { foco?: FocoMapa; alDeta
 
   // Estadísticas de lo que se ve en el mapa
   const resumenVista = useMemo(() => {
+    if (vista.modo === "celdas") {
+      // Zonas agrupadas: se suman las celdas (el mínimo y máximo exactos solo se conocen al acercarse)
+      const [nCampo, sCampo] = producto === "maiz" ? (["maiz_n", "maiz_suma"] as const) : (["masa_n", "masa_suma"] as const);
+      const con = vista.celdas.reduce((a, c) => a + c[nCampo], 0);
+      const suma = vista.celdas.reduce((a, c) => a + c[sCampo], 0);
+      return {
+        total: vista.celdas.reduce((a, c) => a + c.n, 0), con, prom: con ? suma / con : null, min: null as number | null, max: null as number | null,
+        alertas: 0, porValidar: vista.celdas.reduce((a, c) => a + c.pendientes, 0),
+      };
+    }
     const con = vista.puntos.filter((x) => (producto === "maiz" ? x.ultimo_maiz : x.ultima_masa));
     const precios = con.map((x) => (producto === "maiz" ? x.ultimo_maiz!.precio : x.ultima_masa!.precio));
     return {
@@ -72,7 +82,7 @@ export default function AdminMapa({ foco, alDetalle }: { foco?: FocoMapa; alDeta
       alertas: vista.puntos.filter((x) => x.alerta).length,
       porValidar: vista.puntos.filter((x) => x.estatus === "pendiente").length,
     };
-  }, [vista.puntos, producto]);
+  }, [vista.puntos, vista.celdas, vista.modo, producto]);
 
   const chip = (on: boolean) => `shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${on ? "bg-guinda text-white shadow" : "bg-white text-stone-600 ring-1 ring-stone-200"}`;
   const stat = zona?.[producto];
@@ -188,7 +198,7 @@ export default function AdminMapa({ foco, alDetalle }: { foco?: FocoMapa; alDeta
           <li className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-stone-400" /> Sin precio capturado</li>
           <li className="flex items-center gap-2"><span className="h-3 w-3 rounded-full border-[3px] border-dorado bg-white" /> Tortillería por validar</li>
           <li className="flex items-center gap-2"><span className="h-3 w-3 rounded-full border-[3px] border-red-600 bg-white" /> Con alerta de precio</li>
-          <li className="flex items-center gap-2"><Store className="h-3.5 w-3.5 text-guinda" /> El tamaño crece con el número de capturas; los grupos muestran el promedio.</li>
+          <li className="flex items-center gap-2"><Store className="h-3.5 w-3.5 text-guinda" /> De lejos: cada círculo es una zona (tamaño = tortillerías, color = precio promedio). Al acercarte se ve cada tortillería.</li>
         </ul>
       </div>
     </div>
@@ -207,6 +217,8 @@ export default function AdminMapa({ foco, alDetalle }: { foco?: FocoMapa; alDeta
             <><Loader2 className="h-3.5 w-3.5 animate-spin text-guinda" aria-hidden /> Cargando…</>
           ) : vista.lejano ? (
             <><ShieldAlert className="h-3.5 w-3.5 text-dorado" aria-hidden /> Acércate para ver las tortillerías</>
+          ) : vista.modo === "celdas" ? (
+            <><MapPin className="h-3.5 w-3.5 text-guinda" aria-hidden /> {entero(resumenVista.total)} tortillerías en {vista.celdas.length} zonas · toca una para acercarte</>
           ) : (
             <><MapPin className="h-3.5 w-3.5 text-guinda" aria-hidden /> {entero(resumenVista.total)} tortillerías · {entero(resumenVista.con)} con precio</>
           )}

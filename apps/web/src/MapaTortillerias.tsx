@@ -5,7 +5,9 @@ import { api } from "./api";
 import { alCambiarCatalogo, cubre, enCaja } from "./catalogo";
 
 export type Punto = { id: string; nombre: string; domicilio: string | null; estatus: string; lat: number; lng: number; razon_social: string | null };
-export type EstadoMapa = { lejano: boolean; cargando: boolean; total: number };
+/** zonas = a poco zoom se muestran zonas agrupadas (con su número de tortillerías) en lugar de puntos */
+export type EstadoMapa = { lejano: boolean; cargando: boolean; total: number; zonas?: boolean };
+type Zona = { lat: number; lng: number; n: number; bbox: [number, number, number, number] };
 export type MapaRef = { volarA: (lat: number, lng: number, zoom?: number) => void };
 
 type Props = {
@@ -33,7 +35,8 @@ const ESTILO = "https://tiles.openfreemap.org/styles/positron";
 const ESTILO_RESPALDO: StyleSpecification = { version: 8, sources: {}, layers: [{ id: "fondo", type: "background", paint: { "background-color": "#F5F1EA" } }] };
 const POR_ENVIAR = "#64748B";
 const MEXICO = { lat: 23.6, lng: -102.5 };
-const ZOOM_MIN_DATOS = 9.5; // más lejos que esto el área tiene demasiadas tortillerías
+const ZOOM_MIN_DATOS = 9.5; // más lejos que esto el servidor agrupa las tortillerías por zonas (con el estado descargado se usan sus puntos)
+const CAPAS_PUNTOS = ["grupos", "grupos-n", "puntos", "puntos-pendientes", "puntos-porenviar", "seleccion"];
 const GUINDA = "#9D2449";
 const DORADO = "#BC955C";
 
@@ -87,50 +90,69 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
   };
   const pintar = () => (mapa.current?.getSource("tortillerias") as GeoJSONSource | undefined)?.setData(aGeoJSON());
 
+  const zonas = useRef<Zona[]>([]);
+  const abreviar = (n: number) => (n >= 10000 ? `${Math.round(n / 1000)} mil` : n >= 1000 ? `${(n / 1000).toFixed(1)} mil` : String(n));
+
+  /** Muestra puntos (con grupos) o zonas agrupadas, según el zoom */
+  const mostrar = (enZonas: boolean) => {
+    const m = mapa.current;
+    if (!m || !listo.current) return;
+    for (const id of CAPAS_PUNTOS) if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", enZonas ? "none" : "visible");
+    for (const id of ["celdas-c", "celdas-n"]) if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", enZonas ? "visible" : "none");
+  };
+  const pintarZonas = (lista: Zona[]) => {
+    zonas.current = lista;
+    (mapa.current?.getSource("celdas") as GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: lista.map((z, i) => ({ type: "Feature" as const, geometry: { type: "Point" as const, coordinates: [z.lng, z.lat] }, properties: { i, n: z.n, txt: abreviar(z.n) } })),
+    });
+    mostrar(true);
+  };
+
   const cargar = () => {
     const m = mapa.current;
     if (!m || !listo.current) return;
     const c = m.getCenter();
     p.current.onCentro?.(c.lat, c.lng);
-    if (m.getZoom() < ZOOM_MIN_DATOS) {
-      ctrl.current?.abort();
-      datos.current = [];
-      pintar();
-      p.current.onEstado({ lejano: true, cargando: false, total: 0 });
-      return;
-    }
+    const z = m.getZoom();
     const b = m.getBounds();
     ctrl.current?.abort();
-    // Con el estado descargado se usa el catálogo del teléfono: más rápido y funciona sin internet
+
+    // Con el estado descargado se usa el catálogo del teléfono (también a poco zoom: el mapa agrupa los puntos solo). Funciona sin internet.
     if (cubre({ lat: c.lat, lng: c.lng })) {
-      const r = enCaja(b.getWest(), b.getSouth(), b.getEast(), b.getNorth());
-      if (r === "demasiadas") {
-        datos.current = [];
-        pintar();
-        return p.current.onEstado({ lejano: true, cargando: false, total: 0 });
-      }
-      datos.current = r;
+      const r = enCaja(b.getWest(), b.getSouth(), b.getEast(), b.getNorth(), 60000);
+      datos.current = r === "demasiadas" ? [] : r;
+      mostrar(false);
       pintar();
-      return p.current.onEstado({ lejano: false, cargando: false, total: r.length });
+      return p.current.onEstado({ lejano: false, cargando: false, total: datos.current.length });
     }
+
     const c1 = new AbortController();
     ctrl.current = c1;
     p.current.onEstado({ lejano: false, cargando: true, total: datos.current.length });
-    api<Punto[] | { demasiadas: true }>(`/tortillerias/mapa?bbox=${[b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((n) => n.toFixed(6)).join(",")}`, { signal: c1.signal })
-      .then((r) => {
+    const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((n) => n.toFixed(6)).join(",");
+    const pedirZonas = () =>
+      api<Zona[]>(`/tortillerias/mapa/celdas?bbox=${bbox}&zoom=${z.toFixed(2)}`, { signal: c1.signal }).then((r) => {
         if (c1.signal.aborted) return;
-        if (!Array.isArray(r)) {
-          datos.current = [];
-          pintar();
-          return p.current.onEstado({ lejano: true, cargando: false, total: 0 });
-        }
-        datos.current = r;
+        datos.current = [];
         pintar();
-        p.current.onEstado({ lejano: false, cargando: false, total: r.length });
-      })
-      .catch(() => {
-        if (!c1.signal.aborted) p.current.onEstado({ lejano: false, cargando: false, total: datos.current.length });
+        pintarZonas(r);
+        p.current.onEstado({ lejano: false, cargando: false, total: r.reduce((a, x) => a + x.n, 0), zonas: true });
       });
+    const peticion =
+      z < ZOOM_MIN_DATOS
+        ? pedirZonas()
+        : api<Punto[] | { demasiadas: true }>(`/tortillerias/mapa?bbox=${bbox}`, { signal: c1.signal }).then((r) => {
+            if (c1.signal.aborted) return;
+            if (!Array.isArray(r)) return pedirZonas(); // demasiadas para dibujar una por una: se agrupan por zonas
+            datos.current = r;
+            mostrar(false);
+            pintar();
+            p.current.onEstado({ lejano: false, cargando: false, total: r.length });
+          });
+    peticion.catch(() => {
+      if (!c1.signal.aborted) p.current.onEstado({ lejano: false, cargando: false, total: datos.current.length });
+    });
   };
   const programar = () => {
     window.clearTimeout(temporizador.current);
@@ -179,6 +201,20 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
     const iniciar = () => {
       if (listo.current) return;
       m.addSource("tortillerias", { type: "geojson", data: aGeoJSON(), cluster: true, clusterRadius: 50, clusterMaxZoom: 15 });
+      // Zonas agrupadas por el servidor (zoom bajo)
+      m.addSource("celdas", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      m.addLayer({
+        id: "celdas-c", type: "circle", source: "celdas", layout: { visibility: "none" },
+        paint: {
+          "circle-color": GUINDA, "circle-opacity": 0.92, "circle-stroke-color": "#fff", "circle-stroke-width": 2.5,
+          "circle-radius": ["interpolate", ["linear"], ["sqrt", ["get", "n"]], 1, 10, 6, 15, 20, 23, 60, 32, 140, 42],
+        },
+      });
+      if (!respaldo.current)
+        m.addLayer({
+          id: "celdas-n", type: "symbol", source: "celdas", layout: { visibility: "none", "text-field": ["get", "txt"], "text-font": ["Noto Sans Bold"], "text-size": 12, "text-allow-overlap": true },
+          paint: { "text-color": "#fff" },
+        });
       m.addLayer({
         id: "grupos", type: "circle", source: "tortillerias", filter: ["has", "point_count"],
         paint: {
@@ -220,6 +256,15 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
     m.on("moveend", programar);
     m.on("click", (e) => {
       if (p.current.modo === "marcar") return p.current.onPin(e.lngLat.lat, e.lngLat.lng);
+      const zona = m.queryRenderedFeatures(e.point, { layers: ["celdas-c"] })[0];
+      if (zona) {
+        const zn = zonas.current[(zona.properties as any).i];
+        if (!zn) return;
+        const [x1, y1, x2, y2] = zn.bbox;
+        if (x2 - x1 < 1e-4 && y2 - y1 < 1e-4) m.easeTo({ center: [zn.lng, zn.lat], zoom: Math.min(m.getZoom() + 3, 17), duration: 700 });
+        else m.fitBounds([[x1, y1], [x2, y2]], { padding: 80, duration: 800, maxZoom: 17 });
+        return;
+      }
       const g = m.queryRenderedFeatures(e.point, { layers: ["grupos"] })[0];
       if (g) {
         const fuente = m.getSource("tortillerias") as GeoJSONSource;
@@ -234,7 +279,7 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
       }
       p.current.onSeleccion(null);
     });
-    for (const capa of ["grupos", "puntos", "puntos-pendientes", "puntos-porenviar"]) {
+    for (const capa of ["celdas-c", "grupos", "puntos", "puntos-pendientes", "puntos-porenviar"]) {
       m.on("mouseenter", capa, () => p.current.modo === "elegir" && (m.getCanvas().style.cursor = "pointer"));
       m.on("mouseleave", capa, () => (m.getCanvas().style.cursor = ""));
     }
