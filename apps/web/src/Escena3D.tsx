@@ -74,7 +74,7 @@ export default function Escena3D({ fallback }: { fallback: ReactNode }) {
           camara.aspect = w / h;
           const vfov = (camara.fov * Math.PI) / 180;
           const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camara.aspect);
-          const dist = (radio * 1.05) / Math.sin(Math.min(vfov, hfov) / 2);
+          const dist = (radio * 0.8) / Math.sin(Math.min(vfov, hfov) / 2);
           const el_ = (20 * Math.PI) / 180;
           camara.position.set(0, Math.sin(el_) * dist, Math.cos(el_) * dist);
           camara.lookAt(0, -radio * 0.04, 0);
