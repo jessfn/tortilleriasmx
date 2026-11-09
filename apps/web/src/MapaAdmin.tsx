@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import maplibregl, { type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { api } from "./api";
-import { agregarRelieve, ESTILO } from "./estiloMapa";
+import { ESTILO } from "./estiloMapa";
 import { COLOR_ALTO, COLOR_BAJO, COLOR_MEDIO, rangoPrecios } from "./AdminVivo";
 
 export type Precio = { precio: number; fecha: string } | null;
@@ -185,13 +185,17 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
       attributionControl: { compact: true },
     });
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    // Mi ubicación: centra el mapa donde está quien lo usa y la va siguiendo (punto azul)
+    m.addControl(
+      new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true, timeout: 15000 }, trackUserLocation: true, showAccuracyCircle: true, fitBoundsOptions: { maxZoom: 16 } }),
+      "top-right",
+    );
     m.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
     mapa.current = m;
 
     // Los puntos se agregan en cuanto el estilo está listo, sin esperar a que lleguen todos los mosaicos del mapa base (en redes lentas tardan)
     const iniciar = () => {
       if (listo.current) return;
-      agregarRelieve(m);
       m.addSource("puntos", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },

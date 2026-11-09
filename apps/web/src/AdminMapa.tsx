@@ -249,7 +249,9 @@ export default function AdminMapa({ foco, alCambio }: { foco?: FocoMapa; alCambi
       </div>
 
       {/* Escritorio: panel lateral flotante */}
-      <aside className="absolute inset-y-3 left-3 z-20 hidden w-[21rem] overflow-y-auto overscroll-contain rounded-2xl bg-stone-50 p-4 shadow-2xl ring-1 ring-black/5 lg:block">{panel}</aside>
+      <aside className="absolute inset-y-3 left-3 z-20 hidden w-[21rem] overflow-hidden rounded-3xl bg-stone-50 shadow-2xl ring-1 ring-black/5 lg:block">
+        <div className="scroll-suave h-full overflow-y-auto overscroll-contain p-4 pr-3">{panel}</div>
+      </aside>
 
       {/* Celular y tableta: hoja inferior */}
       {!sel && <div className="lg:hidden">

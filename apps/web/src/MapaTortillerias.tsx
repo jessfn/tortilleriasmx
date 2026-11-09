@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import maplibregl, { type GeoJSONSource, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { api } from "./api";
-import { agregarRelieve, ESTILO } from "./estiloMapa";
+import { ESTILO } from "./estiloMapa";
 import { alCambiarCatalogo, cubre, enCaja } from "./catalogo";
 
 export type Punto = { id: string; nombre: string; domicilio: string | null; estatus: string; lat: number; lng: number; razon_social: string | null };
@@ -200,7 +200,6 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
     // Los puntos se agregan en cuanto el estilo está listo, sin esperar a que lleguen todos los mosaicos del mapa base (en redes lentas tardan)
     const iniciar = () => {
       if (listo.current) return;
-      if (!respaldo.current) agregarRelieve(m); // con el fondo liso (sin señal) no hay relieve
       m.addSource("tortillerias", { type: "geojson", data: aGeoJSON(), cluster: true, clusterRadius: 50, clusterMaxZoom: 15 });
       // Zonas agrupadas por el servidor (zoom bajo)
       m.addSource("celdas", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
