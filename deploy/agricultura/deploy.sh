@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Despliegue en el servidor de la Secretaría. Orden fijo: primero Git (commit y push desde tu equipo), después esto:
+#   ssh ... && cd /var/www/Tortillerias && ./deploy/agricultura/deploy.sh
+set -euo pipefail
+cd /var/www/Tortillerias
+source deploy/agricultura/_comun.sh
+
+PNPM="pnpm"; command -v pnpm >/dev/null || PNPM="npx --yes pnpm@9.12.0"
+API_PUBLICA="https://apitortillerias.agricultura.gob.mx"
+
+echo "== Etiqueta de la versión anterior (para volver atrás si hace falta)"
+git tag -f "prod-$(date +%F_%H%M)-antes" HEAD >/dev/null
+
+git pull --ff-only origin main
+$PNPM install --frozen-lockfile
+
+echo "== Compilación (la URL de la API se fija aquí, al compilar)"
+VITE_API_URL="$API_PUBLICA" $PNPM build
+
+echo "== Migraciones pendientes (con respaldo previo si hay alguna)"
+psql "$PSQL_URL" -c "CREATE TABLE IF NOT EXISTS _migraciones (nombre text PRIMARY KEY, aplicada timestamptz DEFAULT now())"
+pendientes=()
+for f in db/migrations/*.sql; do
+  n=$(basename "$f")
+  [ "$(psql "$PSQL_URL" -tAc "SELECT 1 FROM _migraciones WHERE nombre='$n'")" = "1" ] || pendientes+=("$f")
+done
+if [ "${#pendientes[@]}" -gt 0 ]; then
+  mkdir -p ~/respaldos
+  pg_dump -Fc "$PSQL_URL" > ~/respaldos/tortillerias-antes-migracion-$(date +%F_%H%M).dump
+  for f in "${pendientes[@]}"; do
+    psql "$PSQL_URL" -v ON_ERROR_STOP=1 -f "$f"
+    psql "$PSQL_URL" -c "INSERT INTO _migraciones(nombre) VALUES ('$(basename "$f")')"
+  done
+fi
+
+mkdir -p "$(dirname "${UPLOADS_DIR:-$RAIZ/datos/fotos}")" "${UPLOADS_DIR:-$RAIZ/datos/fotos}"
+pm2 startOrReload deploy/agricultura/ecosystem.config.cjs
+pm2 save
+
+# nginx (www-data) debe poder leer la PWA compilada
+chmod -R u=rwX,go=rX apps/web/dist
+sudo nginx -t && sudo nginx -s reload
+
+echo "== Verificación"
+sleep 2
+curl -fsS "http://127.0.0.1:${PORT:-3006}/health" && echo
+pm2 list | grep tortillerias-api
