@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  Banknote, Briefcase, Building2, Camera, Check, CircleCheck, Eye, EyeOff, FileText, Hash, ImagePlus, KeyRound, Landmark, Layers, ListChecks,
+  Banknote, Briefcase, Building2, Camera, Check, CircleCheck, CloudOff, TriangleAlert, Eye, EyeOff, FileText, Hash, ImagePlus, KeyRound, Landmark, Layers, ListChecks,
   Loader2, LocateFixed, Mail, MapPin, Phone, Plus, RotateCcw, Route, Send, ShieldCheck, Store, UserPlus, Users, Wheat, type LucideIcon,
 } from "lucide-react";
 import {
@@ -559,12 +559,18 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     return (
       <div className="marco-pc mx-auto flex h-dvh max-w-xl flex-col items-center justify-center gap-5 bg-gradient-to-b from-guinda-oscuro to-guinda p-8 text-center text-white lg:max-w-2xl">
         <div className="paso grid h-24 w-24 place-items-center rounded-full bg-white/15 ring-8 ring-white/10">
-          <CircleCheck className="h-14 w-14 text-dorado" aria-hidden />
+          {resultado?.tipo === "guardado" ? <CloudOff className="h-14 w-14 text-dorado" aria-hidden /> : resultado?.tipo === "conflicto" || resultado?.tipo === "error" ? <TriangleAlert className="h-14 w-14 text-dorado" aria-hidden /> : <CircleCheck className="h-14 w-14 text-dorado" aria-hidden />}
         </div>
         <div className="paso">
-          <h1 className="text-2xl font-bold">{conCuenta ? "¡Registro completo!" : "¡Captura enviada!"}</h1>
+          <h1 className="text-2xl font-bold">
+            {conCuenta ? "¡Registro completo!" : resultado?.tipo === "guardado" ? "Guardado en tu teléfono" : resultado?.tipo === "conflicto" || resultado?.tipo === "error" ? "Revisa tu captura" : "¡Captura enviada!"}
+          </h1>
           <p className="mt-1.5 text-sm text-white/80">
-            {conCuenta
+            {resultado?.tipo === "guardado"
+              ? `Se enviará sola cuando haya señal.${resultado.pendientes > 0 ? ` Tienes ${resultado.pendientes} ${resultado.pendientes === 1 ? "captura por enviar" : "capturas por enviar"}.` : ""}`
+              : resultado?.tipo === "conflicto" || resultado?.tipo === "error"
+                ? `${resultado.mensaje ?? "El servidor no pudo aceptarla todavía."} La encuentras en tu panel para resolverla.`
+                : conCuenta
               ? "Creamos tu cuenta, iniciaste sesión y registramos el precio. Entrando a tu panel…"
               : d.nueva
                 ? "Gracias por tu aportación. La tortillería nueva quedó por validar y los precios serán revisados."
