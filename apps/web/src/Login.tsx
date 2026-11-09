@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Eye, EyeOff, KeyRound, Loader2, LogIn, Mail } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Loader2, LogIn, Mail, ShieldCheck } from "lucide-react";
 import { api, guardarSesion, type Sesion } from "./api";
 import AuthLayout from "./AuthLayout";
 import { Aviso, Boton, Campo } from "./ui";
@@ -11,6 +11,8 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
   const [ver, setVer] = useState(false);
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
+  // La dirección /acceso es la entrada de administración y supervisión
+  const administrativo = location.pathname.startsWith("/acceso");
 
   async function entrar(e: React.FormEvent) {
     e.preventDefault();
@@ -30,9 +32,9 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
 
   return (
     <AuthLayout
-      titulo="Iniciar sesión"
-      subtitulo="Entra a tu panel"
-      icono={LogIn}
+      titulo={administrativo ? "Panel administrativo" : "Iniciar sesión"}
+      subtitulo={administrativo ? "Acceso de administración y supervisión" : "Entra a tu panel"}
+      icono={administrativo ? ShieldCheck : LogIn}
       alVolver={alVolver}
       pie={
         <div className="space-y-2">
