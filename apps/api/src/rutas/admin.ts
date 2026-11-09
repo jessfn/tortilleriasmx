@@ -63,9 +63,11 @@ export function rutasAdmin(app: FastifyInstance) {
     return rows;
   });
 
-  app.get("/admin/capturas", { preHandler: staff(app) }, async (req) => {
-    const q = req.query as { estatus?: string; alertas?: string };
+  app.get("/admin/capturas", { preHandler: staff(app) }, async (req, reply) => {
+    const q = req.query as { estatus?: string; alertas?: string; tortilleria?: string };
     const estatus = z.enum(["pendiente", "validada", "rechazada"]).safeParse(q.estatus);
+    const tortilleria = q.tortilleria ? uuid.safeParse(q.tortilleria) : null;
+    if (tortilleria && !tortilleria.success) return reply.code(400).send({ error: "Id inválido" });
     const { rows } = await pool.query(
       `SELECT c.id, c.producto, c.precio_kg, c.fecha, c.estatus, c.alerta, c.tortilleria_id,
               t.nombre, m.nombre AS municipio, e.nombre AS estado, u.correo AS capturista
@@ -75,8 +77,9 @@ export function rutasAdmin(app: FastifyInstance) {
          LEFT JOIN estados e ON e.clave = t.estado_clave
          LEFT JOIN usuarios u ON u.id = c.capturista_id
         WHERE ($1::text IS NULL OR c.estatus = $1) AND ($2::boolean IS NOT TRUE OR c.alerta)
-        ORDER BY c.alerta DESC, c.creado_en DESC LIMIT 100`,
-      [estatus.success ? estatus.data : null, q.alertas === "1"],
+          AND ($3::uuid IS NULL OR c.tortilleria_id = $3)
+        ORDER BY ${tortilleria ? "c.creado_en DESC" : "c.alerta DESC, c.creado_en DESC"} LIMIT 100`,
+      [estatus.success ? estatus.data : null, q.alertas === "1", tortilleria?.success ? tortilleria.data : null],
     );
     return rows;
   });

@@ -3,7 +3,7 @@ import maplibregl, { type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { api } from "./api";
 import { agregarRelieve, ESTILO } from "./estiloMapa";
-import { COLOR_ALTO, COLOR_BAJO, COLOR_MEDIO, dinero, diaCorto, rangoPrecios } from "./AdminVivo";
+import { COLOR_ALTO, COLOR_BAJO, COLOR_MEDIO, rangoPrecios } from "./AdminVivo";
 
 export type Precio = { precio: number; fecha: string } | null;
 export type PuntoAdm = {
@@ -21,6 +21,8 @@ export type VistaMapa = { puntos: PuntoAdm[]; celdas: CeldaAdm[]; modo: "puntos"
 export type MapaAdminRef = {
   ajustarA: (bbox: [number, number, number, number]) => void;
   volarA: (lat: number, lng: number, zoom?: number) => void;
+  /** Centra el mapa en la tortillería elegida, dejándola a la vista aunque haya un panel encima (teléfono) */
+  centrarEn: (lat: number, lng: number) => void;
 };
 
 type Props = {
@@ -31,7 +33,10 @@ type Props = {
   /** Se incrementa para volver a pedir los datos (actualización en vivo) */
   tick: number;
   onVista: (v: VistaMapa) => void;
-  onDetalle: (id: string) => void;
+  /** Se tocó una tortillería: el detalle se abre en el panel, no sobre el mapa */
+  onSeleccion: (x: PuntoAdm) => void;
+  /** Tortillería elegida (se marca en el mapa con un anillo) */
+  seleccion?: { id: string; lat: number; lng: number } | null;
   onZoom?: (z: number) => void;
 };
 
@@ -46,13 +51,20 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
   const ctrl = useRef<AbortController | null>(null);
   const temporizador = useRef<number>();
   const datos = useRef<PuntoAdm[]>([]);
-  const popup = useRef<maplibregl.Popup | null>(null);
+  const anillo = useRef<maplibregl.Marker | null>(null);
   const p = useRef(props);
   p.current = props;
 
   useImperativeHandle(ref, () => ({
     ajustarA: (b) => mapa.current?.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 60, duration: 900, maxZoom: 14 }),
     volarA: (lat, lng, zoom = 15) => mapa.current?.flyTo({ center: [lng, lat], zoom, duration: 800 }),
+    centrarEn: (lat, lng) => {
+      const m = mapa.current;
+      if (!m) return;
+      m.resize();
+      const movil = window.innerWidth < 1024; // en teléfono el detalle cubre la mitad de abajo
+      m.easeTo({ center: [lng, lat], zoom: Math.max(m.getZoom(), 15), duration: 650, padding: movil ? { bottom: Math.round(m.getContainer().clientHeight * 0.55), top: 0, left: 0, right: 0 } : { top: 0, bottom: 0, left: 0, right: 0 } });
+    },
   }));
 
   const celdas = useRef<CeldaAdm[]>([]);
@@ -164,48 +176,6 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
     temporizador.current = window.setTimeout(cargar, 300);
   };
 
-  // Ventana emergente con lo más importante de la tortillería (se arma con nodos de texto: nada de HTML de datos)
-  const abrirPopup = (x: PuntoAdm, m: maplibregl.Map) => {
-    popup.current?.remove();
-    const el = document.createElement("div");
-    el.className = "popup-admin";
-    const fila = (texto: string, clase = "") => {
-      const d = document.createElement("div");
-      d.className = clase;
-      d.textContent = texto;
-      return d;
-    };
-    const cab = document.createElement("div");
-    cab.className = "pa-cab";
-    cab.append(fila(x.nombre, "pa-nombre"));
-    const insignia = fila(x.estatus === "pendiente" ? "Por validar" : "Validada", `pa-ins ${x.estatus === "pendiente" ? "pa-pend" : "pa-ok"}`);
-    cab.append(insignia);
-    el.append(cab, fila(x.domicilio || "Sin domicilio", "pa-dom"));
-
-    const precios = document.createElement("div");
-    precios.className = "pa-precios";
-    for (const [t, v] of [["Maíz", x.ultimo_maiz], ["Masa", x.ultima_masa]] as const) {
-      const c = document.createElement("div");
-      c.className = "pa-precio";
-      c.append(fila(t, "pa-t"), fila(v ? dinero(v.precio) : "Sin precio", v ? "pa-v" : "pa-v pa-sin"));
-      if (v) c.append(fila(diaCorto(v.fecha), "pa-f"));
-      precios.append(c);
-    }
-    el.append(precios);
-    el.append(fila(`${x.n_capturas} ${x.n_capturas === 1 ? "captura" : "capturas"} en el periodo${x.alerta ? " · ⚠ con alerta de precio" : ""}`, "pa-n"));
-    const boton = document.createElement("button");
-    boton.type = "button";
-    boton.className = "pa-boton";
-    boton.textContent = "Ver detalle y revisión";
-    boton.onclick = () => p.current.onDetalle(x.id);
-    el.append(boton);
-
-    popup.current = new maplibregl.Popup({ offset: 14, maxWidth: "300px", closeButton: true, className: "popup-admin-caja" })
-      .setLngLat([x.lng, x.lat])
-      .setDOMContent(el)
-      .addTo(m);
-  };
-
   useEffect(() => {
     const m = new maplibregl.Map({
       container: cont.current!,
@@ -295,7 +265,7 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
       const f = m.queryRenderedFeatures(e.point, { layers: ["pts-con", "pts-sin"] })[0];
       if (!f) return;
       const x = datos.current.find((d) => d.id === (f.properties as any).id);
-      if (x) abrirPopup(x, m);
+      if (x) p.current.onSeleccion(x);
     });
     for (const capa of ["celdas-c", "grupos", "pts-con", "pts-sin"]) {
       m.on("mouseenter", capa, () => (m.getCanvas().style.cursor = "pointer"));
@@ -307,12 +277,31 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
       ro.disconnect();
       window.clearTimeout(temporizador.current);
       ctrl.current?.abort();
-      popup.current?.remove();
+      anillo.current?.remove();
+      anillo.current = null;
       m.remove();
       listo.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // La tortillería elegida se marca con un anillo dorado que pulsa
+  useEffect(() => {
+    const m = mapa.current;
+    if (!m) return;
+    const sel = props.seleccion;
+    if (!sel) {
+      anillo.current?.remove();
+      anillo.current = null;
+      return;
+    }
+    if (!anillo.current) {
+      const el = document.createElement("div");
+      el.className = "anillo-seleccion";
+      el.innerHTML = "<span></span><span></span>";
+      anillo.current = new maplibregl.Marker({ element: el }).setLngLat([sel.lng, sel.lat]).addTo(m);
+    } else anillo.current.setLngLat([sel.lng, sel.lat]);
+  }, [props.seleccion?.id, props.seleccion?.lat, props.seleccion?.lng]);
 
   // Cambió el producto, el periodo o el filtro, o toca actualizar en vivo
   useEffect(() => {

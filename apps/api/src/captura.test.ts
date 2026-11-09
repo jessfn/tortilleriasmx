@@ -379,6 +379,13 @@ describe("supervisión: mapa, estadísticas y tendencia", () => {
     expect(cerca.celdas.reduce((a: number, c: any) => a + c.n, 0)).toBe(total); // nada se pierde al cambiar de nivel
   });
 
+  it("el historial de una tortillería trae solo sus capturas", async () => {
+    const r = await (await staffGet(`/admin/capturas?tortilleria=${tA}`)).json();
+    expect(r.length).toBeGreaterThanOrEqual(4);
+    expect(r.every((c: any) => c.tortilleria_id === tA)).toBe(true);
+    expect((await staffGet("/admin/capturas?tortilleria=xx")).status).toBe(400);
+  });
+
   it("las celdas respetan 'solo con precios' y rechazan un bbox inválido", async () => {
     const todas = await (await staffGet("/admin/mapa/celdas?bbox=-100,19,-98,20&zoom=17")).json();
     const con = await (await staffGet("/admin/mapa/celdas?bbox=-100,19,-98,20&zoom=17&solo=precios")).json();

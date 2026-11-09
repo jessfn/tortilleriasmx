@@ -2,7 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ChevronUp, Landmark, Layers, Loader2, Building2, MapPin, ShieldAlert, SlidersHorizontal, Store, Wheat, X } from "lucide-react";
 import { api } from "./api";
 import { COLOR_ALTO, COLOR_BAJO, COLOR_MEDIO, dinero, entero, EnVivo, Tendencia, useVivo, type DiaPrecio } from "./AdminVivo";
-import type { MapaAdminRef, VistaMapa } from "./MapaAdmin";
+import type { MapaAdminRef, PuntoAdm, VistaMapa } from "./MapaAdmin";
+import DetalleLazy from "./AdminDetalle";
 import { Selector } from "./ui";
 
 const Mapa = lazy(() => import("./MapaAdmin"));
@@ -18,7 +19,7 @@ export type FocoMapa = { bbox: [number, number, number, number]; estado?: string
 const PERIODOS: [number, string][] = [[7, "7 días"], [30, "30 días"], [90, "90 días"], [0, "Todo"]];
 
 /** Mapa de precios con filtros, zona (estado/municipio) y estadísticas al momento */
-export default function AdminMapa({ foco, alDetalle }: { foco?: FocoMapa; alDetalle: (id: string) => void }) {
+export default function AdminMapa({ foco, alCambio }: { foco?: FocoMapa; alCambio: () => void }) {
   const ref = useRef<MapaAdminRef>(null);
   const [producto, setProducto] = useState<"maiz" | "masa">("maiz");
   const [dias, setDias] = useState(30);
@@ -26,6 +27,7 @@ export default function AdminMapa({ foco, alDetalle }: { foco?: FocoMapa; alDeta
   const [tick, setTick] = useState(0);
   const [vista, setVista] = useState<VistaMapa>({ puntos: [], celdas: [], modo: "celdas", lejano: false, cargando: true, rango: [20, 32] });
   const [abierto, setAbierto] = useState(false); // hoja inferior en celular
+  const [sel, setSel] = useState<PuntoAdm | null>(null); // tortillería elegida: su detalle va en un panel, no sobre el mapa
 
   const [estados, setEstados] = useState<FilaZona[]>([]);
   const [municipios, setMunicipios] = useState<FilaZona[]>([]);
@@ -56,6 +58,26 @@ export default function AdminMapa({ foco, alDetalle }: { foco?: FocoMapa; alDeta
   }, [foco]);
 
   const zona = useMemo(() => (municipio ? municipios.find((m) => m.clave === municipio) : estado ? estados.find((e) => e.clave === estado) : undefined), [estado, municipio, estados, municipios]);
+
+  // Al elegir una tortillería se centra el mapa en ella (el panel ya ocupa su lugar)
+  useEffect(() => {
+    if (!sel) return;
+    const t = setTimeout(() => ref.current?.centrarEn(sel.lat, sel.lng), 120);
+    return () => clearTimeout(t);
+  }, [sel?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const detalle = sel && (
+    <DetalleLazy
+      id={sel.id}
+      resumen={sel}
+      alCerrar={() => setSel(null)}
+      alResuelta={() => {
+        setTick((t) => t + 1); // el mapa se actualiza con el nuevo estatus
+        alCambio();
+        setSel(null);
+      }}
+    />
+  );
 
   const irA = useCallback((f?: FilaZona) => f && ref.current?.ajustarA(f.bbox), []);
 
@@ -205,9 +227,10 @@ export default function AdminMapa({ foco, alDetalle }: { foco?: FocoMapa; alDeta
   );
 
   return (
-    <div className="relative h-full w-full bg-stone-200">
+    <div className="flex h-full w-full bg-stone-200">
+    <div className="relative h-full min-w-0 flex-1">
       <Suspense fallback={<div className="grid h-full place-items-center text-stone-500"><Loader2 className="h-7 w-7 animate-spin" /></div>}>
-        <Mapa ref={ref} producto={producto} dias={dias} soloConPrecios={solo} tick={tick} onVista={setVista} onDetalle={alDetalle} />
+        <Mapa ref={ref} producto={producto} dias={dias} soloConPrecios={solo} tick={tick} onVista={setVista} onSeleccion={setSel} seleccion={sel && { id: sel.id, lat: sel.lat, lng: sel.lng }} />
       </Suspense>
 
       {/* Estado del mapa */}
@@ -229,7 +252,7 @@ export default function AdminMapa({ foco, alDetalle }: { foco?: FocoMapa; alDeta
       <aside className="absolute inset-y-3 left-3 z-20 hidden w-[21rem] overflow-y-auto overscroll-contain rounded-2xl bg-stone-50 p-4 shadow-2xl ring-1 ring-black/5 lg:block">{panel}</aside>
 
       {/* Celular y tableta: hoja inferior */}
-      <div className="lg:hidden">
+      {!sel && <div className="lg:hidden">
         <div className="absolute inset-x-0 bottom-0 z-20 flex max-h-[78%] flex-col rounded-t-3xl bg-stone-50 shadow-[0_-12px_30px_-10px_rgba(0,0,0,.4)]">
           <button onClick={() => setAbierto(!abierto)} className="flex shrink-0 items-center gap-3 px-4 pb-2 pt-3 text-left" aria-expanded={abierto}>
             <span className="absolute left-1/2 top-1.5 h-1 w-10 -translate-x-1/2 rounded-full bg-stone-300" aria-hidden />
@@ -242,7 +265,20 @@ export default function AdminMapa({ foco, alDetalle }: { foco?: FocoMapa; alDeta
           </button>
           {abierto && <div className="paso min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6">{panel}</div>}
         </div>
-      </div>
+      </div>}
+      {/* Teléfono: el detalle es una hoja inferior que deja ver el mapa arriba */}
+      {sel && (
+        <div className="paso absolute inset-x-0 bottom-0 z-30 h-[56%] overflow-hidden rounded-t-3xl shadow-[0_-12px_30px_-10px_rgba(0,0,0,.4)] lg:hidden">{detalle}</div>
+      )}
+    </div>
+
+    {/* Escritorio: panel lateral que empuja al mapa en lugar de taparlo */}
+    <aside
+      className={`hidden shrink-0 overflow-hidden border-l border-stone-200 bg-stone-50 transition-[width] duration-300 ease-[cubic-bezier(.3,.9,.3,1)] lg:block ${sel ? "w-[24rem]" : "w-0 border-l-0"}`}
+      aria-hidden={!sel}
+    >
+      <div className="h-full w-[24rem]">{detalle}</div>
+    </aside>
     </div>
   );
 }

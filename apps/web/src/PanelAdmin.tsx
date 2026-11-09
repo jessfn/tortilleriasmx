@@ -14,20 +14,20 @@ import AdminMapa, { type FocoMapa } from "./AdminMapa";
 import AdminEstadisticas from "./AdminEstadisticas";
 import { useVivo } from "./AdminVivo";
 
-type TortilleriaAdm = {
+export type TortilleriaAdm = {
   id: string; nombre: string; domicilio: string | null; estatus: string; origen: string; creado_en: string; lat: number | null; lng: number | null;
   municipio: string | null; estado: string | null; creador: string | null; n_fotos: number;
   localidad: string | null; tipo_vial: string | null; calle: string | null; numero_ext: string | null; numero_int: string | null; colonia: string | null;
   codigo_postal: string | null; telefono: string | null; correo: string | null; personal_ocupado: string | null; codigo_scian: string | null;
   fecha_alta: string | null; tiene_fiscal: boolean;
 };
-type CapturaAdm = {
+export type CapturaAdm = {
   id: string; producto: "maiz" | "harina" | "masa"; precio_kg: string; fecha: string; estatus: string; alerta: boolean; tortilleria_id: string;
   nombre: string; municipio: string | null; estado: string | null; capturista: string | null;
 };
 type UsuarioAdm = { id: string; correo: string | null; usuario: string; nombre: string; apellidos: string; rol: string; activo: boolean; creado_en: string; capturas: number };
 /** Datos fiscales de la tortillería; si solo hay un registro viejo de responsable, llega con legado = true */
-type Fiscal = { tipoPersona: string; razonSocial: string; rfc: string; celular: string | null; legado?: boolean; responsable?: { nombre: string; apellidos: string } };
+export type Fiscal = { tipoPersona: string; razonSocial: string; rfc: string; celular: string | null; legado?: boolean; responsable?: { nombre: string; apellidos: string } };
 
 const PRODUCTO = { maiz: { t: "Maíz", i: Wheat }, harina: { t: "Harina", i: PackageOpen }, masa: { t: "Masa", i: Layers } };
 const fecha = (s: string) => new Date(s).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
@@ -40,7 +40,6 @@ export default function PanelAdmin({
   const tab = tabGuardada === "usuarios" && !esAdmin ? "resumen" : tabGuardada; // por si cambió su rol
   const [resumen, setResumen] = useState<Resumen>();
   const [foco, setFoco] = useState<FocoMapa>();
-  const [detalleId, setDetalleId] = useState<string>();
 
   // El resumen y el contador de pendientes se actualizan solos
   const vivo = useVivo(async () => setResumen(await api<Resumen>("/admin/resumen")), 20_000);
@@ -74,51 +73,13 @@ export default function PanelAdmin({
       alCambiar={setTab}
     >
       {tab === "resumen" && <AdminResumen r={resumen} ultima={vivo.ultima} fallo={vivo.fallo} alRevisar={() => setTab("revision")} alEstadisticas={() => setTab("estadisticas")} alMapa={alMapa} />}
-      {tab === "mapa" && <AdminMapa foco={foco} alDetalle={setDetalleId} />}
+      {tab === "mapa" && <AdminMapa foco={foco} alCambio={cargarResumen} />}
       {tab === "estadisticas" && <AdminEstadisticas alMapa={alMapa} />}
       {tab === "revision" && <VistaRevision alCambio={cargarResumen} />}
       {tab === "usuarios" && esAdmin && <VistaUsuarios miId={sesion.usuario.id} />}
       {tab === "perfil" && <Perfil sesion={sesion} alActualizar={alActualizarSesion} alSalir={alSalir} />}
-      {detalleId && <DetalleDesdeMapa id={detalleId} alCerrar={() => setDetalleId(undefined)} alCambio={cargarResumen} />}
     </AdminBarra>
   );
-}
-
-/** Abre el detalle de una tortillería elegida en el mapa (con foto, datos fiscales y botones de revisión) */
-function DetalleDesdeMapa({ id, alCerrar, alCambio }: { id: string; alCerrar: () => void; alCambio: () => void }) {
-  const [t, setT] = useState<TortilleriaAdm | null>();
-  const [trabajando, setTrabajando] = useState(false);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    api<TortilleriaAdm>(`/admin/tortillerias/${id}`).then(setT).catch((e) => { setError(e.message); setT(null); });
-  }, [id]);
-
-  async function resolver(tid: string, estatus: "validada" | "rechazada") {
-    setTrabajando(true);
-    try {
-      await api(`/tortillerias/${tid}/estatus`, { metodo: "PATCH", json: { estatus } });
-      alCambio();
-      alCerrar();
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setTrabajando(false);
-    }
-  }
-
-  if (t === undefined)
-    return (
-      <HojaModal titulo="Tortillería" alCerrar={alCerrar}>
-        <div className="grid place-items-center py-10 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
-      </HojaModal>
-    );
-  if (t === null)
-    return (
-      <HojaModal titulo="Tortillería" alCerrar={alCerrar}>
-        <Aviso>{error || "No se pudo cargar la tortillería."}</Aviso>
-      </HojaModal>
-    );
-  return <DetalleTortilleria t={t} trabajando={trabajando} alCerrar={alCerrar} alResolver={resolver} />;
 }
 
 /* ---------------- Revisión ---------------- */
