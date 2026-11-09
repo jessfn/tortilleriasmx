@@ -329,6 +329,82 @@ describe("ubicación cercana", () => {
   });
 });
 
+describe("supervisión: mapa, estadísticas y tendencia", () => {
+  const staffGet = (url: string) => get(url, sup, "supervisor");
+
+  it("solo supervisor y administrador", async () => {
+    for (const u of ["/admin/mapa?bbox=-100,19,-98,20", "/admin/estadisticas", "/admin/tendencia", "/admin/actividad", `/admin/tortillerias/${tA}`]) {
+      expect((await get(u, ana)).status, u).toBe(403);
+      expect((await fetch(base + u)).status, u).toBe(401);
+    }
+  });
+
+  it("el mapa trae el último precio de cada producto y el número de capturas", async () => {
+    const r = await (await staffGet("/admin/mapa?bbox=-99.135,19.425,-99.125,19.435")).json();
+    expect(r.puntos).toHaveLength(1);
+    const p = r.puntos[0];
+    expect(p).toMatchObject({ nombre: "LA GUERA", n_capturas: 4, lat: 19.43, lng: -99.13 });
+    expect(p.ultimo_maiz.precio).toBe(26); // la más reciente de las capturas de maíz
+    expect(p.ultima_masa.precio).toBe(18);
+    expect(p.ultimo_maiz.fecha).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("'solo con precios' deja fuera las tortillerías sin capturas", async () => {
+    const todas = await (await staffGet("/admin/mapa?bbox=-99.2,19.4,-99.1,19.5")).json();
+    const conPrecios = await (await staffGet("/admin/mapa?bbox=-99.2,19.4,-99.1,19.5&solo=precios")).json();
+    expect(todas.puntos.length).toBeGreaterThan(conPrecios.puntos.length);
+    expect(conPrecios.puntos.every((x: any) => x.n_capturas > 0)).toBe(true);
+    expect(todas.puntos.find((x: any) => x.n_capturas === 0)).toBeTruthy();
+  });
+
+  it("las capturas rechazadas no cuentan en el mapa ni en las estadísticas", async () => {
+    await q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, capturista_id, estatus, fecha) VALUES ($1,'maiz',55,$2,'rechazada', current_date - 3)", [tB, sup]);
+    const mapa = await (await staffGet("/admin/mapa?bbox=-99.145,19.435,-99.135,19.445")).json();
+    expect(mapa.puntos[0].ultimo_maiz.precio).not.toBe(55);
+    const est = await (await staffGet("/admin/estadisticas?dias=0")).json();
+    expect(est[0].maiz.maximo).not.toBe(55);
+  });
+
+  it("estadísticas por estado y por municipio, con su caja para acercar el mapa", async () => {
+    const estados = await (await staffGet("/admin/estadisticas")).json();
+    const cdmx = estados.find((e: any) => e.clave === "09");
+    expect(cdmx).toMatchObject({ nombre: "CIUDAD DE MEXICO" });
+    expect(cdmx.tortillerias).toBeGreaterThanOrEqual(2);
+    expect(cdmx.con_precios).toBeGreaterThanOrEqual(2);
+    expect(cdmx.maiz).toMatchObject({ promedio: expect.any(Number), minimo: expect.any(Number), maximo: expect.any(Number) });
+    expect(cdmx.bbox).toHaveLength(4);
+    const munis = await (await staffGet("/admin/estadisticas?estado=09")).json();
+    expect(munis[0]).toMatchObject({ clave: "09015", nombre: "CUAUHTEMOC" });
+    expect((await staffGet("/admin/estadisticas?estado=xx")).status).toBe(400);
+  });
+
+  it("el periodo recorta las capturas viejas", async () => {
+    await q("UPDATE capturas_precio SET fecha = current_date - 40 WHERE capturista_id = $1 AND tortilleria_id = $2", [ana, tB]);
+    const reciente = (await (await staffGet("/admin/estadisticas?dias=7")).json()).find((e: any) => e.clave === "09");
+    const todo = (await (await staffGet("/admin/estadisticas?dias=0")).json()).find((e: any) => e.clave === "09");
+    expect(todo.capturas).toBeGreaterThan(reciente.capturas);
+  });
+
+  it("tendencia diaria con el promedio de maíz y masa", async () => {
+    const t = await (await staffGet("/admin/tendencia?dias=0")).json();
+    expect(t.length).toBeGreaterThan(0);
+    expect(t[0]).toMatchObject({ fecha: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), n: expect.any(Number) });
+    expect(t.some((d: any) => d.maiz != null)).toBe(true);
+    const porEstado = await (await staffGet("/admin/tendencia?dias=0&estado=14")).json();
+    expect(porEstado).toEqual([]);
+    expect((await staffGet("/admin/tendencia?municipio=1")).status).toBe(400);
+  });
+
+  it("actividad reciente y detalle de una tortillería", async () => {
+    const a = await (await staffGet("/admin/actividad?limite=5")).json();
+    expect(a.length).toBeLessThanOrEqual(5);
+    expect(a[0]).toMatchObject({ nombre: expect.any(String), precio_kg: expect.any(Number) });
+    const d = await (await staffGet(`/admin/tortillerias/${tA}`)).json();
+    expect(d).toMatchObject({ id: tA, nombre: "LA GUERA", municipio: "CUAUHTEMOC", tiene_fiscal: true });
+    expect((await staffGet("/admin/tortillerias/00000000-0000-4000-8000-000000000001")).status).toBe(404);
+  });
+});
+
 describe("mapa por área visible", () => {
   it("devuelve solo los puntos dentro del rectángulo", async () => {
     const r = await (await fetch(`${base}/tortillerias/mapa?bbox=-99.135,19.425,-99.125,19.435`)).json();

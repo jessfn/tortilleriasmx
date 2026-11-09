@@ -220,6 +220,8 @@ export function PanelShell({
   pestañas,
   activa,
   alCambiar,
+  completo,
+  plano,
   children,
 }: {
   titulo: string;
@@ -228,11 +230,17 @@ export function PanelShell({
   pestañas: PestañaNav[];
   activa: string;
   alCambiar: (id: string) => void;
+  /** Administración: en computadora y tableta ocupa toda la pantalla (sin tarjeta flotante) */
+  completo?: boolean;
+  /** La pestaña activa ocupa toda el área (mapa), sin márgenes ni scroll de página */
+  plano?: boolean;
   children: ReactNode;
 }) {
   return (
-    <div className="marco-pc mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro lg:grid lg:max-w-6xl lg:grid-cols-[16rem_minmax(0,1fr)] lg:grid-rows-[auto_minmax(0,1fr)]">
-      <header className="relative shrink-0 bg-gradient-to-b from-guinda-oscuro from-35% to-guinda px-4 pb-6 lg:col-span-2 lg:px-8 lg:pb-7 pt-[max(.75rem,env(safe-area-inset-top))] text-white">
+    <div
+      className={`${completo ? "md:max-w-none lg:w-full" : "marco-pc lg:max-w-6xl"} mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:grid-rows-[auto_minmax(0,1fr)]`}
+    >
+      <header className={`relative shrink-0 bg-gradient-to-b from-guinda-oscuro from-35% to-guinda px-4 pb-6 lg:col-span-2 lg:px-8 ${completo ? "lg:pb-4 lg:pt-4" : "lg:pb-7"} pt-[max(.75rem,env(safe-area-inset-top))] text-white`}>
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-semibold uppercase tracking-[.2em] text-dorado">TortilleríasMX</p>
@@ -243,8 +251,11 @@ export function PanelShell({
         </div>
       </header>
       <Hoja className="lg:col-start-2 lg:row-start-2 lg:mt-0 lg:rounded-none lg:shadow-none">
-        <div key={activa} className="paso min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3 pt-5 lg:px-8 lg:pb-8 lg:pt-8">
-          <div className="mx-auto w-full max-w-3xl space-y-3">{children}</div>
+        <div
+          key={activa}
+          className={`paso min-h-0 flex-1 ${plano ? "relative overflow-hidden" : "overflow-y-auto overscroll-contain px-3 pb-3 pt-5 lg:px-8 lg:pb-8 lg:pt-8"}`}
+        >
+          <div className={plano ? "h-full w-full" : `mx-auto w-full space-y-3 ${completo ? "max-w-[92rem]" : "max-w-3xl"}`}>{children}</div>
         </div>
       </Hoja>
       <nav className="shrink-0 bg-stone-50 pb-[max(.125rem,calc(var(--sb)*.3))] shadow-[0_-10px_20px_-14px_rgba(0,0,0,.3)] lg:col-start-1 lg:row-start-2 lg:border-r lg:border-stone-200/70 lg:bg-white lg:p-3 lg:shadow-none" aria-label="Secciones">
@@ -322,8 +333,8 @@ export function HojaModal({ titulo, alCerrar, children }: { titulo: string; alCe
     return () => window.removeEventListener("keydown", k);
   }, [alCerrar]);
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-[2px]" onClick={alCerrar} role="dialog" aria-modal="true" aria-label={titulo}>
-      <div className="paso flex max-h-[88dvh] w-full max-w-xl flex-col rounded-t-3xl bg-stone-50 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-[2px] md:items-center md:p-6" onClick={alCerrar} role="dialog" aria-modal="true" aria-label={titulo}>
+      <div className="paso flex max-h-[88dvh] w-full max-w-xl flex-col rounded-t-3xl bg-stone-50 shadow-2xl md:rounded-3xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex shrink-0 items-center gap-2 border-b border-stone-200 px-4 py-3">
           <h2 className="min-w-0 flex-1 truncate text-base font-bold">{titulo}</h2>
           <button onClick={alCerrar} aria-label="Cerrar" className="grid h-9 w-9 place-items-center rounded-full hover:bg-stone-200">

@@ -64,3 +64,22 @@ input, select, textarea { font-size: max(16px, 1em); }
 
 /* Punto azul "Estás aquí" del mapa */
 @keyframes pulsoAzul { 0% { transform: scale(.5); opacity: 1; } 100% { transform: scale(1.6); opacity: 0; } }
+
+/* Ventana emergente del mapa de supervisión */
+.popup-admin-caja .maplibregl-popup-content { padding: 0; border-radius: 16px; box-shadow: 0 18px 40px -12px rgba(0,0,0,.45); overflow: hidden; font-family: inherit; }
+.popup-admin-caja .maplibregl-popup-close-button { font-size: 20px; padding: 2px 9px; color: #78716c; }
+.popup-admin { padding: 14px 14px 12px; min-width: 232px; color: #1c1917; }
+.popup-admin .pa-cab { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding-right: 18px; }
+.popup-admin .pa-nombre { font-weight: 700; font-size: 15px; line-height: 1.2; }
+.popup-admin .pa-ins { flex-shrink: 0; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 99px; }
+.popup-admin .pa-ok { background: #ecfdf5; color: #047857; }
+.popup-admin .pa-pend { background: #fffbeb; color: #b45309; }
+.popup-admin .pa-dom { margin-top: 3px; font-size: 12px; color: #78716c; line-height: 1.3; }
+.popup-admin .pa-precios { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0 8px; }
+.popup-admin .pa-precio { background: #fafaf9; border-radius: 12px; padding: 8px 10px; }
+.popup-admin .pa-t { font-size: 11px; color: #78716c; font-weight: 600; }
+.popup-admin .pa-v { font-size: 20px; font-weight: 800; line-height: 1.15; }
+.popup-admin .pa-sin { font-size: 13px; font-weight: 500; color: #a8a29e; padding: 3px 0; }
+.popup-admin .pa-f { font-size: 11px; color: #a8a29e; }
+.popup-admin .pa-n { font-size: 12px; color: #57534e; }
+.popup-admin .pa-boton { margin-top: 10px; width: 100%; min-height: 40px; border: 0; border-radius: 12px; background: linear-gradient(90deg, #9D2449, #611232); color: #fff; font-weight: 700; font-size: 14px; cursor: pointer; }

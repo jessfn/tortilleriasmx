@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  AlertTriangle, Banknote, BarChart3, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, Loader2, Mail, MapPin, Phone, Store, TriangleAlert,
+  AlertTriangle, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, Loader2, Mail, MapPin, Phone, Store, TriangleAlert,
   UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog,
 } from "lucide-react";
 import { api, type Sesion } from "./api";
 import FotoAuth from "./FotoAuth";
 import Perfil from "./Perfil";
 import { CLAVES, usePersistente } from "./persist";
-import { Aviso, Boton, Dato, HojaModal, Insignia, PanelShell, Tarjeta, Vacio } from "./ui";
+import { Aviso, Boton, HojaModal, Insignia, PanelShell, Tarjeta, Vacio } from "./ui";
+import AdminResumen, { type Resumen } from "./AdminResumen";
+import AdminMapa, { type FocoMapa } from "./AdminMapa";
+import AdminEstadisticas from "./AdminEstadisticas";
+import { EnVivo, useVivo } from "./AdminVivo";
 
-type Resumen = {
-  usuarios: number; tortillerias: number; catalogo: number; tortillerias_pendientes: number; capturas: number; capturas_pendientes: number; alertas: number;
-  promedio_maiz: string | null; porEstado: { estado: string; promedio: string; n: number }[];
-};
 type TortilleriaAdm = {
   id: string; nombre: string; domicilio: string | null; estatus: string; origen: string; creado_en: string; lat: number | null; lng: number | null;
   municipio: string | null; estado: string | null; creador: string | null; n_fotos: number;
@@ -38,21 +38,31 @@ export default function PanelAdmin({
   const [tabGuardada, setTab] = usePersistente(CLAVES.tabAdmin, "resumen");
   const tab = tabGuardada === "usuarios" && !esAdmin ? "resumen" : tabGuardada; // por si cambió su rol
   const [resumen, setResumen] = useState<Resumen>();
-  const [error, setError] = useState("");
+  const [foco, setFoco] = useState<FocoMapa>();
+  const [detalleId, setDetalleId] = useState<string>();
 
-  const cargarResumen = useCallback(() => {
-    api<Resumen>("/admin/resumen").then((r) => { setResumen(r); setError(""); }).catch((e) => setError(e.message));
-  }, []);
-  useEffect(cargarResumen, [cargarResumen]);
+  // El resumen y el contador de pendientes se actualizan solos
+  const vivo = useVivo(async () => setResumen(await api<Resumen>("/admin/resumen")), 20_000);
+  const cargarResumen = useCallback(() => api<Resumen>("/admin/resumen").then(setResumen).catch(() => {}), []);
+
+  const alMapa = useCallback((f?: FocoMapa) => {
+    if (f) setFoco({ ...f }); // objeto nuevo: vuelve a acercar aunque sea la misma zona
+    setTab("mapa");
+  }, [setTab]);
 
   const pendientes = (resumen?.tortillerias_pendientes ?? 0) + (resumen?.capturas_pendientes ?? 0);
 
   return (
     <PanelShell
+      completo
+      plano={tab === "mapa"}
       titulo={esAdmin ? "Administración" : "Supervisión"}
-      subtitulo={{ resumen: "Resumen general", revision: "Revisión de registros", usuarios: "Usuarios del sistema", perfil: "Tu cuenta" }[tab]}
+      subtitulo={{ resumen: "Resumen general", mapa: "Mapa de precios por tortillería", estadisticas: "Estadísticas por estado y municipio", revision: "Revisión de registros", usuarios: "Usuarios del sistema", perfil: "Tu cuenta" }[tab]}
+      derecha={<span className="hidden sm:block"><EnVivo oscuro ultima={vivo.ultima} fallo={vivo.fallo} /></span>}
       pestañas={[
         { id: "resumen", texto: "Resumen", icono: BarChart3 },
+        { id: "mapa", texto: "Mapa", icono: MapaIcono },
+        { id: "estadisticas", texto: "Estadísticas", icono: LineChart },
         { id: "revision", texto: "Revisión", icono: ClipboardCheck, insignia: pendientes },
         ...(esAdmin ? [{ id: "usuarios", texto: "Usuarios", icono: Users }] : []),
         { id: "perfil", texto: "Perfil", icono: UserRound },
@@ -60,73 +70,52 @@ export default function PanelAdmin({
       activa={tab}
       alCambiar={setTab}
     >
-      {error && <Aviso>{error}</Aviso>}
-      {tab === "resumen" && <VistaResumen r={resumen} alRevisar={() => setTab("revision")} />}
+      {tab === "resumen" && <AdminResumen r={resumen} ultima={vivo.ultima} fallo={vivo.fallo} alRevisar={() => setTab("revision")} alEstadisticas={() => setTab("estadisticas")} alMapa={alMapa} />}
+      {tab === "mapa" && <AdminMapa foco={foco} alDetalle={setDetalleId} />}
+      {tab === "estadisticas" && <AdminEstadisticas alMapa={alMapa} />}
       {tab === "revision" && <VistaRevision alCambio={cargarResumen} />}
       {tab === "usuarios" && esAdmin && <VistaUsuarios miId={sesion.usuario.id} />}
       {tab === "perfil" && <Perfil sesion={sesion} alActualizar={alActualizarSesion} alSalir={alSalir} />}
+      {detalleId && <DetalleDesdeMapa id={detalleId} alCerrar={() => setDetalleId(undefined)} alCambio={cargarResumen} />}
     </PanelShell>
   );
 }
 
-/* ---------------- Resumen ---------------- */
-function VistaResumen({ r, alRevisar }: { r?: Resumen; alRevisar: () => void }) {
-  if (!r) return <div className="grid place-items-center py-12 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>;
-  const max = Math.max(1, ...r.porEstado.map((e) => Number(e.promedio)));
-  const porRevisar = r.tortillerias_pendientes + r.capturas_pendientes;
-  return (
-    <>
-      <Tarjeta className="flex items-center gap-3 bg-gradient-to-br from-guinda to-guinda-oscuro !text-white !ring-0">
-        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white/15">
-          <Banknote className="h-6 w-6 text-dorado" aria-hidden />
-        </span>
-        <div>
-          <p className="text-xs text-white/70">Precio promedio del kilo de tortilla de maíz (30 días)</p>
-          <p className="text-3xl font-bold leading-tight">{r.promedio_maiz ? `$${Number(r.promedio_maiz).toFixed(2)}` : "Sin datos"}</p>
-        </div>
-      </Tarjeta>
+/** Abre el detalle de una tortillería elegida en el mapa (con foto, datos fiscales y botones de revisión) */
+function DetalleDesdeMapa({ id, alCerrar, alCambio }: { id: string; alCerrar: () => void; alCambio: () => void }) {
+  const [t, setT] = useState<TortilleriaAdm | null>();
+  const [trabajando, setTrabajando] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api<TortilleriaAdm>(`/admin/tortillerias/${id}`).then(setT).catch((e) => { setError(e.message); setT(null); });
+  }, [id]);
 
-      <div className="grid grid-cols-2 gap-2">
-        <Dato icono={Users} etiqueta="Usuarios registrados" valor={r.usuarios} />
-        <Dato icono={Store} etiqueta="Tortillerías con registros" valor={r.tortillerias} tono="verde" />
-        <Dato icono={ClipboardList} etiqueta="Precios capturados" valor={r.capturas} tono="gris" />
-        <Dato icono={TriangleAlert} etiqueta="Alertas de precio" valor={r.alertas} tono="dorado" />
-      </div>
+  async function resolver(tid: string, estatus: "validada" | "rechazada") {
+    setTrabajando(true);
+    try {
+      await api(`/tortillerias/${tid}/estatus`, { metodo: "PATCH", json: { estatus } });
+      alCambio();
+      alCerrar();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setTrabajando(false);
+    }
+  }
 
-      <Tarjeta className="flex items-center gap-3 !py-2.5">
-        <Landmark className="h-5 w-5 shrink-0 text-guinda" aria-hidden />
-        <p className="text-sm"><b>{(r.catalogo ?? 0).toLocaleString("es-MX")}</b> tortillerías en el catálogo DENUE para elegir al registrar.</p>
-      </Tarjeta>
-
-      {porRevisar > 0 && (
-        <button onClick={alRevisar} className="flex w-full items-center gap-3 rounded-2xl bg-amber-50 p-3 text-left ring-1 ring-amber-200 transition active:scale-[.98]">
-          <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" aria-hidden />
-          <span className="text-sm text-amber-900">
-            <b>{porRevisar}</b> elemento(s) esperan revisión ({r.tortillerias_pendientes} tortillerías, {r.capturas_pendientes} precios).
-          </span>
-        </button>
-      )}
-
-      <Tarjeta className="space-y-2.5">
-        <h2 className="text-sm font-bold">Precio promedio por estado (maíz)</h2>
-        {r.porEstado.length === 0 ? (
-          <p className="text-sm text-stone-500">Todavía no hay precios capturados.</p>
-        ) : (
-          r.porEstado.map((e) => (
-            <div key={e.estado}>
-              <div className="flex justify-between text-xs">
-                <span className="truncate font-medium">{e.estado}</span>
-                <span className="text-stone-500">${Number(e.promedio).toFixed(2)} · {e.n} reg.</span>
-              </div>
-              <div className="mt-1 h-2 overflow-hidden rounded-full bg-stone-100">
-                <div className="h-full rounded-full bg-gradient-to-r from-guinda to-dorado transition-all duration-700" style={{ width: `${(Number(e.promedio) / max) * 100}%` }} />
-              </div>
-            </div>
-          ))
-        )}
-      </Tarjeta>
-    </>
-  );
+  if (t === undefined)
+    return (
+      <HojaModal titulo="Tortillería" alCerrar={alCerrar}>
+        <div className="grid place-items-center py-10 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
+      </HojaModal>
+    );
+  if (t === null)
+    return (
+      <HojaModal titulo="Tortillería" alCerrar={alCerrar}>
+        <Aviso>{error || "No se pudo cargar la tortillería."}</Aviso>
+      </HojaModal>
+    );
+  return <DetalleTortilleria t={t} trabajando={trabajando} alCerrar={alCerrar} alResolver={resolver} />;
 }
 
 /* ---------------- Revisión ---------------- */

@@ -130,7 +130,9 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     mapa.current = m;
 
-    m.on("load", () => {
+    // Los puntos se agregan en cuanto el estilo está listo, sin esperar a que lleguen todos los mosaicos del mapa base (en redes lentas tardan)
+    const iniciar = () => {
+      if (listo.current) return;
       m.addSource("tortillerias", { type: "geojson", data: aGeoJSON(), cluster: true, clusterRadius: 50, clusterMaxZoom: 15 });
       m.addLayer({
         id: "grupos", type: "circle", source: "tortillerias", filter: ["has", "point_count"],
@@ -159,7 +161,9 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
       });
       listo.current = true;
       cargar();
-    });
+    };
+    if (m.isStyleLoaded()) iniciar();
+    else m.once("style.load", iniciar);
 
     m.on("moveend", programar);
     m.on("click", (e) => {

@@ -17,7 +17,11 @@ export function rutasAdmin(app: FastifyInstance) {
          (SELECT count(*)::int FROM capturas_precio WHERE estatus = 'pendiente') AS capturas_pendientes,
          (SELECT count(*)::int FROM capturas_precio WHERE alerta AND estatus = 'pendiente') AS alertas,
          (SELECT round(avg(precio_kg), 2) FROM capturas_precio
-           WHERE producto = 'maiz' AND estatus <> 'rechazada' AND fecha > current_date - 30) AS promedio_maiz`,
+           WHERE producto = 'maiz' AND estatus <> 'rechazada' AND fecha > (now() AT TIME ZONE 'America/Mexico_City')::date - 30) AS promedio_maiz,
+         (SELECT round(avg(precio_kg), 2) FROM capturas_precio
+           WHERE producto = 'masa' AND estatus <> 'rechazada' AND fecha > (now() AT TIME ZONE 'America/Mexico_City')::date - 30) AS promedio_masa,
+         (SELECT count(*)::int FROM capturas_precio WHERE fecha = (now() AT TIME ZONE 'America/Mexico_City')::date) AS capturas_hoy,
+         (SELECT count(DISTINCT capturista_id)::int FROM capturas_precio WHERE fecha = (now() AT TIME ZONE 'America/Mexico_City')::date) AS censadores_hoy`,
     );
     const por = await pool.query(
       `SELECT e.nombre AS estado, round(avg(c.precio_kg), 2) AS promedio, count(*)::int AS n
