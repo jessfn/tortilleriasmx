@@ -244,7 +244,7 @@ export function PanelShell({
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-semibold uppercase tracking-[.2em] text-dorado">TortilleríasMX</p>
-            <h1 className="truncate text-xl font-bold leading-tight">{titulo}</h1>
+            <h1 className="truncate font-patria text-2xl font-normal leading-tight">{titulo}</h1>
             {subtitulo && <p className="truncate text-xs text-white/70">{subtitulo}</p>}
           </div>
           {derecha}

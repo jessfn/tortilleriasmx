@@ -10,7 +10,7 @@ export default {
         dorado: "#BC955C",
         gris: "#98989A",
       },
-      fontFamily: { sans: ["system-ui", "Segoe UI", "Roboto", "sans-serif"] },
+      fontFamily: { sans: ["system-ui", "Segoe UI", "Roboto", "sans-serif"], patria: ["Patria", "Georgia", "serif"] },
     },
   },
   plugins: [],

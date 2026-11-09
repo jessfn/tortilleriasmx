@@ -1,3 +1,12 @@
+/* Patria: tipografía de títulos de la identidad gráfica del Gobierno de México (se sirve desde el CDN oficial de gob.mx) */
+@font-face {
+  font-family: "Patria";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://framework-gb.cdn.gob.mx/applications/cms/fonts/Patria_Regular.otf) format("opentype");
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

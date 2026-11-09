@@ -39,11 +39,8 @@ export default function AuthLayout({
           </div>
 
           <div className="px-2 pb-1 pt-5">
-            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-dorado text-base font-extrabold tracking-tight text-guinda-oscuro shadow-lg shadow-black/25" aria-hidden>
-              MX
-            </span>
-            <h1 className="mt-3 text-[2rem] font-extrabold leading-none tracking-tight drop-shadow-sm">
-              Tortillerías<span className="text-dorado">MX</span>
+            <h1 className="font-patria text-[2.4rem] font-normal leading-none drop-shadow-sm">
+              Tortillerías<span className="font-sans font-extrabold text-dorado">MX</span>
             </h1>
             <p className="mt-2 max-w-[17rem] text-sm leading-snug text-white/85">Registro nacional del precio de la tortilla</p>
           </div>

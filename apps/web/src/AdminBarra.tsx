@@ -108,12 +108,9 @@ export default function AdminBarra({
     <div className="flex h-dvh flex-col overflow-hidden bg-guinda-oscuro">
       <header className="relative shrink-0 bg-gradient-to-b from-[#4a0e27] to-guinda-oscuro text-white">
         <div className="mx-auto flex w-full max-w-[96rem] items-center gap-3 px-4 pb-8 pt-[max(.75rem,env(safe-area-inset-top))] lg:px-8 lg:pb-3.5 lg:pt-3.5">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-dorado text-sm font-extrabold tracking-tight text-guinda-oscuro shadow-md shadow-black/20" aria-hidden>
-            MX
-          </span>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-semibold uppercase tracking-[.2em] text-dorado">TortilleríasMX</p>
-            <h1 className="truncate text-lg font-bold leading-tight lg:text-xl">{titulo}</h1>
+            <h1 className="truncate font-patria text-xl font-normal leading-tight lg:text-2xl">{titulo}</h1>
             {subtitulo && <p className="hidden truncate text-xs text-white/65 sm:block">{subtitulo}</p>}
           </div>
           {derecha}

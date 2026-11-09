@@ -100,8 +100,8 @@ export default function Inicio({ sesion, alRegistrar, alIniciar, alPanel, alCerr
 
       <div className="flex flex-col lg:col-start-2 lg:row-start-2 lg:justify-center lg:pb-6">
       <div className="relative text-center lg:text-left">
-        <h1 className="a-entra text-4xl font-extrabold tracking-tight lg:text-6xl" style={{ animationDelay: "1.2s" }}>
-          Tortillerías<span className="text-dorado">MX</span>
+        <h1 className="a-entra font-patria text-5xl font-normal lg:text-7xl" style={{ animationDelay: "1.2s" }}>
+          Tortillerías<span className="font-sans font-extrabold text-dorado">MX</span>
         </h1>
         <p className="a-entra mx-auto mt-1.5 max-w-[17rem] text-sm leading-snug text-white/80 lg:mx-0 lg:mt-3 lg:max-w-md lg:text-lg" style={{ animationDelay: "1.4s" }}>
           Registro nacional del precio de la tortilla

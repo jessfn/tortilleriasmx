@@ -48,9 +48,6 @@ export default function LoginAdmin({ alEntrar }: { alEntrar: (s: Sesion) => void
         <div className="absolute inset-0 bg-gradient-to-b from-[#2a0615]/95 via-guinda-oscuro/90 to-guinda-oscuro/70 lg:bg-gradient-to-br" aria-hidden />
 
         <div className="relative flex items-center gap-3">
-          <span className="grid h-11 w-11 place-items-center rounded-xl bg-dorado text-sm font-extrabold tracking-tight text-guinda-oscuro shadow-lg shadow-black/25" aria-hidden>
-            MX
-          </span>
           <span className="text-sm font-bold uppercase tracking-[.2em] text-dorado">TortilleríasMX</span>
         </div>
 
@@ -58,7 +55,7 @@ export default function LoginAdmin({ alEntrar }: { alEntrar: (s: Sesion) => void
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/12 px-3 py-1 text-[11px] font-semibold backdrop-blur">
             <ShieldCheck className="h-3.5 w-3.5 text-dorado" aria-hidden /> Acceso restringido
           </span>
-          <h1 className="mt-3 text-[2rem] font-extrabold leading-[1.05] tracking-tight lg:text-5xl">
+          <h1 className="mt-3 font-patria text-[2.3rem] font-normal leading-[1.05] lg:text-6xl">
             Panel <span className="text-dorado">administrativo</span>
           </h1>
           <p className="mt-3 max-w-sm text-sm leading-snug text-white/80 lg:text-base">Administración y supervisión del registro nacional del precio de la tortilla.</p>

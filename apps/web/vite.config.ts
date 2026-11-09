@@ -34,6 +34,12 @@ export default defineConfig({
         // Mapa sin señal: lo que el censador ya vio con internet (estilo, sprites, fuentes y teselas de OpenFreeMap) queda en el teléfono
         runtimeCaching: [
           {
+            // Tipografía Patria del CDN de gob.mx: tras la primera vez también se ve sin señal
+            urlPattern: ({ url }: { url: URL }) => url.hostname === "framework-gb.cdn.gob.mx",
+            handler: "CacheFirst",
+            options: { cacheName: "fuentes", expiration: { maxEntries: 10, maxAgeSeconds: 365 * 24 * 3600 }, cacheableResponse: { statuses: [0, 200] } },
+          },
+          {
             urlPattern: ({ url }: { url: URL }) => url.hostname === "tiles.openfreemap.org",
             handler: "CacheFirst",
             options: {
