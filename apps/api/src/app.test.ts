@@ -40,7 +40,7 @@ describe("acceso", () => {
   it("todo lo privado exige sesión", async () => {
     const get = [
       "/auth/me", "/mis/resumen", "/mis/registros", "/mis/tortillerias", "/admin/resumen", "/admin/usuarios", `/fotos/${ID}`,
-      `/tortillerias/${ID}/responsable`, `/tortillerias/${ID}/fiscal`, `/tortillerias/${ID}/fiscal/existe`, `/tortillerias/${ID}/mis-precios-hoy`,
+      `/tortillerias/${ID}/responsable`, `/tortillerias/${ID}/fiscal`, `/tortillerias/${ID}/mis-precios-hoy`,
     ];
     for (const url of get) expect((await fetch(base + url)).status, url).toBe(401);
     for (const url of ["/precios", "/tortillerias", `/tortillerias/${ID}/fiscal`, `/tortillerias/${ID}/fotos`]) {
@@ -51,6 +51,13 @@ describe("acceso", () => {
   it("un usuario registrado puede capturar (llega a la validación)", async () => {
     const r = await fetch(`${base}/precios`, { method: "POST", headers: auth(), body: "{}" });
     expect(r.status).toBe(400);
+  });
+
+  it("saber si una tortillería ya tiene datos fiscales no exige sesión (quien aún no tiene cuenta también lo necesita)", async () => {
+    const r = await fetch(`${base}/tortillerias/${ID}/fiscal/existe`);
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ tiene: false });
+    expect((await fetch(`${base}/tortillerias/no-es-uuid/fiscal/existe`)).status).toBe(400);
   });
 
   it("no se puede capturar tortilla de harina", async () => {

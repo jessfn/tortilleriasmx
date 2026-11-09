@@ -243,7 +243,8 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   /* ---------------- precio: lo que este censador ya capturó hoy ---------------- */
   useEffect(() => {
     if (id !== "precio") return;
-    if (!d.tortilleria?.id || d.nueva) return setHoy({ maiz: null, masa: null });
+    // sin cuenta todavía (se crea al enviar) no hay nada capturado hoy
+    if (!d.tortilleria?.id || d.nueva || !sesion) return setHoy({ maiz: null, masa: null });
     let vigente = true;
     api<{ maiz: number | null; masa: number | null }>(`/tortillerias/${d.tortilleria.id}/mis-precios-hoy`)
       .then((r) => vigente && setHoy(r))
@@ -251,7 +252,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     return () => {
       vigente = false;
     };
-  }, [id, d.tortilleria?.id, d.nueva]);
+  }, [id, d.tortilleria?.id, d.nueva, sesion]);
 
   // Razón social: se precarga con la del DENUE, si la trae (editable)
   useEffect(() => {

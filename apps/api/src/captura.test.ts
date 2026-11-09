@@ -212,8 +212,9 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
     expect((await post(`/tortillerias/${tA}/fiscal`, ana, { ...moral, aceptoAviso: false })).status).toBe(400);
   });
 
-  it("al inicio no tiene datos fiscales", async () => {
+  it("al inicio no tiene datos fiscales (y se puede saber sin sesión)", async () => {
     expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, ana)).json()).toEqual({ tiene: false });
+    expect(await (await fetch(`${base}/tortillerias/${tA}/fiscal/existe`)).json()).toEqual({ tiene: false });
   });
 
   it("el primero los captura; el RFC se guarda cifrado", async () => {

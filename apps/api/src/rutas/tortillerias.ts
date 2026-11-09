@@ -114,7 +114,9 @@ export function rutasTortillerias(app: FastifyInstance) {
   /* ------------------------------------------------------------------ datos fiscales (de la tortillería) */
 
   // ¿Ya tiene datos fiscales? También cuenta el registro viejo de `responsables`.
-  app.get<{ Params: { id: string } }>("/tortillerias/:id/fiscal/existe", { preHandler: app.autenticar }, async (req, reply) => {
+  // Es público a propósito: solo responde sí/no, y quien todavía no tiene cuenta (se crea al final del asistente)
+  // necesita saberlo para que el asistente le pida o no los datos fiscales.
+  app.get<{ Params: { id: string } }>("/tortillerias/:id/fiscal/existe", async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const { rows } = await pool.query(
       `SELECT (EXISTS (SELECT 1 FROM tortilleria_fiscal WHERE tortilleria_id = $1)
