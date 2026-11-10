@@ -12,7 +12,7 @@ echo "== Etiqueta de la versión anterior (para volver atrás si hace falta)"
 git tag -f "prod-$(date +%F_%H%M)-antes" HEAD >/dev/null
 
 git pull --ff-only origin main
-$PNPM install --frozen-lockfile
+CI=true $PNPM install --frozen-lockfile
 
 echo "== Compilación (la URL de la API se fija aquí, al compilar)"
 VITE_API_URL="$API_PUBLICA" $PNPM build

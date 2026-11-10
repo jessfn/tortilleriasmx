@@ -15,7 +15,7 @@ importers:
   apps/api:
     dependencies:
       '@fastify/compress':
-        specifier: ^8
+        specifier: ^8.0.0
         version: 8.3.1
       '@fastify/cors':
         specifier: ^10.0.0
