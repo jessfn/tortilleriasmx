@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Banknote, Briefcase, Building2, Camera, Check, CircleCheck, CloudOff, TriangleAlert, Eye, EyeOff, FileText, Hash, ImagePlus, KeyRound, Landmark, Layers, ListChecks,
-  Loader2, LocateFixed, Mail, MapPin, Phone, Plus, RotateCcw, Route, Send, ShieldCheck, Store, UserPlus, Users, Wheat, type LucideIcon,
+  Loader2, LocateFixed, Mail, MapPin, Minus, Phone, Plus, RotateCcw, Route, Send, ShieldCheck, Store, UserPlus, Users, Wheat, type LucideIcon,
 } from "lucide-react";
 import {
   fiscalSchema, nuevaTortilleriaSchema, normalizarTexto, PASSWORD_MIN, PERSONAL_OCUPADO, PRECIO_MAX, PRECIO_MIN, registroSchema, TIPOS_VIAL,
@@ -17,6 +17,7 @@ import type { Local } from "./bd";
 import PasoTortilleria from "./PasoTortilleria";
 import type { Punto } from "./MapaTortillerias";
 import { Aviso, Barra, Boton, Buscador, Cabecera, Campo, Hoja, Opcion, Selector } from "./ui";
+import { TelefonoCampo } from "./TelefonoCampo";
 
 type Item = { clave: string; nombre: string };
 type Pos = { lat: number; lng: number; precision?: number };
@@ -27,6 +28,9 @@ const PRODUCTOS: { id: Producto; clave: "precioMaiz" | "precioMasa"; texto: stri
   { id: "maiz", clave: "precioMaiz", texto: "Tortilla de maíz", icono: Wheat },
   { id: "masa", clave: "precioMasa", texto: "Masa", icono: Layers },
 ];
+
+/** Precios frecuentes por kilo para tocar en vez de escribir */
+const SUGERIDOS: Record<Producto, number[]> = { maiz: [18, 20, 22, 24, 26, 28], masa: [14, 16, 18, 20, 22, 24] };
 
 const NV_VACIO = {
   nombre: "", telefono: "", correo: "", personalOcupado: "", localidad: "", tipoVial: "CALLE", calle: "", numeroExt: "", sinNumero: false,
@@ -368,8 +372,9 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
 
   const bloqueado = (p: Producto) => hoy?.[p] != null; // ya lo capturó hoy
   const activo = (p: (typeof PRODUCTOS)[number]) => !bloqueado(p.id);
-  const hayAlgo = PRODUCTOS.some((p) => activo(p) && d[p.clave] !== "");
-  const hayMalo = PRODUCTOS.some((p) => activo(p) && d[p.clave] !== "" && !precioValido(d[p.clave]));
+  // los dos precios son obligatorios (el que ya se capturó hoy no se vuelve a pedir)
+  const preciosListos = PRODUCTOS.every((p) => !activo(p) || (d[p.clave] !== "" && precioValido(d[p.clave])));
+  const faltan = PRODUCTOS.filter((p) => activo(p) && !(d[p.clave] !== "" && precioValido(d[p.clave])));
   const todoCapturado = hoy != null && !activo(PRODUCTOS[0]) && !activo(PRODUCTOS[1]);
 
   const puede: Record<string, boolean> = {
@@ -380,7 +385,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     foto: !!d.foto,
     fiscal: resFiscal.success && d.fiscal.aviso,
     cuenta: resCuenta.success,
-    precio: hoy != null && hayAlgo && !hayMalo,
+    precio: hoy != null && preciosListos && !todoCapturado,
     resumen: true,
   };
 
@@ -662,7 +667,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
             <>
               <h2 className="flex items-center gap-2 px-1 text-sm font-bold text-guinda"><Store className="h-4 w-4" aria-hidden /> Negocio</h2>
               <Campo etiqueta="Nombre de la tortillería *" icono={Store} value={d.nv.nombre} autoComplete="off" onChange={(e) => setNv({ nombre: normalizarTexto(e.target.value) })} placeholder="Ej. TORTILLERIA LA GUADALUPE" error={tocadoNv(d.nv.nombre) ? errNv("nombre") : undefined} valido={!errNv("nombre")} />
-              <Campo etiqueta="Teléfono de la tortillería *" icono={Phone} value={d.nv.telefono} inputMode="numeric" maxLength={10} autoComplete="off" name="telefono-tortilleria" onChange={(e) => setNv({ telefono: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="Ej. 5512345678" error={tocadoNv(d.nv.telefono) ? errNv("telefono") : undefined} valido={!errNv("telefono")} ayuda="10 dígitos con lada" />
+              <TelefonoCampo etiqueta="Teléfono de la tortillería *" name="telefono-tortilleria" value={d.nv.telefono} onChange={(v) => setNv({ telefono: v })} error={tocadoNv(d.nv.telefono) ? errNv("telefono") : undefined} ayuda="10 dígitos con lada; toca +52 si es de otro país" />
               <Campo etiqueta="Correo electrónico de la tortillería (opcional)" icono={Mail} type="email" inputMode="email" autoCapitalize="none" autoCorrect="off" autoComplete="off" name="correo-tortilleria" value={d.nv.correo} onChange={(e) => setNv({ correo: e.target.value })} placeholder="Ej. tortilleria@correo.com" error={tocadoNv(d.nv.correo) ? errNv("correo") : undefined} valido={tocadoNv(d.nv.correo) && !errNv("correo")} ayuda="Es el correo del negocio, no el tuyo (no es con el que te registraste)." />
               <Selector etiqueta="Personal ocupado *" icono={Users} value={d.nv.personalOcupado} onChange={(e) => setNv({ personalOcupado: e.target.value })} placeholder="Elige un rango" opciones={PERSONAL_OCUPADO.map((v) => ({ valor: v, texto: v }))} />
 
@@ -748,19 +753,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                 placeholder={d.fiscal.tipoPersona === "fisica" ? "Ej. NUPJ850101AB1" : "Ej. TGU100101AB1"}
                 ayuda={d.fiscal.tipoPersona === "fisica" ? "13 caracteres" : "12 caracteres"}
               />
-              <Campo
-                etiqueta="Celular de contacto (opcional)"
-                icono={Phone}
-                value={d.fiscal.celular}
-                inputMode="numeric"
-                maxLength={10}
-                autoComplete="off"
-                onChange={(e) => setFiscal({ celular: e.target.value.replace(/\D/g, "").slice(0, 10) })}
-                error={errFiscal("celular")}
-                valido={d.fiscal.celular !== "" && !errFiscal("celular")}
-                placeholder="Ej. 5512345678"
-                ayuda="10 dígitos con lada, sin +52"
-              />
+              <TelefonoCampo etiqueta="Celular de contacto (opcional)" value={d.fiscal.celular} onChange={(v) => setFiscal({ celular: v })} error={errFiscal("celular")} ayuda="10 dígitos con lada; toca +52 si es de otro país" />
               <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-white p-3 shadow-sm ring-1 ring-stone-200">
                 <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0 accent-guinda" checked={d.fiscal.aviso} onChange={(e) => setFiscal({ aviso: e.target.checked })} />
                 <span className="text-xs leading-snug">
@@ -828,37 +821,76 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                 <div className="grid place-items-center py-8 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
               ) : (
                 <>
-                  <p className="px-1 text-xs text-stone-500">Captura uno o los dos. Con un precio es suficiente.</p>
+                  <p className="px-1 text-xs text-stone-500">Anota el precio por kilo de la tortilla y de la masa. Los dos son obligatorios.</p>
                   {PRODUCTOS.map((p) => {
                     const ya = hoy[p.id];
                     const valor = d[p.clave];
                     const malo = valor !== "" && !precioValido(valor);
+                    const num = precioNumero(valor);
+                    const mover = (delta: number) => {
+                      const base = valor === "" || malo ? SUGERIDOS[p.id][1] : num;
+                      const nuevoValor = Math.min(PRECIO_MAX, Math.max(PRECIO_MIN, Math.round((base + delta) * 100) / 100));
+                      set({ [p.clave]: nuevoValor.toFixed(2) } as Partial<Datos>);
+                    };
                     return (
-                      <label key={p.id} className="block">
-                        <span className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-stone-600">
-                          <p.icono className="h-4 w-4 text-guinda" aria-hidden /> {p.texto} — precio por kilo (MXN)
-                        </span>
-                        <span className={`flex items-center rounded-2xl px-4 shadow-sm ring-1 transition focus-within:ring-4 ${ya != null ? "bg-stone-100 ring-stone-200" : malo ? "bg-white ring-red-300 focus-within:ring-red-100" : "bg-white ring-stone-200 focus-within:ring-guinda/15"}`}>
-                          <span className="text-3xl font-bold text-stone-300">$</span>
-                          <input
-                            inputMode="decimal"
-                            value={ya != null ? ya.toFixed(2) : valor}
-                            disabled={ya != null}
-                            onChange={(e) => set({ [p.clave]: limpiarPrecio(e.target.value) } as Partial<Datos>)}
-                            placeholder="0.00"
-                            aria-label={`Precio por kilo de ${p.texto}`}
-                            className="w-full bg-transparent px-2 py-3.5 text-center text-4xl font-bold outline-none placeholder:text-stone-200 disabled:text-stone-400"
-                          />
-                          {ya != null && <Check className="h-6 w-6 shrink-0 text-emerald-500" strokeWidth={3} aria-hidden />}
-                        </span>
+                      <div key={p.id} className={`rounded-2xl bg-white p-3.5 shadow-sm ring-1 ${ya != null ? "ring-emerald-200" : malo ? "ring-red-300" : valor !== "" ? "ring-emerald-300" : "ring-stone-200"}`}>
+                        <div className="mb-2 flex items-center gap-2.5">
+                          <span className="grid h-9 w-9 place-items-center rounded-xl bg-guinda/10 text-guinda"><p.icono className="h-5 w-5" aria-hidden /></span>
+                          <div className="min-w-0 flex-1 leading-tight">
+                            <p className="text-sm font-bold">{p.texto}</p>
+                            <p className="text-xs text-stone-500">Precio por kilo (MXN)</p>
+                          </div>
+                          {ya != null || (valor !== "" && !malo) ? (
+                            <span className="grid h-6 w-6 place-items-center rounded-full bg-emerald-500 text-white"><Check className="h-4 w-4" strokeWidth={3} aria-hidden /></span>
+                          ) : (
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">Obligatorio</span>
+                          )}
+                        </div>
                         {ya != null ? (
-                          <span className="mt-1 block text-xs font-medium text-emerald-700">Ya capturaste hoy: {dinero(ya)}. Podrás actualizarlo mañana.</span>
-                        ) : malo ? (
-                          <span className="mt-1 block text-xs text-red-600">Debe estar entre ${PRECIO_MIN} y ${PRECIO_MAX}.</span>
-                        ) : null}
-                      </label>
+                          <p className="rounded-xl bg-emerald-50 px-3 py-3 text-center text-sm font-medium text-emerald-800">
+                            Ya capturaste hoy: <b className="text-lg">{dinero(ya)}</b>
+                            <span className="block text-xs font-normal">Podrás actualizarlo mañana.</span>
+                          </p>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-2">
+                              <button type="button" onClick={() => mover(-0.5)} aria-label={`Bajar 50 centavos el precio de ${p.texto}`} className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-stone-100 text-stone-700 active:scale-95 active:bg-stone-200">
+                                <Minus className="h-5 w-5" aria-hidden />
+                              </button>
+                              <span className={`flex min-w-0 flex-1 items-center rounded-xl bg-stone-50 px-3 ring-1 transition focus-within:ring-4 ${malo ? "ring-red-300 focus-within:ring-red-100" : "ring-stone-200 focus-within:ring-guinda/15"}`}>
+                                <span className="text-2xl font-bold text-stone-300">$</span>
+                                <input
+                                  inputMode="decimal"
+                                  value={valor}
+                                  onChange={(e) => set({ [p.clave]: limpiarPrecio(e.target.value) } as Partial<Datos>)}
+                                  placeholder="0.00"
+                                  aria-label={`Precio por kilo de ${p.texto}`}
+                                  className="w-full min-w-0 bg-transparent px-1 py-2.5 text-center text-3xl font-bold outline-none placeholder:text-stone-200"
+                                />
+                              </span>
+                              <button type="button" onClick={() => mover(0.5)} aria-label={`Subir 50 centavos el precio de ${p.texto}`} className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-guinda text-white active:scale-95 active:brightness-90">
+                                <Plus className="h-5 w-5" aria-hidden />
+                              </button>
+                            </div>
+                            <div className="mt-2.5 flex flex-wrap justify-center gap-1.5">
+                              {SUGERIDOS[p.id].map((n) => {
+                                const sel = valor !== "" && !malo && num === n;
+                                return (
+                                  <button key={n} type="button" onClick={() => set({ [p.clave]: n.toFixed(2) } as Partial<Datos>)} className={`rounded-full px-3 py-1.5 text-sm font-semibold ring-1 transition active:scale-95 ${sel ? "bg-guinda text-white ring-guinda" : "bg-white text-stone-600 ring-stone-200"}`}>
+                                    ${n}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {malo && <p className="mt-2 text-center text-xs text-red-600">Debe estar entre ${PRECIO_MIN} y ${PRECIO_MAX}.</p>}
+                          </>
+                        )}
+                      </div>
                     );
                   })}
+                  {!todoCapturado && faltan.length > 0 && (
+                    <p className="px-1 text-center text-xs text-amber-700">Falta el precio de {faltan.map((f) => (f.id === "maiz" ? "la tortilla" : "la masa")).join(" y ")}.</p>
+                  )}
                   {todoCapturado && <Aviso tipo="info">Ya capturaste hoy la tortilla y la masa de esta tortillería. Podrás volver a capturarlos mañana.</Aviso>}
                 </>
               )}

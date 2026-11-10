@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { esTelefonoValido, normalizarTelefono } from "./telefono.js";
 
 export const RFC_FISICA_REGEX = /^[A-ZÑ&]{4}\d{6}[A-Z\d]{3}$/;
 export const RFC_MORAL_REGEX = /^[A-ZÑ&]{3}\d{6}[A-Z\d]{3}$/;
@@ -36,7 +37,11 @@ export const nombreSchema = z
   .transform((v) => normalizarTexto(v.trim()))
   .pipe(z.string().min(1, "Obligatorio").max(80).regex(NOMBRE_REGEX, "Solo letras"));
 
-export const telefonoSchema = z.string().regex(/^\d{10}$/, "Debe tener 10 dígitos");
+/** 10 dígitos con lada (México) o +código y número de otro país. Acepta espacios, guiones y paréntesis y los quita. */
+export const telefonoSchema = z
+  .string()
+  .transform(normalizarTelefono)
+  .refine(esTelefonoValido, "Escribe 10 dígitos con lada o, si es de otro país, su código y número");
 export const precioSchema = z
   .number()
   .min(PRECIO_MIN, `Mínimo $${PRECIO_MIN}`)

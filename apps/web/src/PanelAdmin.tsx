@@ -1,3 +1,4 @@
+import { formatearTelefono } from "@tortillerias/shared";
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, Loader2, Mail, MapPin, Phone, Store, TriangleAlert,
@@ -274,7 +275,7 @@ function DetalleTortilleria({
         {(t.numero_ext || t.numero_int) && <Fila i={Hash} k="Número" v={[t.numero_ext && `Ext. ${t.numero_ext}`, t.numero_int && `Int. ${t.numero_int}`].filter(Boolean).join(" · ")} />}
         {t.colonia && <Fila i={Building2} k="Colonia" v={t.colonia} />}
         {t.codigo_postal && <Fila i={Hash} k="Código postal" v={t.codigo_postal} />}
-        {t.telefono && <Fila i={Phone} k="Teléfono de la tortillería" v={t.telefono} />}
+        {t.telefono && <Fila i={Phone} k="Teléfono de la tortillería" v={formatearTelefono(t.telefono)} />}
         {t.correo && <Fila i={Mail} k="Correo de la tortillería" v={t.correo} />}
         {t.personal_ocupado && <Fila i={Users} k="Personal ocupado" v={t.personal_ocupado} />}
         {t.fecha_alta && <Fila i={CalendarDays} k="Fecha de alta" v={t.fecha_alta} />}
@@ -301,7 +302,7 @@ function DetalleTortilleria({
           <div className="divide-y divide-stone-100">
             <Fila i={FileText} k={`RFC (${fiscal.tipoPersona === "fisica" ? "persona física" : "persona moral"})`} v={fiscal.rfc} />
             <Fila i={Building2} k={fiscal.tipoPersona === "moral" ? "Razón social" : "Titular del RFC"} v={fiscal.razonSocial} />
-            {fiscal.celular && <Fila i={Phone} k="Celular de contacto" v={fiscal.celular} />}
+            {fiscal.celular && <Fila i={Phone} k="Celular de contacto" v={formatearTelefono(fiscal.celular)} />}
             {fiscal.legado && fiscal.responsable && <Fila i={UserRound} k="Responsable (registro anterior)" v={`${fiscal.responsable.nombre} ${fiscal.responsable.apellidos}`} />}
           </div>
         )}
