@@ -533,11 +533,18 @@ describe("sin conexión: idempotencia y fecha real de captura", () => {
 describe("sin conexión: tortillería nueva y foto con idCliente", () => {
   const nueva = {
     nombre: "Tortilleria Sin Senal", estadoClave: "09", municipioClave: "09015", localidad: "Ciudad de Mexico", tipoVial: "CALLE",
-    calle: "Norte", numeroExt: "SN", colonia: "Centro", codigoPostal: "09700", personalOcupado: "0 a 5 personas", lat: 19.6, lng: -99.3,
+    calle: "Norte", numeroExt: "SN", colonia: "Centro", codigoPostal: "09700", telefono: "5512345678", personalOcupado: "0 a 5 personas", lat: 19.6, lng: -99.3,
   };
   const idT = "33333333-3333-4333-8333-333333333333";
   const idF = "44444444-4444-4444-8444-444444444444";
   let id: string;
+
+  it("el teléfono de la tortillería nueva es obligatorio (la API lo exige igual que la app)", async () => {
+    const { telefono: _t, ...sinTelefono } = nueva as any;
+    const r = await post("/tortillerias", ana, { ...sinTelefono, nombre: "SIN TELEFONO", idCliente: "00000000-0000-4000-8000-00000000aaaa" });
+    expect(r.status).toBe(400);
+    expect(JSON.stringify((await r.json()).detalle)).toContain("telefono");
+  });
 
   it("el mismo idCliente no crea otra tortillería", async () => {
     const a = await post("/tortillerias", ana, { ...nueva, idCliente: idT });

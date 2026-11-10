@@ -130,7 +130,7 @@ export const nuevaTortilleriaSchema = z.object({
   numeroInt: textoOpcional(20),
   colonia: texto(1, 120),
   codigoPostal: z.string().regex(/^[0-9]{5}$/, "5 dígitos"),
-  telefono: celularOpcionalSchema,
+  telefono: telefonoSchema, // obligatorio: es el teléfono de la tortillería (10 dígitos con lada)
   correo: z.preprocess(vacioAUndefined, correoSchema.optional()),
   personalOcupado: z.enum(PERSONAL_OCUPADO),
   lat: z.number().min(-90).max(90),

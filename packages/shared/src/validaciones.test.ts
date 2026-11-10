@@ -67,15 +67,22 @@ describe("datos fiscales", () => {
 describe("tortillería nueva", () => {
   const base = {
     nombre: "Tortillería La Guadalupe", estadoClave: "09", municipioClave: "09015", localidad: "Ciudad de México", tipoVial: "CALLE",
-    calle: "Hidalgo", numeroExt: "123", colonia: "Centro", codigoPostal: "09700", personalOcupado: "0 a 5 personas", lat: 19.43, lng: -99.13,
+    calle: "Hidalgo", numeroExt: "123", colonia: "Centro", codigoPostal: "09700", telefono: "5512345678", personalOcupado: "0 a 5 personas", lat: 19.43, lng: -99.13,
   };
   it("acepta lo mínimo y normaliza el texto", () => {
     const r = nuevaTortilleriaSchema.parse(base);
     expect([r.nombre, r.calle, r.colonia, r.localidad]).toEqual(["TORTILLERIA LA GUADALUPE", "HIDALGO", "CENTRO", "CIUDAD DE MEXICO"]);
-    expect([r.numeroInt, r.telefono, r.correo]).toEqual([undefined, undefined, undefined]);
+    expect([r.numeroInt, r.telefono, r.correo]).toEqual([undefined, "5512345678", undefined]);
   });
-  it("número interior, teléfono y correo son opcionales (vacíos pasan)", () => {
-    expect(nuevaTortilleriaSchema.safeParse({ ...base, numeroInt: "", telefono: "", correo: "" }).success).toBe(true);
+  it("número interior y correo son opcionales (vacíos pasan)", () => {
+    expect(nuevaTortilleriaSchema.safeParse({ ...base, numeroInt: "", correo: "" }).success).toBe(true);
+  });
+  it("el teléfono de la tortillería es obligatorio y de 10 dígitos", () => {
+    const { telefono: _t, ...sinTelefono } = base;
+    expect(nuevaTortilleriaSchema.safeParse(sinTelefono).success).toBe(false);
+    expect(nuevaTortilleriaSchema.safeParse({ ...base, telefono: "" }).success).toBe(false);
+    expect(nuevaTortilleriaSchema.safeParse({ ...base, telefono: "55123456" }).success).toBe(false);
+    expect(nuevaTortilleriaSchema.safeParse({ ...base, telefono: "5512345678" }).success).toBe(true);
   });
   it("valida teléfono y correo si se escriben", () => {
     expect(nuevaTortilleriaSchema.safeParse({ ...base, telefono: "123" }).success).toBe(false);
