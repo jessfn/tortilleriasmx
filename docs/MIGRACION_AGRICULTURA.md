@@ -50,9 +50,10 @@ Esta guía sigue la de infraestructura (`MIGRACION_TORTILLERIAS.md`) y la adapta
 > **Asunto:** Alta de TortilleríasMX en el servidor de SIMAC
 >
 > 1. **DNS** (`agricultura.gob.mx`): crear `tortilleriasmx` y `apitortillerias` apuntando al mismo balanceador que `maiz` y `apimaiz`. Que el balanceador envíe ambos nombres al EC2 `simprdwbsza01`, puerto 80.
-> 2. **RDS PostgreSQL 14:** crear la base `tortillerias` y un usuario propio con permisos solo sobre ella. **En esa base hay que crear las extensiones `postgis` y `pgcrypto`** (`CREATE EXTENSION postgis; CREATE EXTENSION pgcrypto;`): el sistema guarda ubicaciones con PostGIS y el usuario de la aplicación no tiene privilegios para crearlas. Permitir la conexión desde el EC2 y activar respaldos automáticos. Indicar si la conexión exige SSL y entregar el certificado raíz si lo hay.
-> 3. **Autorización** para agregar un segundo proyecto en el EC2: carpeta `/var/www/Tortillerias`, proceso PM2 `tortillerias-api` en el puerto 3006, y los dos bloques de nginx (`deploy/agricultura/nginx-tortillerias.conf`).
-> 4. **Salida a internet** del EC2 para el `git pull` desde GitHub.
+> 2. **Balanceador:** nginx del EC2 ya atiende ambos nombres en el puerto 80 y en el 443 (HTTPS con el certificado comodín). Pido confirmar la regla del balanceador que lleva `tortilleriasmx` y `apitortillerias` a `simprdwbsza01` y que el destino aparezca saludable.
+> 3. **RDS PostgreSQL 14:** crear la base `tortillerias` y un usuario propio con permisos solo sobre ella. **En esa base hay que crear las extensiones `postgis` y `pgcrypto`** (`CREATE EXTENSION postgis; CREATE EXTENSION pgcrypto;`): el sistema guarda ubicaciones con PostGIS y el usuario de la aplicación no tiene privilegios para crearlas. Permitir la conexión desde el EC2 y activar respaldos automáticos. Indicar si la conexión exige SSL y entregar el certificado raíz si lo hay.
+> 4. **Autorización** para agregar un segundo proyecto en el EC2: carpeta `/var/www/Tortillerias`, proceso PM2 `tortillerias-api` en el puerto 3006, y los dos bloques de nginx (`deploy/agricultura/nginx-tortillerias.conf`).
+> 5. **Salida a internet** del EC2 para el `git pull` desde GitHub.
 
 ---
 
@@ -91,7 +92,8 @@ Los respaldos contienen datos personales (RFC y celulares van cifrados, pero hay
 6. **Proxies de confianza (`TRUST_PROXY=2`).** Detrás del balanceador y de nginx, la API necesita saber cuántos proxies hay para contar el límite de peticiones y de intentos de inicio de sesión por cliente real. Sin esto todos los usuarios comparten el mismo cupo.
 7. **Conexión al RDS:** en `DATABASE_URL` se usa `?sslmode=no-verify` para la API (Node no conoce la CA del RDS). Los scripts convierten eso a `sslmode=require` para `psql`/`pg_dump`.
 8. **GitHub Actions.** El workflow `deploy.yml` entra al VPS de Hostinger. El servidor nuevo está detrás de VPN y bastión, así que **no se puede desplegar desde GitHub**: se hace por SSH con `deploy/agricultura/deploy.sh`. Después del cambio hay que desactivar ese workflow.
-9. **La dirección de la app cambia de origen** y eso afecta los teléfonos (ver sección 7).
+9. **nginx atiende 80 y 443.** Sin un bloque propio en el 443, un nombre nuevo cae en el servidor por defecto de SIMAC y se ve la aplicación equivocada. Los dos bloques de `nginx-tortillerias.conf` escuchan en ambos puertos con el certificado comodín.
+10. **La dirección de la app cambia de origen** y eso afecta los teléfonos (ver sección 7).
 
 ---
 
