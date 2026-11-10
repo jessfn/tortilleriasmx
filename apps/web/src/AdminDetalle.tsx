@@ -12,7 +12,7 @@ import type { CapturaAdm, Fiscal, TortilleriaAdm } from "./PanelAdmin";
 type Pestaña = "resumen" | "datos" | "fiscal" | "historial";
 const PESTAÑAS: [Pestaña, string][] = [["resumen", "Resumen"], ["datos", "Datos"], ["fiscal", "Fiscal"], ["historial", "Historial"]];
 
-const NOMBRE_PRODUCTO = { maiz: "Maíz", harina: "Harina", masa: "Masa" } as const;
+const NOMBRE_PRODUCTO = { maiz: "Tortilla", harina: "Harina", masa: "Masa" } as const;
 const fechaLarga = (s: string) => new Date(s).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
 /** Las fechas de captura vienen como "AAAA-MM-DD" (día de México): se arman sin pasar por UTC */
 const diaCorto = (s: string) => {
@@ -179,7 +179,7 @@ export default function DetalleLateral({
 
         {/* Precios */}
         <div className="mt-2.5 grid grid-cols-2 gap-2">
-          <Precio icono={Wheat} titulo="Maíz" p={ultimo.maiz} />
+          <Precio icono={Wheat} titulo="Tortilla" p={ultimo.maiz} />
           <Precio icono={Layers} titulo="Masa" p={ultimo.masa} />
         </div>
         {resumen?.alerta && (

@@ -165,7 +165,7 @@ describe("bandeja de pendientes", () => {
     await sincronizar();
     const [p] = await listarPaquetes();
     expect(p.estado).toBe("conflicto");
-    expect(p.mensaje).toMatch(/Ya habías capturado maíz/);
+    expect(p.mensaje).toMatch(/Ya habías capturado tortilla/);
     await descartar(p.id);
     expect(await listarPaquetes()).toHaveLength(0);
   });

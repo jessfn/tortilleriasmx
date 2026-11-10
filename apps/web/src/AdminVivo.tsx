@@ -152,7 +152,7 @@ export function Tendencia({ datos, alto = 200 }: { datos: DiaPrecio[]; alto?: nu
         viewBox={`0 0 ${ancho} ${alto}`}
         className="w-full touch-pan-y select-none"
         role="img"
-        aria-label="Tendencia del precio promedio de maíz y masa"
+        aria-label="Tendencia del precio promedio de tortilla y masa"
         onPointerMove={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           const px = ((e.clientX - r.left) / r.width) * ancho;
@@ -181,11 +181,11 @@ export function Tendencia({ datos, alto = 200 }: { datos: DiaPrecio[]; alto?: nu
         {sobre != null && <line x1={x(sobre)} x2={x(sobre)} y1={m.t} y2={alto - m.b} stroke="#a8a29e" strokeDasharray="3 3" />}
       </svg>
       <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-stone-600">
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: COLOR_ALTO }} /> Maíz</span>
+        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: COLOR_ALTO }} /> Tortilla</span>
         <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#235b4e]" /> Masa</span>
         {h ? (
           <span className="ml-auto font-semibold text-stone-800">
-            {diaCorto(h.fecha)} · Maíz {dinero(h.maiz)} · Masa {dinero(h.masa)} · {h.n} capturas
+            {diaCorto(h.fecha)} · Tortilla {dinero(h.maiz)} · Masa {dinero(h.masa)} · {h.n} capturas
           </span>
         ) : (
           <span className="ml-auto text-stone-400">Toca o pasa el cursor sobre la gráfica</span>

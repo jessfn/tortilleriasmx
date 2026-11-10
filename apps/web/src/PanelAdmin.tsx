@@ -29,7 +29,7 @@ type UsuarioAdm = { id: string; correo: string | null; usuario: string; nombre: 
 /** Datos fiscales de la tortillería; si solo hay un registro viejo de responsable, llega con legado = true */
 export type Fiscal = { tipoPersona: string; razonSocial: string; rfc: string; celular: string | null; legado?: boolean; responsable?: { nombre: string; apellidos: string } };
 
-const PRODUCTO = { maiz: { t: "Maíz", i: Wheat }, harina: { t: "Harina", i: PackageOpen }, masa: { t: "Masa", i: Layers } };
+const PRODUCTO = { maiz: { t: "Tortilla", i: Wheat }, harina: { t: "Harina", i: PackageOpen }, masa: { t: "Masa", i: Layers } };
 const fecha = (s: string) => new Date(s).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
 
 export default function PanelAdmin({

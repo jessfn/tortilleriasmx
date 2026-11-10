@@ -14,7 +14,7 @@ const ESPERA_MIN_MS = 30_000;
 const ESPERA_MAX_MS = 15 * 60_000;
 const CADA_MS = 2 * 60_000;
 
-export const NOMBRE_PRODUCTO = { maiz: "maíz", masa: "masa" } as const;
+export const NOMBRE_PRODUCTO = { maiz: "tortilla", masa: "masa" } as const;
 
 /* ---------------- estado visible para la pantalla ---------------- */
 

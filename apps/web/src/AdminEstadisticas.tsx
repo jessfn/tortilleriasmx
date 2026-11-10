@@ -77,7 +77,7 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
   };
 
   function exportar() {
-    const encabezado = [estado ? "Municipio" : "Estado", "Tortillerías", "Con precios", "Capturas", "Maíz promedio", "Maíz mínimo", "Maíz máximo", "Masa promedio", "Masa mínimo", "Masa máximo"];
+    const encabezado = [estado ? "Municipio" : "Estado", "Tortillerías", "Con precios", "Capturas", "Tortilla promedio", "Tortilla mínimo", "Tortilla máximo", "Masa promedio", "Masa mínimo", "Masa máximo"];
     const cel = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const lineas = (filas ?? []).map((f) =>
       [f.nombre, f.tortillerias, f.con_precios, f.capturas, f.maiz?.promedio, f.maiz?.minimo, f.maiz?.maximo, f.masa?.promedio, f.masa?.minimo, f.masa?.maximo].map(cel).join(","),
@@ -128,7 +128,7 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-1.5">{PERIODOS.map(([d, t]) => <button key={d} className={chip(dias === d)} onClick={() => setDias(d)}>{t}</button>)}</div>
         <div className="ml-auto grid grid-cols-2 gap-1 rounded-xl bg-stone-200/70 p-1" role="tablist" aria-label="Producto">
-          {([["maiz", "Maíz", Wheat], ["masa", "Masa", Layers]] as const).map(([id, t, I]) => (
+          {([["maiz", "Tortilla", Wheat], ["masa", "Masa", Layers]] as const).map(([id, t, I]) => (
             <button key={id} role="tab" aria-selected={producto === id} onClick={() => setProducto(id)} className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition ${producto === id ? "bg-white text-guinda shadow" : "text-stone-500"}`}>
               <I className="h-4 w-4" aria-hidden /> {t}
             </button>
@@ -141,7 +141,7 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
           ["Tortillerías", entero(totales.tortillerias), `en ${entero(totales.zonas)} ${estado ? "municipios" : "estados"}`],
           ["Con precios", entero(totales.con), totales.tortillerias ? `${((totales.con / totales.tortillerias) * 100).toFixed(2)} % del total` : ""],
           ["Capturas", entero(totales.capturas), dias === 0 ? "todo el historial" : `últimos ${dias} días`],
-          [`Promedio de ${producto === "maiz" ? "maíz" : "masa"}`, dinero(totales.promedio), "ponderado por capturas"],
+          [`Promedio de ${producto === "maiz" ? "tortilla" : "masa"}`, dinero(totales.promedio), "ponderado por capturas"],
         ].map(([t, v, s]) => (
           <Tarjeta key={t}>
             <div className="text-xs font-medium text-stone-500">{t}</div>
@@ -168,7 +168,7 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
                       <Th k="tortillerias" der>Tortillerías</Th>
                       <Th k="con_precios" der>Con precios</Th>
                       <Th k="capturas" der>Capturas</Th>
-                      <Th k="promedio" der>{`Promedio ${producto === "maiz" ? "maíz" : "masa"}`}</Th>
+                      <Th k="promedio" der>{`Promedio ${producto === "maiz" ? "tortilla" : "masa"}`}</Th>
                       <Th k="minimo" der>Mín.</Th>
                       <Th k="maximo" der>Máx.</Th>
                     </tr>

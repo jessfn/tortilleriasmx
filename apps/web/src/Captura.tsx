@@ -662,10 +662,8 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
             <>
               <h2 className="flex items-center gap-2 px-1 text-sm font-bold text-guinda"><Store className="h-4 w-4" aria-hidden /> Negocio</h2>
               <Campo etiqueta="Nombre de la tortillería *" icono={Store} value={d.nv.nombre} autoComplete="off" onChange={(e) => setNv({ nombre: normalizarTexto(e.target.value) })} placeholder="Ej. TORTILLERIA LA GUADALUPE" error={tocadoNv(d.nv.nombre) ? errNv("nombre") : undefined} valido={!errNv("nombre")} />
-              <div className="grid grid-cols-2 gap-2">
-                <Campo etiqueta="Teléfono (opcional)" icono={Phone} value={d.nv.telefono} inputMode="numeric" maxLength={10} autoComplete="off" onChange={(e) => setNv({ telefono: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="Ej. 5512345678" error={tocadoNv(d.nv.telefono) ? errNv("telefono") : undefined} valido={tocadoNv(d.nv.telefono) && !errNv("telefono")} />
-                <Campo etiqueta="Correo (opcional)" icono={Mail} type="email" inputMode="email" autoCapitalize="none" autoCorrect="off" value={d.nv.correo} onChange={(e) => setNv({ correo: e.target.value })} placeholder="Ej. tortas@correo.com" error={tocadoNv(d.nv.correo) ? errNv("correo") : undefined} valido={tocadoNv(d.nv.correo) && !errNv("correo")} />
-              </div>
+              <Campo etiqueta="Teléfono de la tortillería (opcional)" icono={Phone} value={d.nv.telefono} inputMode="numeric" maxLength={10} autoComplete="off" name="telefono-tortilleria" onChange={(e) => setNv({ telefono: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="Ej. 5512345678" error={tocadoNv(d.nv.telefono) ? errNv("telefono") : undefined} valido={tocadoNv(d.nv.telefono) && !errNv("telefono")} ayuda="10 dígitos con lada" />
+              <Campo etiqueta="Correo electrónico de la tortillería (opcional)" icono={Mail} type="email" inputMode="email" autoCapitalize="none" autoCorrect="off" autoComplete="off" name="correo-tortilleria" value={d.nv.correo} onChange={(e) => setNv({ correo: e.target.value })} placeholder="Ej. tortilleria@correo.com" error={tocadoNv(d.nv.correo) ? errNv("correo") : undefined} valido={tocadoNv(d.nv.correo) && !errNv("correo")} ayuda="Es el correo del negocio, no el tuyo (no es con el que te registraste)." />
               <Selector etiqueta="Personal ocupado *" icono={Users} value={d.nv.personalOcupado} onChange={(e) => setNv({ personalOcupado: e.target.value })} placeholder="Elige un rango" opciones={PERSONAL_OCUPADO.map((v) => ({ valor: v, texto: v }))} />
 
               <h2 className="flex items-center gap-2 px-1 pt-3 text-sm font-bold text-guinda"><MapPin className="h-4 w-4" aria-hidden /> Dirección</h2>
@@ -861,7 +859,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                       </label>
                     );
                   })}
-                  {todoCapturado && <Aviso tipo="info">Ya capturaste hoy el maíz y la masa de esta tortillería. Podrás volver a capturarlos mañana.</Aviso>}
+                  {todoCapturado && <Aviso tipo="info">Ya capturaste hoy la tortilla y la masa de esta tortillería. Podrás volver a capturarlos mañana.</Aviso>}
                 </>
               )}
             </>

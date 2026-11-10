@@ -46,7 +46,7 @@ export default function AdminResumen({
   const porRevisar = r.tortillerias_pendientes + r.capturas_pendientes;
   const top = estados.filter((e) => e.maiz).sort((a, b) => b.maiz!.promedio - a.maiz!.promedio);
   const max = Math.max(1, ...top.map((e) => e.maiz!.promedio));
-  const P = { maiz: { t: "Maíz", i: Wheat }, harina: { t: "Harina", i: Layers }, masa: { t: "Masa", i: Layers } };
+  const P = { maiz: { t: "Tortilla", i: Wheat }, harina: { t: "Harina", i: Layers }, masa: { t: "Masa", i: Layers } };
 
   return (
     <>
@@ -129,7 +129,7 @@ export default function AdminResumen({
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <Tarjeta className="space-y-2.5">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold">Estados por precio promedio de maíz</h3>
+            <h3 className="text-sm font-bold">Estados por precio promedio de tortilla</h3>
             <button onClick={() => alMapa()} className="inline-flex items-center gap-1 text-xs font-semibold text-guinda hover:underline"><MapaIcono className="h-3.5 w-3.5" aria-hidden /> Abrir mapa</button>
           </div>
           {top.length === 0 ? (

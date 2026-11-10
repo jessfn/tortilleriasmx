@@ -191,7 +191,7 @@ export default function AdminMapa({ foco, alCambio }: { foco?: FocoMapa; alCambi
           <>
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-xl bg-white p-2.5 ring-1 ring-stone-200"><div className="text-xl font-bold leading-tight">{entero(resumenVista.total)}</div><div className="text-[11px] text-stone-500">tortillerías visibles</div></div>
-              <div className="rounded-xl bg-white p-2.5 ring-1 ring-stone-200"><div className="text-xl font-bold leading-tight">{entero(resumenVista.con)}</div><div className="text-[11px] text-stone-500">con precio de {producto === "maiz" ? "maíz" : "masa"}</div></div>
+              <div className="rounded-xl bg-white p-2.5 ring-1 ring-stone-200"><div className="text-xl font-bold leading-tight">{entero(resumenVista.con)}</div><div className="text-[11px] text-stone-500">con precio de {producto === "maiz" ? "tortilla" : "masa"}</div></div>
               <div className="rounded-xl bg-white p-2.5 ring-1 ring-stone-200"><div className="text-xl font-bold leading-tight">{dinero(resumenVista.prom)}</div><div className="text-[11px] text-stone-500">promedio visible</div></div>
               <div className="rounded-xl bg-white p-2.5 ring-1 ring-stone-200"><div className="text-xl font-bold leading-tight">{resumenVista.min == null ? "—" : `${dinero(resumenVista.min)} – ${dinero(resumenVista.max)}`}</div><div className="text-[11px] text-stone-500">rango visible</div></div>
             </div>
@@ -260,7 +260,7 @@ export default function AdminMapa({ foco, alCambio }: { foco?: FocoMapa; alCambi
             <span className="absolute left-1/2 top-1.5 h-1 w-10 -translate-x-1/2 rounded-full bg-stone-300" aria-hidden />
             <span className="grid h-9 w-9 place-items-center rounded-xl bg-guinda/10 text-guinda">{abierto ? <X className="h-5 w-5" /> : <SlidersHorizontal className="h-5 w-5" />}</span>
             <span className="min-w-0 flex-1">
-              <span className="block text-sm font-bold leading-tight">{abierto ? "Filtros y estadísticas" : `${producto === "maiz" ? "Maíz" : "Masa"} · ${dias === 0 ? "todo" : `${dias} días`}`}</span>
+              <span className="block text-sm font-bold leading-tight">{abierto ? "Filtros y estadísticas" : `${producto === "maiz" ? "Tortilla" : "Masa"} · ${dias === 0 ? "todo" : `${dias} días`}`}</span>
               <span className="block truncate text-xs text-stone-500">{vista.lejano ? "Acércate para ver los precios" : `${entero(resumenVista.con)} con precio · promedio ${dinero(resumenVista.prom)}`}</span>
             </span>
             <ChevronUp className={`h-5 w-5 text-stone-400 transition ${abierto ? "rotate-180" : ""}`} aria-hidden />

@@ -24,7 +24,7 @@ type Registro = {
   nombre: string; domicilio: string | null; municipio: string | null; estado: string | null;
 };
 
-const PRODUCTO = { maiz: { t: "Maíz", i: Wheat }, harina: { t: "Harina", i: PackageOpen }, masa: { t: "Masa", i: Layers } };
+const PRODUCTO = { maiz: { t: "Tortilla", i: Wheat }, harina: { t: "Harina", i: PackageOpen }, masa: { t: "Masa", i: Layers } };
 const fechaHora = (s: string) => (s.length <= 10 ? fechaDia(s) : new Date(s).toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }));
 const fecha = (s: string) => new Date(s).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
 /** Las fechas de captura vienen como "AAAA-MM-DD" (día en hora de México): se arman sin pasar por UTC para no recorrer el día */
@@ -103,7 +103,7 @@ function TarjetaTortilleria({ t, alActualizar, alAbrir }: { t: MiTortilleria; al
         </span>
       </button>
       <div className="space-y-1 pl-[3.25rem] text-sm">
-        {linea(Wheat, "Maíz", t.ultimo_maiz, t.maiz_hoy)}
+        {linea(Wheat, "Tortilla", t.ultimo_maiz, t.maiz_hoy)}
         {linea(Layers, "Masa", t.ultima_masa, t.masa_hoy)}
       </div>
       <Boton onClick={() => alActualizar(t)} disabled={hoy} variante={hoy ? "secundario" : "primario"} icono={hoy ? Check : RefreshCw} className="!min-h-11">
