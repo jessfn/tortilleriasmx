@@ -21,9 +21,9 @@ Esta guía sigue la de infraestructura (`MIGRACION_TORTILLERIAS.md`) y la adapta
 | Inventario del servidor actual | Hecho (sección 2) | — |
 | Respaldo de la base y de las fotos, **con prueba de restauración** | Hecho el 9-nov-2026 (sección 4) | — |
 | Código listo para los dominios nuevos (CORS con varios orígenes, proxies de confianza) | Hecho y probado (80 pruebas de la API) | — |
-| Scripts y nginx para el servidor nuevo | Hechos, **sin probar en el servidor de la Secretaría** | — |
-| Ticket a infraestructura (DNS, balanceador, RDS con PostGIS, permiso) | Pendiente: sección 3 | Tú |
-| Todo lo que ocurre en el servidor nuevo (secciones 5 a 8) | Pendiente: requiere VPN, bastión y la llave de acceso | Tú |
+| Base restaurada en el RDS (misma cantidad de filas que el origen), API y app desplegadas en el servidor de la Secretaría | **Hecho el 9-nov-2026**, probado por los dominios reales | — |
+| Ticket a infraestructura (DNS, balanceador, RDS con PostGIS, permiso) | Hecho: los dominios ya responden por el balanceador | — |
+| **Cambio definitivo** (secciones 7 y 8): respaldo final, proxy del dominio anterior, aviso a censadores, desactivar el workflow de GitHub | Pendiente | Tú |
 
 ---
 
