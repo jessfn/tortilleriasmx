@@ -23,7 +23,8 @@ Esta guía sigue la de infraestructura (`MIGRACION_TORTILLERIAS.md`) y la adapta
 | Código listo para los dominios nuevos (CORS con varios orígenes, proxies de confianza) | Hecho y probado (80 pruebas de la API) | — |
 | Base restaurada en el RDS (misma cantidad de filas que el origen), API y app desplegadas en el servidor de la Secretaría | **Hecho el 9-nov-2026**, probado por los dominios reales | — |
 | Ticket a infraestructura (DNS, balanceador, RDS con PostGIS, permiso) | Hecho: los dominios ya responden por el balanceador | — |
-| **Cambio definitivo** (secciones 7 y 8): respaldo final, proxy del dominio anterior, aviso a censadores, desactivar el workflow de GitHub | Pendiente | Tú |
+| Servidor de Hostinger: app, base, fotos, nginx, certificado, PM2 y respaldos **eliminados el 10-nov-2026** (sin plan de reversa en ese servidor; los respaldos del RDS los maneja infraestructura) | Hecho | — |
+| **Cambio definitivo:** avisar a los censadores que usen el dominio nuevo (los dominios geodatos ya no responden) y quitar sus registros DNS | Pendiente | Tú |
 
 ---
 
@@ -164,7 +165,7 @@ Desde tu equipo (archivo `hosts` o con el DNS ya publicado): entra, inicia sesi�
 
 ## 8. Plan de reversa
 
-Hostinger sigue intacto. Si algo falla: apunta el DNS/proxy de vuelta al servidor anterior y arranca su API (`pm2 start tortillerias-api`). Si ya entraron capturas en el servidor nuevo, expórtalas antes de volver (`pg_dump -Fc` de las tablas `capturas_precio`, `tortillerias`, `fotos`, `tortilleria_fiscal`, `usuarios`) para no perderlas.
+(Obsoleto: Hostinger ya fue eliminado.) Si algo falla: apunta el DNS/proxy de vuelta al servidor anterior y arranca su API (`pm2 start tortillerias-api`). Si ya entraron capturas en el servidor nuevo, expórtalas antes de volver (`pg_dump -Fc` de las tablas `capturas_precio`, `tortillerias`, `fotos`, `tortilleria_fiscal`, `usuarios`) para no perderlas.
 
 ---
 
