@@ -86,7 +86,7 @@ function TarjetaTortilleria({ t, alActualizar, alAbrir }: { t: MiTortilleria; al
   return (
     <Tarjeta className="space-y-2.5">
       <button onClick={() => alAbrir(t)} className="flex w-full items-start gap-3 text-left">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-guinda/10 text-guinda">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-guinda/10 text-guinda">
           <Store className="h-5 w-5" aria-hidden />
         </span>
         <span className="min-w-0 flex-1">
@@ -178,7 +178,7 @@ export default function PanelUsuario({
     alActualizarPrecio({ id: t.id, nombre: t.nombre, domicilio: t.domicilio, estatus: t.estatus, lat: t.lat ?? 0, lng: t.lng ?? 0, razon_social: null });
 
   const u = sesion.usuario;
-  const nombre = u.nombre ? u.nombre.split(" ")[0] : u.correo.split("@")[0];
+  const nombre = (u.nombre ? u.nombre.split(" ")[0] : u.correo.split("@")[0]).toLowerCase().replace(/^./, (c) => c.toUpperCase());
 
   return (
     <PanelShell
@@ -208,7 +208,7 @@ export default function PanelUsuario({
             onClick={alCapturar}
             className="relative flex w-full items-center gap-4 overflow-hidden rounded-3xl bg-gradient-to-br from-guinda to-guinda-oscuro p-5 text-left text-white shadow-lg shadow-guinda/30 transition active:scale-[.98]"
           >
-            <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-white/15">
+            <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-white/15">
               <Plus className="h-8 w-8 text-dorado" aria-hidden />
             </span>
             <span>

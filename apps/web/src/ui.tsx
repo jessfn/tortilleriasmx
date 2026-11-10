@@ -249,17 +249,17 @@ export function PanelShell({
     <div
       className={`${completo ? "md:max-w-none lg:w-full" : "marco-pc lg:max-w-6xl"} mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:grid-rows-[auto_minmax(0,1fr)]`}
     >
-      <header className={`relative shrink-0 bg-guinda-oscuro px-4 pb-6 lg:col-span-2 lg:px-8 ${completo ? "lg:pb-4 lg:pt-4" : "lg:pb-6"} pt-[max(.75rem,env(safe-area-inset-top))] text-white`}>
-        <div className="flex items-center gap-3">
-          <span key={activa} className={`paso grid h-10 w-10 shrink-0 place-items-center rounded-xl text-white shadow-sm ${TONOS[actual?.tono ?? "guinda"].chip}`}>
-            {actual && <actual.icono className="h-5 w-5" aria-hidden />}
+      <header className={`relative shrink-0 bg-guinda-oscuro px-5 pb-10 lg:col-span-2 lg:px-8 ${completo ? "lg:pb-4 lg:pt-4" : "lg:pb-9"} pt-[max(1.25rem,env(safe-area-inset-top))] text-white`}>
+        <div className="flex items-center gap-4">
+          <span key={activa} className={`paso grid h-12 w-12 shrink-0 place-items-center rounded-full text-white shadow-md ring-4 ring-white/15 ${TONOS[actual?.tono ?? "guinda"].chip}`}>
+            {actual && <actual.icono className="h-[22px] w-[22px]" aria-hidden />}
           </span>
           <div className="min-w-0 flex-1 leading-tight">
-            <p className="text-[10px] font-semibold uppercase tracking-[.2em] text-dorado">TortilleríasMX</p>
-            <h1 className="truncate font-patria text-xl font-normal">{titulo}</h1>
+            <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-[.2em] text-dorado">TortilleríasMX</p>
+            <h1 className="truncate font-patria text-2xl font-normal">{titulo}</h1>
           </div>
           {derecha}
-          {inicial && <span aria-hidden className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-dorado text-sm font-semibold uppercase text-dorado">{inicial}</span>}
+          {inicial && <span aria-hidden className="grid h-10 w-10 shrink-0 place-items-center rounded-full border-2 border-dorado/70 bg-white/5 text-base font-semibold uppercase text-dorado">{inicial}</span>}
         </div>
       </header>
       <Hoja className="lg:col-start-2 lg:row-start-2 lg:mt-0 lg:rounded-none lg:shadow-none">
@@ -306,7 +306,7 @@ export function Dato({ icono: Icono, etiqueta, valor, tono = "guinda" }: { icono
   const t = { guinda: "bg-guinda/10 text-guinda", verde: "bg-verde/10 text-verde", dorado: "bg-dorado/15 text-[#8a6a35]", gris: "bg-stone-100 text-stone-500" }[tono];
   return (
     <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-stone-200">
-      <span className={`grid h-9 w-9 place-items-center rounded-xl ${t}`}>
+      <span className={`grid h-10 w-10 place-items-center rounded-full ${t}`}>
         <Icono className="h-[18px] w-[18px]" aria-hidden />
       </span>
       <div className="mt-2 text-2xl font-bold leading-none">{valor}</div>
