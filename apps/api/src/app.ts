@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 import rateLimit from "@fastify/rate-limit";
+import compress from "@fastify/compress";
 import { registrarAuth } from "./auth.js";
 import { rutasCatalogos } from "./rutas/catalogos.js";
 import { rutasTortillerias } from "./rutas/tortillerias.js";
@@ -27,9 +28,14 @@ export async function crearApp() {
     origin: origenes.length === 1 ? origenes[0] : origenes,
     methods: ["GET", "POST", "PATCH", "OPTIONS"],
   });
+  // Sin nginx delante (el balanceador entrega directo a la app) las respuestas grandes, como el catálogo de un estado
+  // (~3 MB de JSON), se comprimen aquí: pasan a ~0.5 MB en el teléfono del censador.
+  await app.register(compress, { threshold: 1024, encodings: ["gzip", "deflate"] });
   await app.register(rateLimit, { max: 300, timeWindow: "1 minute" });
   await app.register(jwt, { secret: secreto });
 
+  // El balanceador revisa la salud de la app pidiendo "/" (o "/health")
+  app.get("/", async () => ({ ok: true }));
   app.get("/health", async () => ({ ok: true }));
   registrarAuth(app);
   rutasCatalogos(app);

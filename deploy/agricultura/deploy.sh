@@ -37,11 +37,8 @@ mkdir -p "$(dirname "${UPLOADS_DIR:-$RAIZ/datos/fotos}")" "${UPLOADS_DIR:-$RAIZ/
 pm2 startOrReload deploy/agricultura/ecosystem.config.cjs
 pm2 save
 
-# nginx (www-data) debe poder leer la PWA compilada
-chmod -R u=rwX,go=rX apps/web/dist
-sudo nginx -t && sudo nginx -s reload
-
-echo "== Verificación"
-sleep 2
+echo "== Verificación (los dos puertos que usa el balanceador)"
+sleep 3
 curl -fsS "http://127.0.0.1:${PORT:-3006}/health" && echo
-pm2 list | grep tortillerias-api
+curl -fsS -o /dev/null -w "app en el 3007: %{http_code}\n" "http://127.0.0.1:3007/"
+pm2 list | grep -E "tortillerias-(api|web)"
