@@ -29,9 +29,6 @@ const PRODUCTOS: { id: Producto; clave: "precioMaiz" | "precioMasa"; texto: stri
   { id: "masa", clave: "precioMasa", texto: "Masa", icono: Layers },
 ];
 
-/** Precios frecuentes por kilo para tocar en vez de escribir */
-const SUGERIDOS: Record<Producto, number[]> = { maiz: [18, 20, 22, 24, 26, 28], masa: [14, 16, 18, 20, 22, 24] };
-
 const NV_VACIO = {
   nombre: "", telefono: "", correo: "", personalOcupado: "", localidad: "", tipoVial: "CALLE", calle: "", numeroExt: "", sinNumero: false,
   numeroInt: "", colonia: "", codigoPostal: "",
@@ -828,7 +825,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                     const malo = valor !== "" && !precioValido(valor);
                     const num = precioNumero(valor);
                     const mover = (delta: number) => {
-                      const base = valor === "" || malo ? SUGERIDOS[p.id][1] : num;
+                      const base = valor === "" || malo ? 20 : num;
                       const nuevoValor = Math.min(PRECIO_MAX, Math.max(PRECIO_MIN, Math.round((base + delta) * 100) / 100));
                       set({ [p.clave]: nuevoValor.toFixed(2) } as Partial<Datos>);
                     };
@@ -871,16 +868,6 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                               <button type="button" onClick={() => mover(0.5)} aria-label={`Subir 50 centavos el precio de ${p.texto}`} className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-guinda text-white active:scale-95 active:brightness-90">
                                 <Plus className="h-5 w-5" aria-hidden />
                               </button>
-                            </div>
-                            <div className="mt-2.5 flex flex-wrap justify-center gap-1.5">
-                              {SUGERIDOS[p.id].map((n) => {
-                                const sel = valor !== "" && !malo && num === n;
-                                return (
-                                  <button key={n} type="button" onClick={() => set({ [p.clave]: n.toFixed(2) } as Partial<Datos>)} className={`rounded-full px-3 py-1.5 text-sm font-semibold ring-1 transition active:scale-95 ${sel ? "bg-guinda text-white ring-guinda" : "bg-white text-stone-600 ring-stone-200"}`}>
-                                    ${n}
-                                  </button>
-                                );
-                              })}
                             </div>
                             {malo && <p className="mt-2 text-center text-xs text-red-600">Debe estar entre ${PRECIO_MIN} y ${PRECIO_MAX}.</p>}
                           </>
