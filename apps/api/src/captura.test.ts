@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import sharp from "sharp";
+import { hash } from "@node-rs/argon2";
 import { auditar } from "./db.js";
 import { PGlite } from "@electric-sql/pglite";
 import type { FastifyInstance } from "fastify";
@@ -29,6 +30,7 @@ const aqui = path.dirname(fileURLToPath(import.meta.url));
 const migracion = readFileSync(path.join(aqui, "../../../db/migrations/006_limite_diario_y_datos_nuevos.sql"), "utf8");
 
 const migracion7 = readFileSync(path.join(aqui, "../../../db/migrations/007_sin_conexion.sql"), "utf8");
+const migracion8 = readFileSync(path.join(aqui, "../../../db/migrations/008_restablecer_password.sql"), "utf8");
 
 const PRE = `
 CREATE DOMAIN geometry AS point;
@@ -45,7 +47,7 @@ CREATE FUNCTION ST_DWithin(point, point, float8) RETURNS boolean LANGUAGE sql AS
 
 CREATE TABLE usuarios (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), nombre text NOT NULL DEFAULT '', apellidos text NOT NULL DEFAULT '', usuario text UNIQUE NOT NULL,
-  password_hash text NOT NULL DEFAULT 'x', rol text NOT NULL, activo boolean NOT NULL DEFAULT true, correo text
+  password_hash text NOT NULL DEFAULT 'x', rol text NOT NULL, activo boolean NOT NULL DEFAULT true, correo text, creado_en timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE estados (clave text PRIMARY KEY, nombre text NOT NULL);
 CREATE TABLE municipios (clave text PRIMARY KEY, estado_clave text, nombre text NOT NULL);
@@ -77,6 +79,7 @@ let base: string;
 let ana: string; // censadora 1
 let beto: string; // censador 2
 let sup: string; // supervisor
+let adm: string; // administración
 let tA: string; // tortillería del DENUE
 let tB: string;
 const json = { "content-type": "application/json" };
@@ -94,11 +97,13 @@ beforeAll(async () => {
   await h.db.exec(PRE);
   await h.db.exec(migracion); // la migración real
   await h.db.exec(migracion7);
+  await h.db.exec(migracion8);
   process.env.UPLOADS_DIR = mkdtempSync(path.join(tmpdir(), "fotos-"));
   const u = async (nombre: string, rol: string) => (await q("INSERT INTO usuarios(usuario, rol, correo) VALUES ($1,$2,$1) RETURNING id", [nombre, rol]))[0].id;
   ana = await u("ana@correo.com", "capturista");
   beto = await u("beto@correo.com", "capturista");
   sup = await u("sup@correo.com", "supervisor");
+  adm = await u("adm@correo.com", "admin");
   await q("INSERT INTO estados VALUES ('09','CIUDAD DE MEXICO')");
   await q("INSERT INTO municipios VALUES ('09015','09','CUAUHTEMOC')");
   await q("INSERT INTO denue_catalogo VALUES ('100', 'JUAN PEREZ SA DE CV')");
@@ -239,7 +244,7 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
   });
 
   it("la segunda vez NO sobrescribe: responde 200 con lo existente, enmascarado", async () => {
-    const r = await post(`/tortillerias/${tA}/fiscal`, beto, { ...moral, rfc: "ZZZ999999ZZ9", razonSocial: "Otra Empresa" });
+    const r = await post(`/tortillerias/${tA}/fiscal`, beto, { ...moral, rfc: "ZZZ991231ZZ9", razonSocial: "Otra Empresa" });
     expect(r.status).toBe(200);
     const cuerpo = await r.json();
     expect(cuerpo.existente).toBe(true);
@@ -604,5 +609,59 @@ describe("catálogo por estado para el teléfono", () => {
     await q("INSERT INTO tortillerias(nombre, estado_clave, geom, origen, estatus) VALUES ('OTRA MAS','09', point(-99.2, 19.4),'nueva','pendiente')");
     const c2 = await (await get(`/catalogo/estado/09?version=${c1.version}`, ana)).json();
     expect(c2.version).not.toBe(c1.version);
+  });
+});
+
+describe("recuperar contraseña (restablece la administración, sin correo)", () => {
+  let olvido: string;
+  const login = (usuario: string, password: string) =>
+    fetch(`${base}/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ usuario, password }) });
+
+  beforeAll(async () => {
+    olvido = (await q("INSERT INTO usuarios(usuario, correo, rol, password_hash) VALUES ('olvido@correo.com','olvido@correo.com','capturista',$1) RETURNING id", [await hash("clave-vieja-1")]))[0].id;
+  });
+
+  it("solo la administración puede restablecer", async () => {
+    const url = `/admin/usuarios/${olvido}/restablecer-password`;
+    expect((await post(url, ana, {})).status).toBe(403);
+    expect((await post(url, sup, {}, "supervisor")).status).toBe(403);
+    expect((await fetch(base + url, { method: "POST" })).status).toBe(401);
+    expect((await post(`/admin/usuarios/${adm}/restablecer-password`, adm, {}, "admin")).status).toBe(400); // la propia: usa su perfil
+    expect((await post("/admin/usuarios/no-es-id/restablecer-password", adm, {}, "admin")).status).toBe(400);
+    expect((await post("/admin/usuarios/00000000-0000-4000-8000-0000000000ff/restablecer-password", adm, {}, "admin")).status).toBe(404);
+  });
+
+  it("flujo completo: temporal → entrar → cambiarla obligatoriamente → entrar con la nueva", async () => {
+    expect((await login("olvido@correo.com", "clave-vieja-1")).status).toBe(200);
+
+    const r = await post(`/admin/usuarios/${olvido}/restablecer-password`, adm, {}, "admin");
+    expect(r.status).toBe(200);
+    const { password: temporal } = await r.json();
+    expect(temporal).toMatch(/^[A-HJ-NP-Za-km-z2-9]{10}$/); // 10 caracteres sin los que se confunden (0, O, 1, l, I)
+
+    expect((await login("olvido@correo.com", "clave-vieja-1")).status).toBe(401); // la vieja ya no sirve
+    const entrada = await login("olvido@correo.com", temporal);
+    expect(entrada.status).toBe(200);
+    const sesion = await entrada.json();
+    expect(sesion.usuario.debeCambiarPassword).toBe(true);
+
+    const cambiar = (nueva: string, actual = temporal) =>
+      fetch(`${base}/perfil/password`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${sesion.token}` }, body: JSON.stringify({ actual, nueva, confirmar: nueva }) });
+    expect((await cambiar(temporal)).status).toBe(400); // debe ser distinta
+    expect((await cambiar("otra-clave-9")).status).toBe(200);
+
+    expect((await login("olvido@correo.com", temporal)).status).toBe(401);
+    const ya = await (await login("olvido@correo.com", "otra-clave-9")).json();
+    expect(ya.usuario.debeCambiarPassword).toBe(false);
+  });
+
+  it("la lista de usuarios marca los restablecimientos pendientes", async () => {
+    const otro = (await q("INSERT INTO usuarios(usuario, correo, rol, password_hash) VALUES ('pendiente@correo.com','pendiente@correo.com','capturista',$1) RETURNING id", [await hash("x-clave-1")]))[0].id;
+    await post(`/admin/usuarios/${otro}/restablecer-password`, adm, {}, "admin");
+    const resp = await get("/admin/usuarios", adm, "admin");
+    const lista = await resp.json();
+    if (!Array.isArray(lista)) throw new Error(`/admin/usuarios ${resp.status}: ${JSON.stringify(lista)}`);
+    expect(lista.find((u: any) => u.id === otro).debe_cambiar_password).toBe(true);
+    expect(lista.find((u: any) => u.id === olvido).debe_cambiar_password).toBe(false);
   });
 });

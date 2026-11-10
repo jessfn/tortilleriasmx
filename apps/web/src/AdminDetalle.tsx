@@ -230,7 +230,7 @@ export default function DetalleLateral({
               <Aviso>{error || "No se pudo cargar la tortillería."}</Aviso>
             ) : (
               <div>
-                <Fila i={MapPin} k="Domicilio" v={t.domicilio ?? "—"} />
+                <Fila i={MapPin} k="Dirección" v={t.domicilio ?? "—"} />
                 {t.localidad && <Fila i={Building2} k="Localidad" v={t.localidad} />}
                 {(t.tipo_vial || t.calle) && <Fila i={MapPin} k="Vialidad" v={[t.tipo_vial, t.calle].filter(Boolean).join(" ")} />}
                 {(t.numero_ext || t.numero_int) && <Fila i={Hash} k="Número" v={[t.numero_ext && `Ext. ${t.numero_ext}`, t.numero_int && `Int. ${t.numero_int}`].filter(Boolean).join(" · ")} />}

@@ -121,6 +121,11 @@ type Props = {
 };
 
 const precioNumero = (s: string) => Number(s.replace(",", "."));
+/** Solo números y un punto, con máximo 2 decimales (centavos): al teclear 15.125 se queda en 15.12 */
+const limpiarPrecio = (v: string) => {
+  const [ent, ...resto] = v.replace(",", ".").replace(/[^0-9.]/g, "").split(".");
+  return (resto.length ? `${ent.slice(0, 2)}.${resto.join("").slice(0, 2)}` : ent.slice(0, 2)).slice(0, 5);
+};
 const precioValido = (s: string) => s !== "" && precioNumero(s) >= PRECIO_MIN && precioNumero(s) <= PRECIO_MAX;
 const dinero = (n: number) => `$${n.toFixed(2)}`;
 
@@ -663,7 +668,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
               </div>
               <Selector etiqueta="Personal ocupado *" icono={Users} value={d.nv.personalOcupado} onChange={(e) => setNv({ personalOcupado: e.target.value })} placeholder="Elige un rango" opciones={PERSONAL_OCUPADO.map((v) => ({ valor: v, texto: v }))} />
 
-              <h2 className="flex items-center gap-2 px-1 pt-3 text-sm font-bold text-guinda"><MapPin className="h-4 w-4" aria-hidden /> Domicilio</h2>
+              <h2 className="flex items-center gap-2 px-1 pt-3 text-sm font-bold text-guinda"><MapPin className="h-4 w-4" aria-hidden /> Dirección</h2>
               <Selector etiqueta="Estado *" icono={Landmark} value={d.estado?.clave ?? ""} onChange={(e) => set({ estado: estados.find((x) => x.clave === e.target.value), municipio: undefined })} placeholder="Elige el estado" opciones={estados.map((x) => ({ valor: x.clave, texto: x.nombre }))} />
               <Selector etiqueta="Municipio *" icono={Building2} value={d.municipio?.clave ?? ""} disabled={!d.estado} onChange={(e) => set({ municipio: municipios.find((x) => x.clave === e.target.value) })} placeholder={d.estado ? "Elige el municipio" : "Primero el estado"} opciones={municipios.map((x) => ({ valor: x.clave, texto: x.nombre }))} />
               <Campo etiqueta="Localidad *" icono={Landmark} value={d.nv.localidad} autoComplete="off" onChange={(e) => setNv({ localidad: normalizarTexto(e.target.value) })} placeholder="Ej. CIUDAD DE MEXICO" error={tocadoNv(d.nv.localidad) ? errNv("localidad") : undefined} valido={!errNv("localidad")} />
@@ -756,7 +761,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                 error={errFiscal("celular")}
                 valido={d.fiscal.celular !== "" && !errFiscal("celular")}
                 placeholder="Ej. 5512345678"
-                ayuda="10 dígitos, sin lada +52"
+                ayuda="10 dígitos con lada, sin +52"
               />
               <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-white p-3 shadow-sm ring-1 ring-stone-200">
                 <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0 accent-guinda" checked={d.fiscal.aviso} onChange={(e) => setFiscal({ aviso: e.target.checked })} />
@@ -841,7 +846,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                             inputMode="decimal"
                             value={ya != null ? ya.toFixed(2) : valor}
                             disabled={ya != null}
-                            onChange={(e) => set({ [p.clave]: e.target.value.replace(/[^0-9.,]/g, "").slice(0, 6) } as Partial<Datos>)}
+                            onChange={(e) => set({ [p.clave]: limpiarPrecio(e.target.value) } as Partial<Datos>)}
                             placeholder="0.00"
                             aria-label={`Precio por kilo de ${p.texto}`}
                             className="w-full bg-transparent px-2 py-3.5 text-center text-4xl font-bold outline-none placeholder:text-stone-200 disabled:text-stone-400"
@@ -865,7 +870,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
           {id === "resumen" && (
             <div className="divide-y divide-stone-100 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200">
               <Fila icono={Store} k="Tortillería" v={d.nueva ? `${d.nv.nombre} (nueva)` : d.tortilleria?.nombre ?? ""} />
-              <Fila icono={MapPin} k="Domicilio" v={d.nueva ? [d.nv.tipoVial, d.nv.calle, d.nv.sinNumero ? "SN" : d.nv.numeroExt, d.nv.numeroInt && `INT. ${d.nv.numeroInt}`, `COL. ${d.nv.colonia}`, `C.P. ${d.nv.codigoPostal}`].filter(Boolean).join(" ") : d.tortilleria?.domicilio ?? "Sin domicilio"} />
+              <Fila icono={MapPin} k="Dirección" v={d.nueva ? [d.nv.tipoVial, d.nv.calle, d.nv.sinNumero ? "SN" : d.nv.numeroExt, d.nv.numeroInt && `INT. ${d.nv.numeroInt}`, `COL. ${d.nv.colonia}`, `C.P. ${d.nv.codigoPostal}`].filter(Boolean).join(" ") : d.tortilleria?.domicilio ?? "Sin dirección"} />
               {PRODUCTOS.filter((p) => activo(p) && d[p.clave] !== "").map((p) => (
                 <Fila key={p.id} icono={p.icono} k={p.texto} v={`${dinero(precioNumero(d[p.clave]))} por kilo`} />
               ))}

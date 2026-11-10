@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { BarChart3, ClipboardCheck, Eye, EyeOff, KeyRound, Loader2, LogIn, Map as MapaIcono, ShieldCheck, UserRound } from "lucide-react";
 import { api, cuentaDeEsteAcceso, guardarSesion, type Sesion } from "./api";
-import { Aviso, Boton, Campo } from "./ui";
+import { Aviso, Boton, Campo, HojaModal } from "./ui";
 
 const FUNCIONES = [
   { i: MapaIcono, t: "Mapa de precios en vivo", d: "Cada tortillería con su último precio" },
@@ -19,6 +19,7 @@ export default function LoginAdmin({ alEntrar }: { alEntrar: (s: Sesion) => void
   const [ver, setVer] = useState(false);
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
+  const [ayuda, setAyuda] = useState(false);
 
   async function entrar(e: React.FormEvent) {
     e.preventDefault();
@@ -116,6 +117,11 @@ export default function LoginAdmin({ alEntrar }: { alEntrar: (s: Sesion) => void
               </button>
             }
           />
+          <div className="-mt-1 text-right">
+            <button type="button" onClick={() => setAyuda(true)} className="text-sm font-semibold text-guinda">
+              ¿Olvidaste tu contraseña?
+            </button>
+          </div>
           {error && <Aviso>{error}</Aviso>}
           <Boton type="submit" disabled={cargando || !usuario || !password} icono={cargando ? Loader2 : LogIn}>
             {cargando ? "Entrando…" : "Entrar al panel"}
@@ -123,6 +129,17 @@ export default function LoginAdmin({ alEntrar }: { alEntrar: (s: Sesion) => void
           <p className="text-center text-xs text-stone-500">¿Necesitas acceso? Solicítalo a la administración del sistema.</p>
         </form>
       </main>
+      {ayuda && (
+        <HojaModal titulo="Recuperar mi contraseña" alCerrar={() => setAyuda(false)}>
+          <p className="text-sm text-stone-700">La contraseña de una cuenta administrativa la restablece otra persona con rol de administración:</p>
+          <ol className="list-decimal space-y-1.5 pl-5 text-sm text-stone-600">
+            <li>Pídele a otra persona administradora que entre a <b>Usuarios</b> y toque <b>Restablecer contraseña</b> en tu cuenta.</li>
+            <li>Te darán una contraseña <b>temporal</b>.</li>
+            <li>Entra con ella: la aplicación te pedirá crear tu contraseña nueva.</li>
+          </ol>
+          <Boton onClick={() => setAyuda(false)}>Entendido</Boton>
+        </HojaModal>
+      )}
     </div>
   );
 }

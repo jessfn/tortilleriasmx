@@ -98,7 +98,7 @@ function TarjetaTortilleria({ t, alActualizar, alAbrir }: { t: MiTortilleria; al
             </span>
           </span>
           <span className="mt-0.5 flex items-center gap-1 truncate text-xs text-stone-500">
-            <MapPin className="h-3 w-3 shrink-0" aria-hidden /> {t.domicilio || [t.municipio, t.estado].filter(Boolean).join(", ") || "Sin domicilio"}
+            <MapPin className="h-3 w-3 shrink-0" aria-hidden /> {t.domicilio || [t.municipio, t.estado].filter(Boolean).join(", ") || "Sin dirección"}
           </span>
         </span>
       </button>

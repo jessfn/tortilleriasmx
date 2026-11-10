@@ -1,9 +1,15 @@
 import type { FastifyInstance } from "fastify";
+import { randomInt } from "node:crypto";
+import { hash } from "@node-rs/argon2";
 import { z } from "zod";
 import { auditar, pool } from "../db.js";
 
 const uuid = z.string().uuid();
 const staff = (app: FastifyInstance) => app.soloRoles("supervisor", "admin");
+
+/** Contraseña temporal legible: sin caracteres que se confunden (0/O, 1/l/I). Ejemplo: Kp7mQx4Tnw */
+const ALFABETO = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+export const passwordTemporal = (largo = 10) => Array.from({ length: largo }, () => ALFABETO[randomInt(ALFABETO.length)]).join("");
 
 export function rutasAdmin(app: FastifyInstance) {
   app.get("/admin/resumen", { preHandler: staff(app) }, async () => {
@@ -97,7 +103,7 @@ export function rutasAdmin(app: FastifyInstance) {
   // Gestión de usuarios: solo administradores
   app.get("/admin/usuarios", { preHandler: app.soloRoles("admin") }, async () => {
     const { rows } = await pool.query(
-      `SELECT u.id, u.correo, u.usuario, u.nombre, u.apellidos, u.rol, u.activo, u.creado_en,
+      `SELECT u.id, u.correo, u.usuario, u.nombre, u.apellidos, u.rol, u.activo, u.creado_en, u.debe_cambiar_password,
               (SELECT count(*)::int FROM capturas_precio c WHERE c.capturista_id = u.id) AS capturas
          FROM usuarios u ORDER BY u.creado_en DESC LIMIT 300`,
     );
@@ -116,5 +122,16 @@ export function rutasAdmin(app: FastifyInstance) {
     if (!r.rowCount) return reply.code(404).send({ error: "No existe" });
     await auditar(req.user.sub, "editar_usuario", "usuarios", req.params.id);
     return { ok: true };
+  });
+
+  // Recuperar contraseña (sin correo): la administración genera una temporal que se muestra UNA vez; la persona debe cambiarla al entrar
+  app.post<{ Params: { id: string } }>("/admin/usuarios/:id/restablecer-password", { preHandler: app.soloRoles("admin"), config: { rateLimit: { max: 30, timeWindow: "1 hour" } } }, async (req, reply) => {
+    if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+    if (req.params.id === req.user.sub) return reply.code(400).send({ error: "Para cambiar tu contraseña usa tu perfil" });
+    const temporal = passwordTemporal();
+    const r = await pool.query("UPDATE usuarios SET password_hash = $1, debe_cambiar_password = true WHERE id = $2", [await hash(temporal), req.params.id]);
+    if (!r.rowCount) return reply.code(404).send({ error: "No existe" });
+    await auditar(req.user.sub, "restablecer_password", "usuarios", req.params.id);
+    return { password: temporal };
   });
 }

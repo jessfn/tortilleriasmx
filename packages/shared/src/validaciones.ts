@@ -2,6 +2,19 @@ import { z } from "zod";
 
 export const RFC_FISICA_REGEX = /^[A-ZÑ&]{4}\d{6}[A-Z\d]{3}$/;
 export const RFC_MORAL_REGEX = /^[A-ZÑ&]{3}\d{6}[A-Z\d]{3}$/;
+
+const DIAS_DEL_MES = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]; // febrero 29: el RFC solo trae dos dígitos del año
+
+/**
+ * La fecha que lleva el RFC (AAMMDD: nacimiento de la persona física o constitución de la persona moral) debe existir:
+ * mes de 01 a 12 y día de 01 al último del mes. Ejemplo que NO pasa: ABCD660000123 (mes 00, día 00).
+ */
+export function rfcFechaValida(rfc: string, tipo: "fisica" | "moral"): boolean {
+  const ini = tipo === "fisica" ? 4 : 3;
+  const mes = Number(rfc.slice(ini + 2, ini + 4));
+  const dia = Number(rfc.slice(ini + 4, ini + 6));
+  return Number.isInteger(mes) && mes >= 1 && mes <= 12 && Number.isInteger(dia) && dia >= 1 && dia <= DIAS_DEL_MES[mes - 1];
+}
 export const NOMBRE_REGEX = /^[A-ZÑ]+(?:[ '\-][A-ZÑ]+)*$/;
 
 export const PRECIO_MIN = 5;
@@ -27,7 +40,9 @@ export const telefonoSchema = z.string().regex(/^\d{10}$/, "Debe tener 10 dígit
 export const precioSchema = z
   .number()
   .min(PRECIO_MIN, `Mínimo $${PRECIO_MIN}`)
-  .max(PRECIO_MAX, `Máximo $${PRECIO_MAX}`);
+  .max(PRECIO_MAX, `Máximo $${PRECIO_MAX}`)
+  // Es un precio en pesos: centavos como máximo (15.125 no existe). Se compara con tolerancia por los decimales binarios.
+  .refine((n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-6, "Máximo 2 decimales (centavos)");
 
 export const correoSchema = z.string().trim().toLowerCase().email("Correo inválido").max(120);
 export const passwordSchema = z
@@ -82,6 +97,8 @@ export const fiscalSchema = z
     const re = v.tipoPersona === "fisica" ? RFC_FISICA_REGEX : RFC_MORAL_REGEX;
     const len = v.tipoPersona === "fisica" ? 13 : 12;
     if (v.rfc.length !== len || !re.test(v.rfc)) ctx.addIssue({ code: "custom", path: ["rfc"], message: `RFC de ${len} caracteres` });
+    else if (!rfcFechaValida(v.rfc, v.tipoPersona))
+      ctx.addIssue({ code: "custom", path: ["rfc"], message: "La fecha del RFC no es válida (mes de 01 a 12, día de 01 a 31)" });
   });
 
 /* ---------------- tortillería nueva: mismos datos que el DENUE ---------------- */

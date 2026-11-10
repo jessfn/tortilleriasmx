@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Eye, EyeOff, KeyRound, Loader2, LogIn, Mail } from "lucide-react";
 import { api, cuentaDeEsteAcceso, guardarSesion, type Sesion } from "./api";
 import AuthLayout from "./AuthLayout";
-import { Aviso, Boton, Campo } from "./ui";
+import { Aviso, Boton, Campo, HojaModal } from "./ui";
 
 /** Inicio de sesión de quienes registran tortillerías. El personal administrativo entra por /acceso (LoginAdmin). */
 export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar: (s: Sesion) => void; alVolver: () => void; alIrARegistro: () => void }) {
@@ -11,6 +11,7 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
   const [ver, setVer] = useState(false);
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
+  const [ayuda, setAyuda] = useState(false);
 
   async function entrar(e: React.FormEvent) {
     e.preventDefault();
@@ -82,8 +83,24 @@ export default function Login({ alEntrar, alVolver, alIrARegistro }: { alEntrar:
             </button>
           }
         />
+        <div className="-mt-1 text-right">
+          <button type="button" onClick={() => setAyuda(true)} className="text-sm font-semibold text-guinda">
+            ¿Olvidaste tu contraseña?
+          </button>
+        </div>
         {error && <Aviso>{error}</Aviso>}
       </form>
+      {ayuda && (
+        <HojaModal titulo="Recuperar mi contraseña" alCerrar={() => setAyuda(false)}>
+          <p className="text-sm text-stone-700">Por ahora tu contraseña la restablece la administración del sistema. Es rápido:</p>
+          <ol className="list-decimal space-y-1.5 pl-5 text-sm text-stone-600">
+            <li>Avisa a tu coordinador o a la administración que olvidaste tu contraseña (dales el correo con el que te registraste).</li>
+            <li>Te darán una contraseña <b>temporal</b>.</li>
+            <li>Entra con ella: la aplicación te pedirá crear tu contraseña nueva.</li>
+          </ol>
+          <Boton onClick={() => setAyuda(false)}>Entendido</Boton>
+        </HojaModal>
+      )}
     </AuthLayout>
   );
 }

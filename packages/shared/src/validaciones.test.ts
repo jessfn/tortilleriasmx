@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   telefonoSchema, precioSchema, normalizarTexto, registroSchema, nombreSchema, capturaPrecioSchema, fiscalSchema,
-  nuevaTortilleriaSchema, TIPOS_VIAL, PERSONAL_OCUPADO,
+  nuevaTortilleriaSchema, TIPOS_VIAL, PERSONAL_OCUPADO, rfcFechaValida,
 } from "./validaciones.js";
 
 const ID = "00000000-0000-4000-8000-000000000000";
@@ -121,4 +121,32 @@ describe("registro de cuenta", () => {
   it("rechaza contraseña corta", () => expect(registroSchema.safeParse({ ...base, password: "12345", confirmar: "12345" }).success).toBe(false));
   it("rechaza confirmación distinta", () => expect(registroSchema.safeParse({ ...base, confirmar: "otra123" }).success).toBe(false));
   it("rechaza correo inválido", () => expect(registroSchema.safeParse({ ...base, correo: "ana@" }).success).toBe(false));
+});
+
+describe("precio con centavos y RFC con fecha real", () => {
+  it("el precio acepta hasta 2 decimales", () => {
+    for (const ok of [15, 15.1, 15.12, 24.5, 5, 60]) expect(precioSchema.safeParse(ok).success, String(ok)).toBe(true);
+    for (const mal of [15.125, 50.999, 24.501, 4.999]) expect(precioSchema.safeParse(mal).success, String(mal)).toBe(false);
+  });
+
+  it("el RFC rechaza meses y días que no existen", () => {
+    const f = (rfc: string, tipoPersona: "fisica" | "moral" = "fisica") => fiscalSchema.safeParse({ tipoPersona, rfc, razonSocial: "Juan Pérez" });
+    expect(f("ABCD660000123").success).toBe(false); // mes 00, día 00 (el ejemplo de la prueba)
+    expect(f("ZZZZ000000123").success).toBe(false);
+    expect(f("PEPA801301AB1").success).toBe(false); // mes 13
+    expect(f("PEPA800132AB1").success).toBe(false); // día 32
+    expect(f("PEPA800431AB1").success).toBe(false); // abril no tiene 31
+    expect(f("PEPA800230AB1").success).toBe(false); // febrero no tiene 30
+    expect(f("PEPA800229AB1").success).toBe(true); // 29 de febrero sí puede existir
+    expect(f("PEPA801231AB1").success).toBe(true);
+    expect(f("TGU101301AB1", "moral").success).toBe(false);
+    expect(f("TGU100101AB1", "moral").success).toBe(true);
+    expect(f("XAXX010101000").success).toBe(true); // RFC genérico del público en general
+  });
+
+  it("el mensaje de error explica qué pasa", () => {
+    const r = fiscalSchema.safeParse({ tipoPersona: "fisica", rfc: "ABCD660000123", razonSocial: "Juan Pérez" });
+    expect(!r.success && r.error.issues[0].message).toContain("fecha del RFC");
+    expect(rfcFechaValida("PEPA800101AB1", "fisica")).toBe(true);
+  });
 });

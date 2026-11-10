@@ -74,7 +74,7 @@ function FilaPaquete({ p }: { p: Paquete }) {
             <div key={x.id} className="flex items-center justify-between gap-2 rounded-lg bg-white p-2">
               <span className="min-w-0 text-xs">
                 <b className="block truncate text-stone-900">{x.nombre}</b>
-                <span className="block truncate text-stone-500">{x.domicilio ?? "Sin domicilio"}</span>
+                <span className="block truncate text-stone-500">{x.domicilio ?? "Sin dirección"}</span>
               </span>
               <button onClick={() => void usarExistente(p.id, x)} className="shrink-0 rounded-lg bg-guinda px-3 py-1.5 text-xs font-bold text-white active:scale-95">
                 Era la misma

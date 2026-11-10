@@ -38,9 +38,9 @@ export function registrarAuth(app: FastifyInstance) {
   app.decorate("autenticar", (req: FastifyRequest, reply: FastifyReply) => verificar(req, reply));
   app.decorate("soloRoles", (...roles: Rol[]) => (req: FastifyRequest, reply: FastifyReply) => verificar(req, reply, roles));
 
-  const sesion = (u: { id: string; nombre: string; apellidos: string; rol: Rol; correo: string | null; usuario: string }) => ({
+  const sesion = (u: { id: string; nombre: string; apellidos: string; rol: Rol; correo: string | null; usuario: string; debe_cambiar_password?: boolean }) => ({
     token: app.jwt.sign({ sub: u.id, rol: u.rol }, { expiresIn: u.rol === "capturista" ? "7d" : "12h" }),
-    usuario: { id: u.id, nombre: u.nombre, apellidos: u.apellidos, rol: u.rol, correo: u.correo ?? u.usuario },
+    usuario: { id: u.id, nombre: u.nombre, apellidos: u.apellidos, rol: u.rol, correo: u.correo ?? u.usuario, debeCambiarPassword: u.debe_cambiar_password === true },
   });
 
   // Crear cuenta (correo + contraseña de 6 o más caracteres + confirmación)
@@ -69,7 +69,7 @@ export function registrarAuth(app: FastifyInstance) {
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos" });
     const id = p.data.usuario.toLowerCase();
     const { rows } = await pool.query(
-      `SELECT id, nombre, apellidos, password_hash, rol, activo, correo, usuario FROM usuarios
+      `SELECT id, nombre, apellidos, password_hash, rol, activo, correo, usuario, debe_cambiar_password FROM usuarios
         WHERE lower(correo) = $1 OR lower(usuario) = $1 LIMIT 1`,
       [id],
     );
@@ -101,7 +101,9 @@ export function registrarAuth(app: FastifyInstance) {
     if (!p.success) return reply.code(400).send({ error: p.error.issues[0].message });
     const { rows } = await pool.query("SELECT password_hash FROM usuarios WHERE id = $1", [req.user.sub]);
     if (!rows[0] || !(await verify(rows[0].password_hash, p.data.actual))) return reply.code(401).send({ error: "La contraseña actual no es correcta" });
-    await pool.query("UPDATE usuarios SET password_hash = $1 WHERE id = $2", [await hash(p.data.nueva), req.user.sub]);
+    if (p.data.nueva === p.data.actual) return reply.code(400).send({ error: "La contraseña nueva debe ser distinta de la actual" });
+    // Al cambiarla ya no hace falta la pantalla obligatoria (si la cuenta venía de un restablecimiento)
+    await pool.query("UPDATE usuarios SET password_hash = $1, debe_cambiar_password = false WHERE id = $2", [await hash(p.data.nueva), req.user.sub]);
     return { ok: true };
   });
 }

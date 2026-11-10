@@ -4,6 +4,7 @@ import { borrar, borrarTodo, CLAVES, guardar, leer } from "./persist";
 import Inicio from "./Inicio";
 import Login from "./Login";
 import LoginAdmin from "./LoginAdmin";
+import CambioPassword from "./CambioPassword";
 import Captura from "./Captura";
 import type { Punto } from "./MapaTortillerias";
 import PanelUsuario from "./PanelUsuario";
@@ -104,6 +105,8 @@ export default function App() {
 
   // La captura se mantiene montada aunque la cuenta se cree a mitad del envío (así no se pierde el estado)
   const pantalla = (() => {
+  // La administración restableció su contraseña: antes de usar la app debe crear una nueva
+  if (sesion?.usuario.debeCambiarPassword) return <CambioPassword sesion={sesion} alListo={setSesion} alSalir={salir} />;
   if (vista === "captura")
     return (
       <Captura

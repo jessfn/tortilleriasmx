@@ -201,7 +201,7 @@ export default function PasoTortilleria(p: Props) {
                       <span className="min-w-0">
                         <span className="block truncate text-[15px] font-medium">{r.nombre}</span>
                         <span className="block truncate text-xs text-stone-500">
-                          {r.domicilio ?? "Sin domicilio"}
+                          {r.domicilio ?? "Sin dirección"}
                           {r.distancia_m != null && ` · ${metros(r.distancia_m)}`}
                         </span>
                       </span>
@@ -337,7 +337,7 @@ export default function PasoTortilleria(p: Props) {
                   <Opcion key={t.id} icono={Store} activo={sel?.id === t.id} onClick={() => setSel(t)}>
                     <div className="font-medium">{t.nombre}</div>
                     <div className="text-xs text-stone-500">
-                      {t.domicilio ?? "Sin domicilio"}
+                      {t.domicilio ?? "Sin dirección"}
                       {t.distancia_m != null && ` · ${metros(t.distancia_m)}`}
                       {t.estatus === "pendiente" && " · por validar"}
                       {t.estatus === "porenviar" && " · por enviar"}
@@ -389,7 +389,7 @@ export default function PasoTortilleria(p: Props) {
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="font-bold leading-tight">{sel.nombre}</p>
-                      <p className="mt-0.5 text-xs text-stone-500">{sel.domicilio ?? "Sin domicilio"}</p>
+                      <p className="mt-0.5 text-xs text-stone-500">{sel.domicilio ?? "Sin dirección"}</p>
                       <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-stone-500">
                         {dist != null && (
                           <span className="inline-flex items-center gap-1 font-medium text-stone-600">

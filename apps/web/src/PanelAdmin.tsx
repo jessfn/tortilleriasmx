@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, Loader2, Mail, MapPin, Phone, Store, TriangleAlert,
-  UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog,
+  UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, KeyRound, Copy, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog,
 } from "lucide-react";
 import { api, type Sesion } from "./api";
 import FotoAuth from "./FotoAuth";
@@ -25,7 +25,7 @@ export type CapturaAdm = {
   id: string; producto: "maiz" | "harina" | "masa"; precio_kg: string; fecha: string; estatus: string; alerta: boolean; tortilleria_id: string;
   nombre: string; municipio: string | null; estado: string | null; capturista: string | null;
 };
-type UsuarioAdm = { id: string; correo: string | null; usuario: string; nombre: string; apellidos: string; rol: string; activo: boolean; creado_en: string; capturas: number };
+type UsuarioAdm = { id: string; correo: string | null; usuario: string; nombre: string; apellidos: string; rol: string; activo: boolean; creado_en: string; capturas: number; debe_cambiar_password?: boolean };
 /** Datos fiscales de la tortillería; si solo hay un registro viejo de responsable, llega con legado = true */
 export type Fiscal = { tipoPersona: string; razonSocial: string; rfc: string; celular: string | null; legado?: boolean; responsable?: { nombre: string; apellidos: string } };
 
@@ -268,7 +268,7 @@ function DetalleTortilleria({
 
       <Tarjeta className="divide-y divide-stone-100 !py-1">
         <Fila i={Building2} k="Ubicación" v={[t.municipio, t.estado].filter(Boolean).join(", ") || "—"} />
-        <Fila i={MapPin} k="Domicilio" v={t.domicilio ?? "—"} />
+        <Fila i={MapPin} k="Dirección" v={t.domicilio ?? "—"} />
         {t.localidad && <Fila i={Building2} k="Localidad" v={t.localidad} />}
         {(t.tipo_vial || t.calle) && <Fila i={MapPin} k="Vialidad" v={[t.tipo_vial, t.calle].filter(Boolean).join(" ")} />}
         {(t.numero_ext || t.numero_int) && <Fila i={Hash} k="Número" v={[t.numero_ext && `Ext. ${t.numero_ext}`, t.numero_int && `Int. ${t.numero_int}`].filter(Boolean).join(" · ")} />}
@@ -328,6 +328,26 @@ function VistaUsuarios({ miId }: { miId: string }) {
   const [usuarios, setUsuarios] = useState<UsuarioAdm[]>();
   const [error, setError] = useState("");
   const [trabajando, setTrabajando] = useState<string>();
+  // Restablecer contraseña: primero se confirma y luego se muestra la temporal UNA sola vez
+  const [confirmando, setConfirmando] = useState<string>();
+  const [temporal, setTemporal] = useState<{ correo: string; password: string }>();
+  const [copiada, setCopiada] = useState(false);
+
+  async function restablecer(u: UsuarioAdm) {
+    setTrabajando(u.id);
+    setError("");
+    try {
+      const r = await api<{ password: string }>(`/admin/usuarios/${u.id}/restablecer-password`, { json: {} });
+      setTemporal({ correo: u.correo ?? u.usuario, password: r.password });
+      setCopiada(false);
+      setUsuarios((l) => l?.map((x) => (x.id === u.id ? { ...x, debe_cambiar_password: true } : x)));
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setTrabajando(undefined);
+      setConfirmando(undefined);
+    }
+  }
 
   useEffect(() => {
     api<UsuarioAdm[]>("/admin/usuarios").then(setUsuarios).catch((e) => setError(e.message));
@@ -365,6 +385,7 @@ function VistaUsuarios({ miId }: { miId: string }) {
                 <p className="truncate text-xs text-stone-500">{[u.nombre, u.apellidos].filter(Boolean).join(" ") || "Sin nombre"} · {u.capturas} captura(s)</p>
               </div>
               {yo && <span className="rounded-full bg-verde/10 px-2 py-0.5 text-[11px] font-semibold text-verde">Tú</span>}
+              {!yo && u.debe_cambiar_password && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">Cambio pendiente</span>}
             </div>
             <div className="flex items-center gap-2">
               <label className="flex min-w-0 flex-1 items-center gap-2">
@@ -392,9 +413,47 @@ function VistaUsuarios({ miId }: { miId: string }) {
                 <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-all ${u.activo ? "left-[1.4rem]" : "left-0.5"}`} />
               </button>
             </div>
+            {!yo &&
+              (confirmando === u.id ? (
+                <div className="space-y-2 rounded-xl bg-amber-50 p-2.5 ring-1 ring-amber-200">
+                  <p className="text-xs font-semibold text-amber-900">¿Restablecer la contraseña de {u.correo ?? u.usuario}? La actual dejará de servir y se generará una temporal.</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Boton variante="secundario" className="!min-h-10 !text-sm" onClick={() => setConfirmando(undefined)}>
+                      Cancelar
+                    </Boton>
+                    <Boton className="!min-h-10 !text-sm" onClick={() => restablecer(u)} disabled={trabajando === u.id} icono={trabajando === u.id ? Loader2 : KeyRound}>
+                      Sí, restablecer
+                    </Boton>
+                  </div>
+                </div>
+              ) : (
+                <button onClick={() => setConfirmando(u.id)} disabled={trabajando === u.id} className="flex items-center gap-1.5 text-xs font-semibold text-guinda disabled:opacity-50">
+                  <KeyRound className="h-3.5 w-3.5" aria-hidden /> Restablecer contraseña
+                </button>
+              ))}
           </Tarjeta>
         );
       })}
+      {temporal && (
+        <HojaModal titulo="Contraseña temporal" alCerrar={() => setTemporal(undefined)}>
+          <p className="text-sm text-stone-700">
+            Entrégale esta contraseña a <b>{temporal.correo}</b>. Al entrar, la aplicación le pedirá crear una nueva.
+          </p>
+          <div className="flex items-center justify-between gap-2 rounded-2xl bg-white p-4 ring-1 ring-stone-200">
+            <code className="select-all text-2xl font-bold tracking-wider text-guinda">{temporal.password}</code>
+            <button
+              onClick={() => {
+                navigator.clipboard?.writeText(temporal.password).then(() => setCopiada(true)).catch(() => {});
+              }}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold text-guinda ring-1 ring-guinda/30 hover:bg-guinda/5"
+            >
+              {copiada ? <Check className="h-4 w-4" aria-hidden /> : <Copy className="h-4 w-4" aria-hidden />} {copiada ? "Copiada" : "Copiar"}
+            </button>
+          </div>
+          <Aviso tipo="info">Se muestra una sola vez: si la pierdes, vuelve a restablecerla.</Aviso>
+          <Boton onClick={() => setTemporal(undefined)}>Listo</Boton>
+        </HojaModal>
+      )}
     </>
   );
 }
