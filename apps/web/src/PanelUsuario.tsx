@@ -182,12 +182,12 @@ export default function PanelUsuario({
 
   return (
     <PanelShell
-      titulo={`Hola, ${nombre}`}
-      subtitulo={tab === "inicio" ? "Este es tu panel" : tab === "registros" ? "Tus tortillerías y sus precios" : "Tu cuenta"}
+      titulo={tab === "inicio" ? `Hola, ${nombre}` : tab === "registros" ? "Mis tortillerías" : "Tu perfil"}
+      inicial={nombre.slice(0, 1)}
       pestañas={[
-        { id: "inicio", texto: "Inicio", icono: Home },
-        { id: "registros", texto: "Mis tortillerías", icono: Store, insignia: resumen?.pendientes },
-        { id: "perfil", texto: "Perfil", icono: UserRound },
+        { id: "inicio", texto: "Inicio", icono: Home, tono: "guinda" },
+        { id: "registros", texto: "Mis tortillerías", icono: Store, insignia: resumen?.pendientes, tono: "dorado" },
+        { id: "perfil", texto: "Perfil", icono: UserRound, tono: "verde" },
       ]}
       activa={tab}
       alCambiar={setTab}

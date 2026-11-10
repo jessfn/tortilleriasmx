@@ -211,11 +211,18 @@ export function Aviso({ tipo = "error", children }: { tipo?: "error" | "info" | 
 
 /* ---------- Estructura de los paneles (usuario y administración) ---------- */
 
-export type PestañaNav = { id: string; texto: string; icono: LucideIcon; insignia?: number };
+/** Cada sección tiene su color: se ve en el encabezado y en la barra, para saber en cuál estás */
+export type TonoNav = "guinda" | "dorado" | "verde";
+export type PestañaNav = { id: string; texto: string; icono: LucideIcon; insignia?: number; tono?: TonoNav };
+const TONOS: Record<TonoNav, { chip: string; activo: string; fondo: string }> = {
+  guinda: { chip: "bg-[#a02c5a]", activo: "text-[#a02c5a] lg:bg-[#a02c5a]/10", fondo: "bg-[#a02c5a]/10" },
+  dorado: { chip: "bg-[#b8791a]", activo: "text-[#b8791a] lg:bg-[#b8791a]/10", fondo: "bg-[#b8791a]/10" },
+  verde: { chip: "bg-[#2f8a6b]", activo: "text-[#2f8a6b] lg:bg-[#2f8a6b]/10", fondo: "bg-[#2f8a6b]/10" },
+};
 
 export function PanelShell({
   titulo,
-  subtitulo,
+  inicial,
   derecha,
   pestañas,
   activa,
@@ -225,7 +232,8 @@ export function PanelShell({
   children,
 }: {
   titulo: string;
-  subtitulo?: string;
+  /** Inicial de la persona, en un círculo a la derecha del encabezado */
+  inicial?: string;
   derecha?: ReactNode;
   pestañas: PestañaNav[];
   activa: string;
@@ -236,18 +244,22 @@ export function PanelShell({
   plano?: boolean;
   children: ReactNode;
 }) {
+  const actual = pestañas.find((p) => p.id === activa);
   return (
     <div
       className={`${completo ? "md:max-w-none lg:w-full" : "marco-pc lg:max-w-6xl"} mx-auto flex h-dvh max-w-xl flex-col overflow-hidden bg-guinda-oscuro lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:grid-rows-[auto_minmax(0,1fr)]`}
     >
-      <header className={`relative shrink-0 bg-gradient-to-b from-guinda-oscuro from-35% to-guinda px-4 pb-6 lg:col-span-2 lg:px-8 ${completo ? "lg:pb-4 lg:pt-4" : "lg:pb-7"} pt-[max(.75rem,env(safe-area-inset-top))] text-white`}>
+      <header className={`relative shrink-0 bg-guinda-oscuro px-4 pb-6 lg:col-span-2 lg:px-8 ${completo ? "lg:pb-4 lg:pt-4" : "lg:pb-6"} pt-[max(.75rem,env(safe-area-inset-top))] text-white`}>
         <div className="flex items-center gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold uppercase tracking-[.2em] text-dorado">TortilleríasMX</p>
-            <h1 className="truncate font-patria text-2xl font-normal leading-tight">{titulo}</h1>
-            {subtitulo && <p className="truncate text-xs text-white/70">{subtitulo}</p>}
+          <span key={activa} className={`paso grid h-10 w-10 shrink-0 place-items-center rounded-xl text-white shadow-sm ${TONOS[actual?.tono ?? "guinda"].chip}`}>
+            {actual && <actual.icono className="h-5 w-5" aria-hidden />}
+          </span>
+          <div className="min-w-0 flex-1 leading-tight">
+            <p className="text-[10px] font-semibold uppercase tracking-[.2em] text-dorado">TortilleríasMX</p>
+            <h1 className="truncate font-patria text-xl font-normal">{titulo}</h1>
           </div>
           {derecha}
+          {inicial && <span aria-hidden className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-dorado text-sm font-semibold uppercase text-dorado">{inicial}</span>}
         </div>
       </header>
       <Hoja className="lg:col-start-2 lg:row-start-2 lg:mt-0 lg:rounded-none lg:shadow-none">
@@ -267,9 +279,9 @@ export function PanelShell({
                 <button
                   onClick={() => alCambiar(p.id)}
                   aria-current={on ? "page" : undefined}
-                  className={`relative flex w-full flex-col items-center gap-0 py-1.5 text-[11px] font-semibold transition lg:flex-row lg:gap-3 lg:rounded-xl lg:px-3 lg:py-2.5 lg:text-sm lg:hover:bg-stone-100 ${on ? "text-guinda lg:bg-guinda/10" : "text-stone-400 lg:text-stone-600"}`}
+                  className={`relative flex w-full flex-col items-center gap-0 py-1.5 text-[11px] font-semibold transition lg:flex-row lg:gap-3 lg:rounded-xl lg:px-3 lg:py-2.5 lg:text-sm lg:hover:bg-stone-100 ${on ? TONOS[p.tono ?? "guinda"].activo : "text-stone-400 lg:text-stone-600"}`}
                 >
-                  <span className={`grid h-8 w-14 place-items-center rounded-full transition-all lg:h-auto lg:w-auto ${on ? "bg-guinda/10 lg:bg-transparent" : ""}`}>
+                  <span className={`grid h-8 w-14 place-items-center rounded-full transition-all lg:h-auto lg:w-auto ${on ? `${TONOS[p.tono ?? "guinda"].fondo} lg:bg-transparent` : ""}`}>
                     <p.icono className="h-5 w-5" aria-hidden />
                   </span>
                   {p.texto}
