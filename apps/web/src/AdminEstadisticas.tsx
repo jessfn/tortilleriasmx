@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, ChevronRight, Download, Layers, Loader2, Map as MapaIcono, Store, Wheat } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { MOTIVOS_SIN_FISCAL, textoMotivoSinFiscal } from "@tortillerias/shared";
+import { ArrowDown, ArrowUp, ChevronRight, Download, FileX, Layers, Loader2, Map as MapaIcono, Store, Wheat } from "lucide-react";
 import { api } from "./api";
 import { dinero, entero, EnVivo, Tendencia, useVivo, type DiaPrecio } from "./AdminVivo";
 import { BarraValor } from "./AdminVivo";
@@ -225,12 +226,81 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
           )}
         </Tarjeta>
 
-        <Tarjeta className="space-y-2 self-start">
+        <div className="space-y-3 self-start">
+        <Tarjeta className="space-y-2">
           <h2 className="text-sm font-bold">Tendencia {estado ? `· ${estado.nombre}` : "· nacional"}</h2>
           <Tendencia datos={tendencia} alto={220} />
           <p className="text-[11px] text-stone-400">Promedio diario de todas las capturas (sin contar las rechazadas).</p>
         </Tarjeta>
+
+        <SinFiscal estado={estado} />
+        </div>
       </div>
     </>
+  );
+}
+
+type ResumenSinFiscal = {
+  total: number; sin_fiscal: number; porcentaje: number; por_motivo: Record<string, number>;
+  zonas: { clave: string; nombre: string; tortillerias: number; sin_fiscal: number; porcentaje: number; por_motivo: Record<string, number> }[];
+};
+
+/** Tortillerías que no tienen datos fiscales, por qué y dónde (por estado o, con un estado elegido, por municipio) */
+function SinFiscal({ estado }: { estado?: FilaZona }) {
+  const [r, setR] = useState<ResumenSinFiscal>();
+  useEffect(() => {
+    let vigente = true;
+    setR(undefined);
+    api<ResumenSinFiscal>(`/admin/sin-fiscal${estado ? `?estado=${estado.clave}` : ""}`)
+      .then((x) => vigente && setR(x))
+      .catch(() => {});
+    return () => {
+      vigente = false;
+    };
+  }, [estado?.clave]);
+
+  const motivos = [...MOTIVOS_SIN_FISCAL.map((m) => m.clave as string), "sin_intento"];
+  const texto = (k: string) => (k === "sin_intento" ? "Aún no se ha intentado" : textoMotivoSinFiscal(k));
+  const maxMotivo = Math.max(1, ...motivos.map((k) => r?.por_motivo[k] ?? 0));
+  return (
+    <Tarjeta className="space-y-3">
+      <h2 className="flex items-center gap-2 text-sm font-bold">
+        <span className="grid h-8 w-8 place-items-center rounded-full bg-amber-100 text-amber-700"><FileX className="h-4 w-4" aria-hidden /></span>
+        Sin datos fiscales {estado ? `· ${estado.nombre}` : ""}
+      </h2>
+      {!r ? (
+        <div className="grid place-items-center py-4 text-stone-400"><Loader2 className="h-5 w-5 animate-spin" /></div>
+      ) : (
+        <>
+          <div className="flex items-baseline gap-2">
+            <span className="text-3xl font-bold leading-none">{entero(r.sin_fiscal)}</span>
+            <span className="text-xs text-stone-500">de {entero(r.total)} tortillerías · <b className="text-stone-700">{r.porcentaje}%</b></span>
+          </div>
+          <ul className="space-y-1.5">
+            {motivos.filter((k) => r.por_motivo[k]).map((k) => (
+              <li key={k} className="text-xs">
+                <div className="flex justify-between gap-2"><span className="truncate">{texto(k)}</span><b>{entero(r.por_motivo[k])}</b></div>
+                <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-stone-100"><div className="h-full rounded-full bg-amber-500" style={{ width: `${(r.por_motivo[k] / maxMotivo) * 100}%` }} /></div>
+              </li>
+            ))}
+            {!Object.keys(r.por_motivo).length && <li className="text-xs text-stone-500">Todas tienen datos fiscales.</li>}
+          </ul>
+          <div className="border-t border-stone-100 pt-2">
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-400">{estado ? "Por municipio" : "Por estado"}</p>
+            <ul className="max-h-60 divide-y divide-stone-100 overflow-y-auto text-xs">
+              {r.zonas.filter((z) => z.sin_fiscal > 0).slice(0, 30).map((z) => (
+                <li key={z.clave} className="flex items-center justify-between gap-2 py-1.5">
+                  <span className="min-w-0 truncate">{z.nombre}</span>
+                  <span className="shrink-0 text-stone-500">
+                    {Object.entries(z.por_motivo).filter(([k]) => k === "inseguridad").map(([, n]) => <span key="i" className="mr-2 rounded-full bg-red-50 px-1.5 py-0.5 text-red-700">{n} por inseguridad</span>)}
+                    <b className="text-stone-800">{entero(z.sin_fiscal)}</b> ({z.porcentaje}%)
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </>
+      )}
+    </Tarjeta>
   );
 }

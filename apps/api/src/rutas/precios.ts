@@ -10,7 +10,7 @@ const uuid = z.string().uuid();
 
 /** Una captura hecha sin conexión se acepta hasta con 7 días de retraso; hacia el futuro solo se tolera el desajuste del reloj */
 export const MAX_DIAS_ATRASO = 7;
-const TOLERANCIA_FUTURO_MS = 10 * 60 * 1000;
+export const TOLERANCIA_FUTURO_MS = 10 * 60 * 1000;
 
 export function rutasPrecios(app: FastifyInstance) {
   // Solo usuarios registrados. Queda "pendiente" hasta que un supervisor la revise.

@@ -66,3 +66,21 @@ describe("teléfono con país", () => {
     expect(nuevaTortilleriaSchema.safeParse({ ...base, telefono: "+502" }).success).toBe(false);
   });
 });
+
+import { MOTIVOS_SIN_FISCAL, sinFiscalSchema, textoMotivoSinFiscal } from "./validaciones.js";
+
+describe("sin datos fiscales (C14)", () => {
+  it("los motivos se guardan por clave y se muestran con su texto", () => {
+    expect(MOTIVOS_SIN_FISCAL.map((m) => m.clave)).toEqual(["inseguridad", "se_nego", "desconfianza", "no_conoce", "sin_rfc", "cerrado", "otro"]);
+    expect(textoMotivoSinFiscal("inseguridad")).toBe("Por inseguridad o miedo a extorsión");
+  });
+  it("exige motivo; 'otro' pide texto de 5 a 200 caracteres", () => {
+    expect(sinFiscalSchema.safeParse({}).success).toBe(false);
+    expect(sinFiscalSchema.safeParse({ motivo: "nada" }).success).toBe(false);
+    expect(sinFiscalSchema.safeParse({ motivo: "se_nego" }).success).toBe(true);
+    expect(sinFiscalSchema.safeParse({ motivo: "otro" }).success).toBe(false);
+    expect(sinFiscalSchema.safeParse({ motivo: "otro", motivoOtro: "abcd" }).success).toBe(false);
+    expect(sinFiscalSchema.safeParse({ motivo: "otro", motivoOtro: "x".repeat(201) }).success).toBe(false);
+    expect(sinFiscalSchema.safeParse({ motivo: "otro", motivoOtro: "  Dueño de viaje " }).success).toBe(true);
+  });
+});

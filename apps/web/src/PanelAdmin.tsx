@@ -1,4 +1,5 @@
 import { formatearTelefono } from "@tortillerias/shared";
+import { NegativasFiscales } from "./NegativasFiscales";
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, Loader2, Mail, MapPin, Phone, Store, TriangleAlert,
@@ -297,7 +298,10 @@ function DetalleTortilleria({
         {fiscal === undefined ? (
           <p className="py-2 text-sm text-stone-400">Cargando…</p>
         ) : fiscal === null ? (
-          <p className="py-2 text-sm text-stone-500">Aún no tiene datos fiscales: se piden la primera vez que se captura su precio.</p>
+          <>
+<p className="py-2 text-sm text-stone-500">Aún no tiene datos fiscales: se piden la primera vez que se captura su precio.</p>
+<NegativasFiscales tortilleriaId={t.id} />
+</>
         ) : (
           <div className="divide-y divide-stone-100">
             <Fila i={FileText} k={`RFC (${fiscal.tipoPersona === "fisica" ? "persona física" : "persona moral"})`} v={fiscal.rfc} />

@@ -28,7 +28,7 @@ import {
   borrarBandejaDe, borrarTodoLocal, capturadoHoyLocal, contarPendientes, descartar, enviarDeTodosModos, estadoSync, guardarPaquete, idTemporal, listarPaquetes,
   sincronizar, usarExistente,
 } from "./bandeja";
-import { cercanas, descargarEstado, delMunicipio, distanciaM, masCercana, parecidas, buscar, cubre, quitarEstado, enCaja } from "./catalogo";
+import { cercanas, descargarEstado, delMunicipio, distanciaM, masCercana, parecidas, buscar, cubre, quitarEstado, enCaja, porId } from "./catalogo";
 
 const REAL = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 let reloj = 0;
@@ -76,6 +76,34 @@ describe("bandeja de pendientes", () => {
     const [p] = await listarPaquetes();
     expect(p.estado).toBe("enviado");
     expect(p.nueva?.foto).toBeUndefined(); // la foto ya no ocupa espacio
+  });
+
+  it("la negativa de datos fiscales se envía en orden: tortillería → foto → negativa → precios (y no manda RFC)", async () => {
+    const idCliente = nuevoId();
+    h.respuesta = (ruta) => (ruta === "/tortillerias" ? { id: REAL } : {});
+    await guardarPaquete(
+      paquete({
+        tortilleria: { id: idTemporal(idCliente), nombre: "NUEVA", domicilio: null, lat: 19.5, lng: -99.2 },
+        nueva: { idCliente, datos: { nombre: "NUEVA" }, fotoIdCliente: nuevoId(), foto: new Blob(["x"], { type: "image/jpeg" }) },
+        sinFiscal: { motivo: "otro", motivoOtro: "Esta de vacaciones", idCliente: nuevoId() },
+        precios: [{ producto: "maiz", precioKg: 24, idCliente: nuevoId(), estado: "pendiente" }],
+      }),
+    );
+    await sincronizar();
+    expect(rutas()).toEqual(["/tortillerias", "/tortillerias/:id/fotos", "/tortillerias/:id/fiscal/negativa", "/precios"]);
+    const neg = h.llamadas[2].cuerpo;
+    expect(neg).toMatchObject({ motivo: "otro", motivoOtro: "Esta de vacaciones" });
+    expect(neg.idCliente).toBeTruthy();
+    expect(neg.capturadoEn).toBeTruthy();
+    expect(JSON.stringify(neg)).not.toMatch(/rfc/i);
+    expect((await listarPaquetes())[0].estado).toBe("enviado");
+  });
+
+  it("un reintento no vuelve a enviar la negativa que ya llegó", async () => {
+    h.respuesta = () => ({});
+    await guardarPaquete(paquete({ sinFiscal: { motivo: "se_nego", idCliente: nuevoId() }, hecho: { sinFiscal: true } }));
+    await sincronizar();
+    expect(rutas()).toEqual(["/precios"]);
   });
 
   it("el id temporal de una tortillería nueva se reemplaza por el real en los paquetes que la usan", async () => {
@@ -246,6 +274,27 @@ describe("catálogo local", () => {
   beforeEach(async () => {
     h.respuesta = () => ({ version: "v1", columnas, filas });
     await descargarEstado("09", "CIUDAD DE MEXICO");
+  });
+
+  it("una negativa NO marca tiene_fiscal en el catálogo local (la tortillería sigue sin datos)", async () => {
+    h.respuesta = () => ({});
+    await guardarPaquete(paquete({ tortilleria: { id: "i2", nombre: "EL MAIZ", domicilio: null, lat: 19.44, lng: -99.14 }, sinFiscal: { motivo: "inseguridad", idCliente: nuevoId() } }));
+    await sincronizar();
+    expect(porId("i2")?.tiene_fiscal).toBe(false);
+  });
+
+  it("si el servidor dice que ya tenía datos fiscales, el catálogo local lo recuerda", async () => {
+    h.respuesta = (ruta) => (ruta.endsWith("/fiscal/negativa") ? { yaTenia: true } : {});
+    await guardarPaquete(paquete({ tortilleria: { id: "i2", nombre: "EL MAIZ", domicilio: null, lat: 19.44, lng: -99.14 }, sinFiscal: { motivo: "inseguridad", idCliente: nuevoId() } }));
+    await sincronizar();
+    expect(porId("i2")?.tiene_fiscal).toBe(true);
+  });
+
+  it("lee la última negativa del catálogo del estado (aviso sin conexión)", async () => {
+    h.respuesta = () => ({ version: "v2", columnas: [...columnas, "ultima_negativa"], filas: filas.map((f, n) => [...f, n === 1 ? "inseguridad" : null]) });
+    await descargarEstado("09", "CIUDAD DE MEXICO");
+    expect(porId("i2")?.ultima_negativa).toBe("inseguridad");
+    expect(porId("i1")?.ultima_negativa).toBeNull();
   });
 
   it("ordena por cercanía con la distancia calculada en el teléfono y respeta el radio", () => {

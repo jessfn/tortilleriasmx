@@ -145,3 +145,28 @@ export const nuevaTortilleriaSchema = z.object({
   confirmoNoDuplicado: z.boolean().optional(),
 });
 export type NuevaTortilleria = z.infer<typeof nuevaTortilleriaSchema>;
+
+/* ---------- Cuando no se obtienen los datos fiscales (C14) ---------- */
+
+/** Motivos para omitir los datos fiscales: se guarda la clave y se muestra el texto */
+export const MOTIVOS_SIN_FISCAL = [
+  { clave: "inseguridad", texto: "Por inseguridad o miedo a extorsión" },
+  { clave: "se_nego", texto: "Se negó a proporcionar los datos" },
+  { clave: "desconfianza", texto: "Desconfía del uso que se le dará a la información" },
+  { clave: "no_conoce", texto: "El encargado no conoce los datos / el dueño no está" },
+  { clave: "sin_rfc", texto: "No tiene RFC (negocio informal)" },
+  { clave: "cerrado", texto: "El establecimiento estaba cerrado" },
+  { clave: "otro", texto: "Otro motivo" },
+] as const;
+export type MotivoSinFiscal = (typeof MOTIVOS_SIN_FISCAL)[number]["clave"];
+export const textoMotivoSinFiscal = (clave: string | null | undefined) => MOTIVOS_SIN_FISCAL.find((m) => m.clave === clave)?.texto ?? clave ?? "";
+
+export const sinFiscalSchema = z
+  .object({
+    motivo: z.enum(MOTIVOS_SIN_FISCAL.map((m) => m.clave) as [MotivoSinFiscal, ...MotivoSinFiscal[]]),
+    motivoOtro: z.preprocess(vacioAUndefined, z.string().trim().min(5, "Especifica el motivo (mínimo 5 caracteres)").max(200, "Máximo 200 caracteres").optional()),
+    idCliente: z.string().uuid().optional(),
+    capturadoEn: z.string().datetime({ offset: true }).optional(),
+  })
+  .refine((d) => d.motivo !== "otro" || !!d.motivoOtro, { message: "Especifica el motivo", path: ["motivoOtro"] });
+export type SinFiscalInput = z.infer<typeof sinFiscalSchema>;

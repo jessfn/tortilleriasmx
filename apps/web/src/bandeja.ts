@@ -6,7 +6,7 @@ import type { Local } from "./bd";
 /**
  * Bandeja de pendientes: todo lo que se captura pasa por aquí, con o sin conexión (un solo camino).
  * Funciona como la bandeja de salida del correo: se guarda en el teléfono y sale solo cuando hay señal.
- * Orden de envío por paquete: tortillería nueva → foto → datos fiscales → precios. Un paquete a la vez, en el orden en que se capturaron.
+ * Orden de envío por paquete: tortillería nueva → foto → datos fiscales (o la negativa con su motivo) → precios. Un paquete a la vez, en el orden en que se capturaron.
  */
 
 export const DIAS_ENVIADOS = 7; // un paquete ya enviado se borra de la bandeja después de este tiempo
@@ -214,6 +214,17 @@ async function enviarPaquete(p: Paquete): Promise<Resultado> {
       await api(`/tortillerias/${real}/fiscal`, { json: { ...p.fiscal, celular: p.fiscal.celular || undefined } });
       await marcarFiscalLocal(real);
       p = { ...p, hecho: { ...p.hecho, fiscal: true } };
+      await poner(p);
+    }
+
+    // 3b) "no se obtuvieron los datos fiscales": solo el motivo. Si otro censador ya los capturó, el servidor lo dice y no pasa nada.
+    if (p.sinFiscal && !p.hecho.sinFiscal) {
+      etapa = "fiscal";
+      const r = await api<{ yaTenia?: boolean }>(`/tortillerias/${real}/fiscal/negativa`, {
+        json: { motivo: p.sinFiscal.motivo, motivoOtro: p.sinFiscal.motivoOtro || undefined, idCliente: p.sinFiscal.idCliente, capturadoEn: p.capturadoEn },
+      });
+      if (r?.yaTenia) await marcarFiscalLocal(real); // los datos sí existen: el catálogo local lo recuerda
+      p = { ...p, hecho: { ...p.hecho, sinFiscal: true } };
       await poner(p);
     }
 

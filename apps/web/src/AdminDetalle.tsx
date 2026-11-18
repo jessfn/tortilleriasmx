@@ -1,4 +1,5 @@
 import { formatearTelefono } from "@tortillerias/shared";
+import { NegativasFiscales } from "./NegativasFiscales";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, Building2, CalendarDays, Camera, Check, ChevronLeft, ChevronRight, ExternalLink, FileText, Hash, Layers, Loader2, Mail, MapPin, Phone, ShieldCheck, UserRound, Users, Wheat, X,
@@ -249,7 +250,10 @@ export default function DetalleLateral({
               {fiscal === undefined ? (
                 <p className="py-4 text-sm text-stone-400">Cargando…</p>
               ) : fiscal === null ? (
-                <p className="py-3 text-sm text-stone-500">Aún no tiene datos fiscales: se piden la primera vez que se captura su precio.</p>
+                <>
+<p className="py-3 text-sm text-stone-500">Aún no tiene datos fiscales: se piden la primera vez que se captura su precio.</p>
+<NegativasFiscales tortilleriaId={id} />
+</>
               ) : (
                 <>
                   <Fila i={FileText} k={`RFC (${fiscal.tipoPersona === "fisica" ? "persona física" : "persona moral"})`} v={fiscal.rfc} />

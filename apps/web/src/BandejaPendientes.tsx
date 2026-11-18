@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Inbox, Loader2, RefreshCw, Send, Store, Trash2 } from "lucide-react";
 import type { Paquete } from "./bd";
 import { descartar, enviarDeTodosModos, estadoSync, listarPaquetes, NOMBRE_PRODUCTO, pideAtencion, reintentar, sincronizar, usarExistente } from "./bandeja";
+import { textoMotivoSinFiscal } from "@tortillerias/shared";
 import { Boton, HojaModal, Tarjeta } from "./ui";
 
 /** Los paquetes de la bandeja del usuario; se actualizan solos cuando cambia la bandeja (`avisar()` de bandeja.ts) */
@@ -58,6 +59,7 @@ function FilaPaquete({ p }: { p: Paquete }) {
             {p.nueva && <b className="text-guinda">Tortillería nueva · </b>}
             {precios || "Sin precios"}
           </p>
+          {p.sinFiscal && <p className="mt-0.5 text-xs text-stone-500">Sin datos fiscales: {textoMotivoSinFiscal(p.sinFiscal.motivo)}</p>}
           <p className="text-xs text-stone-400">Capturado el {cuando(p.capturadoEn)}</p>
         </div>
       </div>

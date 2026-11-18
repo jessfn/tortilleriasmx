@@ -24,6 +24,7 @@ export default function AdminMapa({ foco, alCambio }: { foco?: FocoMapa; alCambi
   const [producto, setProducto] = useState<"maiz" | "masa">("maiz");
   const [dias, setDias] = useState(30);
   const [solo, setSolo] = useState(false);
+  const [inseguridad, setInseguridad] = useState(false);
   const [tick, setTick] = useState(0);
   const [vista, setVista] = useState<VistaMapa>({ puntos: [], celdas: [], modo: "celdas", lejano: false, cargando: true, rango: [20, 32] });
   const [abierto, setAbierto] = useState(false); // hoja inferior en celular
@@ -135,7 +136,14 @@ export default function AdminMapa({ foco, alCambio }: { foco?: FocoMapa; alCambi
 
       <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-white px-3 py-2.5 text-sm shadow-sm ring-1 ring-stone-200">
         <span className="font-medium">Solo tortillerías con precios</span>
-        <input type="checkbox" checked={solo} onChange={(e) => setSolo(e.target.checked)} className="h-5 w-5 accent-guinda" />
+        <input type="checkbox" checked={solo} onChange={(e) => { setSolo(e.target.checked); if (e.target.checked) setInseguridad(false); }} className="h-5 w-5 accent-guinda" />
+      </label>
+      <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-white px-3 py-2.5 text-sm shadow-sm ring-1 ring-stone-200">
+        <span className="min-w-0">
+          <span className="block font-medium">Sin datos fiscales por inseguridad</span>
+          <span className="block text-[11px] text-stone-500">Zonas de riesgo para los censadores</span>
+        </span>
+        <input type="checkbox" checked={inseguridad} onChange={(e) => { setInseguridad(e.target.checked); if (e.target.checked) setSolo(false); }} className="h-5 w-5 shrink-0 accent-guinda" />
       </label>
 
       <div className="space-y-2.5 border-t border-stone-200 pt-3">
@@ -230,7 +238,7 @@ export default function AdminMapa({ foco, alCambio }: { foco?: FocoMapa; alCambi
     <div className="flex h-full w-full bg-stone-200">
     <div className="relative h-full min-w-0 flex-1">
       <Suspense fallback={<div className="grid h-full place-items-center text-stone-500"><Loader2 className="h-7 w-7 animate-spin" /></div>}>
-        <Mapa ref={ref} producto={producto} dias={dias} soloConPrecios={solo} tick={tick} onVista={setVista} onSeleccion={setSel} seleccion={sel && { id: sel.id, lat: sel.lat, lng: sel.lng }} />
+        <Mapa ref={ref} producto={producto} dias={dias} soloConPrecios={solo} soloInseguridad={inseguridad} tick={tick} onVista={setVista} onSeleccion={setSel} seleccion={sel && { id: sel.id, lat: sel.lat, lng: sel.lng }} />
       </Suspense>
 
       {/* Estado del mapa */}

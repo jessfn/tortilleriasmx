@@ -1,4 +1,5 @@
 import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown, ChevronLeft, Search, X, type LucideIcon } from "lucide-react";
 
 // NOTA: los campos de texto usan 16 px (text-base) a propósito: con menos, iOS hace zoom al enfocarlos.
@@ -344,7 +345,8 @@ export function HojaModal({ titulo, alCerrar, children }: { titulo: string; alCe
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
   }, [alCerrar]);
-  return (
+  // Se dibuja en <body>: dentro de una hoja con animación o recorte (overflow) quedaría cortado y detrás de las barras
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-[2px] md:items-center md:p-6" onClick={alCerrar} role="dialog" aria-modal="true" aria-label={titulo}>
       <div className="paso flex max-h-[88dvh] w-full max-w-xl flex-col rounded-t-3xl bg-stone-50 shadow-2xl md:rounded-3xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex shrink-0 items-center gap-2 border-b border-stone-200 px-4 py-3">
@@ -355,6 +357,7 @@ export function HojaModal({ titulo, alCerrar, children }: { titulo: string; alCe
         </div>
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4 pb-[max(1rem,calc(var(--sb)*.35))]">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

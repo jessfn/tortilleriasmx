@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  Banknote, Briefcase, Building2, Camera, Check, CircleCheck, CloudOff, TriangleAlert, Eye, EyeOff, FileText, Hash, ImagePlus, KeyRound, Landmark, Layers, ListChecks,
+  Banknote, Briefcase, Building2, Camera, Check, FileX, Info, CircleCheck, CloudOff, TriangleAlert, Eye, EyeOff, FileText, Hash, ImagePlus, KeyRound, Landmark, Layers, ListChecks,
   Loader2, LocateFixed, Mail, MapPin, Minus, Phone, Plus, RotateCcw, Route, Send, ShieldCheck, Store, UserPlus, Users, Wheat, type LucideIcon,
 } from "lucide-react";
 import {
-  fiscalSchema, nuevaTortilleriaSchema, normalizarTexto, PASSWORD_MIN, PERSONAL_OCUPADO, PRECIO_MAX, PRECIO_MIN, registroSchema, TIPOS_VIAL,
+  fiscalSchema, MOTIVOS_SIN_FISCAL, nuevaTortilleriaSchema, normalizarTexto, PASSWORD_MIN, PERSONAL_OCUPADO, PRECIO_MAX, PRECIO_MIN, registroSchema, sinFiscalSchema, textoMotivoSinFiscal, TIPOS_VIAL,
 } from "@tortillerias/shared";
 import { api, ApiError, guardarSesion, leerSesion, type Sesion } from "./api";
 import { buscarLugar } from "./geocoder";
@@ -16,7 +16,7 @@ import { delMunicipio, listaEstados, listaMunicipios, marcarFiscalLocal, masCerc
 import type { Local } from "./bd";
 import PasoTortilleria from "./PasoTortilleria";
 import type { Punto } from "./MapaTortillerias";
-import { Aviso, Barra, Boton, Buscador, Cabecera, Campo, Hoja, Opcion, Selector } from "./ui";
+import { Aviso, Barra, Boton, Buscador, Cabecera, Campo, Hoja, HojaModal, Opcion, Selector } from "./ui";
 import { TelefonoCampo } from "./TelefonoCampo";
 
 type Item = { clave: string; nombre: string };
@@ -28,6 +28,14 @@ const PRODUCTOS: { id: Producto; clave: "precioMaiz" | "precioMasa"; texto: stri
   { id: "maiz", clave: "precioMaiz", texto: "Tortilla de maíz", icono: Wheat },
   { id: "masa", clave: "precioMasa", texto: "Masa", icono: Layers },
 ];
+
+/** "Por inseguridad o miedo a extorsión"; con "Otro motivo", el texto que escribió el censador */
+const motivoTexto = (s: { motivo: string; motivoOtro: string }) => (s.motivo === "otro" && s.motivoOtro ? `Otro: ${s.motivoOtro}` : textoMotivoSinFiscal(s.motivo));
+/** "2026-11-12" → "12 nov" */
+const fechaCorta = (f: string) => {
+  const [a, m, dia] = f.split("-").map(Number);
+  return new Date(a, m - 1, dia).toLocaleDateString("es-MX", { day: "numeric", month: "short" }).replace(".", "");
+};
 
 const NV_VACIO = {
   nombre: "", telefono: "", correo: "", personalOcupado: "", localidad: "", tipoVial: "CALLE", calle: "", numeroExt: "", sinNumero: false,
@@ -45,6 +53,8 @@ type Datos = {
   foto?: Blob;
   fotoUrl?: string;
   fiscal: { tipoPersona: "fisica" | "moral"; rfc: string; razonSocial: string; celular: string; aviso: boolean };
+  /** "No se obtuvieron los datos fiscales": el motivo. Si está, no se pide ni se envía ningún dato fiscal. */
+  sinFiscal?: { motivo: string; motivoOtro: string };
   /** Solo se pide si la persona aún no tiene cuenta: se crea al enviar el registro */
   cuenta: { correo: string; password: string; confirmar: string };
   precioMaiz: string;
@@ -146,6 +156,11 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     borrador ? { ...inicial, ...borrador.d, cuenta: { ...borrador.d.cuenta, password: "", confirmar: "" } } : { ...inicial, tortilleria: tortilleriaInicial },
   );
   const [tieneFiscal, setTieneFiscal] = useState<boolean | undefined>(borrador?.tieneFiscal);
+  /** Último intento fallido de esta tortillería (de una visita anterior): se avisa en el paso de datos fiscales */
+  const [negativaPrev, setNegativaPrev] = useState<{ motivo: string; fecha?: string } | null>(null);
+  const [hojaSinFiscal, setHojaSinFiscal] = useState(false);
+  const [motivoSel, setMotivoSel] = useState("");
+  const [motivoTxt, setMotivoTxt] = useState("");
   const [pasoId, setPasoId] = useState<string>(() => borrador?.pasoId ?? (tortilleriaInicial ? "precio" : "tortilleria"));
   const [preparando, setPreparando] = useState(!!tortilleriaInicial && !borrador); // caso C: se averigua si faltan los datos fiscales
   const [estados, setEstados] = useState<Item[]>([]);
@@ -259,16 +274,23 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
 
   /* ---------------- ¿ya tiene datos fiscales? Con internet se pregunta al servidor; sin él se usa lo guardado en el teléfono ---------------- */
   async function tieneFiscalDe(tortilleriaId: string): Promise<boolean> {
-    const local = porId(tortilleriaId)?.tiene_fiscal;
-    if (esTemporal(tortilleriaId)) return local ?? false; // tortillería nueva de este teléfono: el servidor aún no la conoce
+    const loc = porId(tortilleriaId);
+    const local = loc?.tiene_fiscal;
+    if (esTemporal(tortilleriaId)) {
+      setNegativaPrev(null);
+      return local ?? false; // tortillería nueva de este teléfono: el servidor aún no la conoce
+    }
     if (navigator.onLine) {
       try {
-        return (await api<{ tiene: boolean }>(`/tortillerias/${tortilleriaId}/fiscal/existe`)).tiene;
+        const r = await api<{ tiene: boolean; ultimaNegativa?: { motivo: string; fecha: string } | null }>(`/tortillerias/${tortilleriaId}/fiscal/existe`);
+        setNegativaPrev(r.tiene ? null : (r.ultimaNegativa ?? null));
+        return r.tiene;
       } catch (e) {
         if (e instanceof ApiError && e.status > 0) throw e;
       }
     }
     // Sin señal: si estaba desactualizado no pasa nada, el servidor no sobrescribe datos fiscales ya capturados
+    setNegativaPrev(!local && loc?.ultima_negativa ? { motivo: loc.ultima_negativa } : null);
     return local ?? false;
   }
 
@@ -358,6 +380,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   const tocadoNv = (valor: string) => valor.trim() !== "";
 
   const resFiscal = fiscalSchema.safeParse({ tipoPersona: d.fiscal.tipoPersona, rfc: d.fiscal.rfc, razonSocial: d.fiscal.razonSocial, celular: d.fiscal.celular });
+  const sinFiscalOk = !!d.sinFiscal && sinFiscalSchema.safeParse({ motivo: d.sinFiscal.motivo, motivoOtro: d.sinFiscal.motivoOtro }).success;
   const errFiscal = (campo: string) => {
     if (resFiscal.success) return undefined;
     const valor = campo === "rfc" ? d.fiscal.rfc : campo === "razonSocial" ? d.fiscal.razonSocial : d.fiscal.celular;
@@ -380,7 +403,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     tortilleria: false, // se avanza con "Elegir esta tortillería" o "Confirmar ubicación"
     nueva: resNv.success,
     foto: !!d.foto,
-    fiscal: resFiscal.success && d.fiscal.aviso,
+    fiscal: (resFiscal.success && d.fiscal.aviso) || sinFiscalOk, // los datos fiscales se pueden omitir si se indica el motivo
     cuenta: resCuenta.success,
     precio: hoy != null && preciosListos && !todoCapturado,
     resumen: true,
@@ -404,6 +427,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     setD((x) => ({
       ...x, tortilleria: punto, nueva: false, foto: undefined, fotoUrl: undefined,
       fiscal: x.tortilleria?.id === punto.id ? x.fiscal : { ...inicial.fiscal },
+      sinFiscal: x.tortilleria?.id === punto.id ? x.sinFiscal : undefined,
       precioMaiz: x.tortilleria?.id === punto.id ? x.precioMaiz : "", precioMasa: x.tortilleria?.id === punto.id ? x.precioMasa : "",
     }));
     setCreada((c) => ({ cuenta: c.cuenta }));
@@ -415,6 +439,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   function confirmarPin() {
     setD((x) => ({ ...x, nueva: true, tortilleria: undefined }));
     setTieneFiscal(false);
+    setNegativaPrev(null);
     setPasoId("nueva");
   }
 
@@ -446,9 +471,12 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     const base = {
       id: nuevoId(), usuarioId, capturadoEn: new Date().toISOString(), estado: "por_enviar" as const, intentos: 0, hecho: {}, precios,
       ...(gps.pos ? { gps: { lat: gps.pos.lat, lng: gps.pos.lng, precision: gps.pos.precision } } : {}),
-      ...(faltaFiscal
-        ? { fiscal: { tipoPersona: d.fiscal.tipoPersona, rfc: d.fiscal.rfc, razonSocial: d.fiscal.razonSocial, celular: d.fiscal.celular || undefined, aceptoAviso: d.fiscal.aviso } }
-        : {}),
+      // un paquete lleva los datos fiscales o la negativa con su motivo, nunca los dos (y nunca un RFC a medias)
+      ...(faltaFiscal && d.sinFiscal
+        ? { sinFiscal: { motivo: d.sinFiscal.motivo, ...(d.sinFiscal.motivo === "otro" ? { motivoOtro: d.sinFiscal.motivoOtro.trim() } : {}), idCliente: nuevoId() } }
+        : faltaFiscal
+          ? { fiscal: { tipoPersona: d.fiscal.tipoPersona, rfc: d.fiscal.rfc, razonSocial: d.fiscal.razonSocial, celular: d.fiscal.celular || undefined, aceptoAviso: d.fiscal.aviso } }
+          : {}),
     };
     if (d.nueva) {
       const idCliente = nuevoId();
@@ -528,9 +556,10 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     setParecidasLocal(null);
     setD((x) => ({
       ...x, nueva: false, tortilleria: { id: t.id, nombre: t.nombre, domicilio: t.domicilio, estatus: t.estatus, lat: t.lat, lng: t.lng, razon_social: t.razon_social },
-      foto: undefined, fotoUrl: undefined, precioMaiz: "", precioMasa: "",
+      foto: undefined, fotoUrl: undefined, precioMaiz: "", precioMasa: "", sinFiscal: undefined,
     }));
     setTieneFiscal(esTemporal(t.id) ? t.tiene_fiscal : t.tiene_fiscal);
+    setNegativaPrev(!t.tiene_fiscal && t.ultima_negativa ? { motivo: t.ultima_negativa } : null);
     setHoy(undefined);
     setPasoId(t.tiene_fiscal ? "precio" : "fiscal");
   }
@@ -540,6 +569,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     setD({ ...inicial, estado: d.estado, municipio: d.municipio, zonaManual: d.zonaManual });
     setCreada((c) => ({ cuenta: c.cuenta }));
     setTieneFiscal(undefined);
+    setNegativaPrev(null);
     setHoy(undefined);
     setFiltro("");
     setConCuenta(false); // la cuenta ya existe
@@ -718,6 +748,29 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
 
           {id === "fiscal" && (
             <>
+              {negativaPrev && !d.sinFiscal && (
+                <div className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-xs leading-snug text-amber-900 ring-1 ring-amber-200">
+                  <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                  <p>
+                    En una visita anterior no se obtuvieron (motivo: {textoMotivoSinFiscal(negativaPrev.motivo)}{negativaPrev.fecha ? `, ${fechaCorta(negativaPrev.fecha)}` : ""}).{" "}
+                    {negativaPrev.motivo === "inseguridad" ? "Si no es seguro preguntar, indica el motivo y continúa." : "Intenta de nuevo o indica el motivo."}
+                  </p>
+                </div>
+              )}
+              {d.sinFiscal ? (
+                <div className="space-y-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-stone-200">
+                  <div className="flex items-start gap-3">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-amber-100 text-amber-700"><FileX className="h-5 w-5" aria-hidden /></span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold">No se obtuvieron los datos fiscales</p>
+                      <p className="mt-0.5 text-sm text-stone-600">{motivoTexto(d.sinFiscal)}</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-stone-500">No se guarda ningún dato fiscal. Puedes seguir al precio.</p>
+                  <Boton variante="secundario" onClick={() => set({ sinFiscal: undefined })}>Capturar los datos</Boton>
+                </div>
+              ) : (
+              <>
               <p className="px-1 text-xs leading-snug text-stone-500">
                 Son datos de la empresa, no tuyos. Se piden una sola vez por tortillería: después ya no se vuelven a pedir.
               </p>
@@ -758,6 +811,53 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                   Acepto el aviso de privacidad para el tratamiento de estos datos. El RFC y el celular se guardan cifrados.
                 </span>
               </label>
+              <div className="flex items-center gap-3 pt-1 text-xs font-semibold text-stone-400">
+                <span className="h-px flex-1 bg-stone-200" />¿No te dieron los datos?<span className="h-px flex-1 bg-stone-200" />
+              </div>
+              <Boton variante="secundario" icono={FileX} onClick={() => { setMotivoSel(""); setMotivoTxt(""); setHojaSinFiscal(true); }}>
+                No se obtuvieron los datos fiscales
+              </Boton>
+              </>
+              )}
+              {hojaSinFiscal && (
+                <HojaModal titulo="¿Por qué no se obtuvieron?" alCerrar={() => setHojaSinFiscal(false)}>
+                  <Selector
+                    etiqueta="Motivo *"
+                    icono={FileX}
+                    value={motivoSel}
+                    onChange={(e) => setMotivoSel(e.target.value)}
+                    placeholder="Elige un motivo"
+                    opciones={MOTIVOS_SIN_FISCAL.map((m) => ({ valor: m.clave, texto: m.texto }))}
+                  />
+                  {motivoSel === "otro" && (
+                    <Campo
+                      etiqueta="Especifica el motivo *"
+                      value={motivoTxt}
+                      maxLength={200}
+                      autoComplete="off"
+                      onChange={(e) => setMotivoTxt(e.target.value)}
+                      error={motivoTxt.trim() !== "" && motivoTxt.trim().length < 5 ? "Escribe al menos 5 caracteres" : undefined}
+                      placeholder="Ej. El dueño está de viaje"
+                      ayuda="De 5 a 200 caracteres"
+                    />
+                  )}
+                  <p className="text-xs text-stone-500">No se pedirá RFC, razón social ni celular, y no se guarda ningún dato personal.</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Boton variante="secundario" onClick={() => setHojaSinFiscal(false)}>Cancelar</Boton>
+                    <Boton
+                      disabled={!sinFiscalSchema.safeParse({ motivo: motivoSel, motivoOtro: motivoTxt }).success}
+                      onClick={() => {
+                        // se limpian los campos fiscales: no se debe enviar un RFC a medias
+                        set({ sinFiscal: { motivo: motivoSel, motivoOtro: motivoSel === "otro" ? motivoTxt.trim() : "" }, fiscal: { ...inicial.fiscal } });
+                        setHojaSinFiscal(false);
+                        ir(1);
+                      }}
+                    >
+                      Continuar al precio
+                    </Boton>
+                  </div>
+                </HojaModal>
+              )}
             </>
           )}
 
@@ -892,7 +992,10 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                 <Fila key={p.id} icono={p.icono} k={p.texto} v={`${dinero(precioNumero(d[p.clave]))} por kilo`} />
               ))}
               {d.nueva && <Fila icono={Camera} k="Foto" v="Incluida" />}
-              {pasos.includes("fiscal") && (
+              {pasos.includes("fiscal") && d.sinFiscal && (
+                <Fila icono={FileX} k="Datos fiscales" v={`No se obtuvieron — ${motivoTexto(d.sinFiscal)}`} />
+              )}
+              {pasos.includes("fiscal") && !d.sinFiscal && (
                 <>
                   <Fila icono={FileText} k={`RFC (${d.fiscal.tipoPersona === "fisica" ? "persona física" : "persona moral"})`} v={d.fiscal.rfc} />
                   <Fila icono={d.fiscal.tipoPersona === "moral" ? Building2 : Briefcase} k={d.fiscal.tipoPersona === "moral" ? "Razón social" : "Titular del RFC"} v={d.fiscal.razonSocial} />

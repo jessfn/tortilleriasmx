@@ -31,6 +31,7 @@ const migracion = readFileSync(path.join(aqui, "../../../db/migrations/006_limit
 
 const migracion7 = readFileSync(path.join(aqui, "../../../db/migrations/007_sin_conexion.sql"), "utf8");
 const migracion8 = readFileSync(path.join(aqui, "../../../db/migrations/008_restablecer_password.sql"), "utf8");
+const migracion9 = readFileSync(path.join(aqui, "../../../db/migrations/009_sin_datos_fiscales.sql"), "utf8");
 
 const PRE = `
 CREATE DOMAIN geometry AS point;
@@ -98,6 +99,7 @@ beforeAll(async () => {
   await h.db.exec(migracion); // la migración real
   await h.db.exec(migracion7);
   await h.db.exec(migracion8);
+  await h.db.exec(migracion9);
   process.env.UPLOADS_DIR = mkdtempSync(path.join(tmpdir(), "fotos-"));
   const u = async (nombre: string, rol: string) => (await q("INSERT INTO usuarios(usuario, rol, correo) VALUES ($1,$2,$1) RETURNING id", [nombre, rol]))[0].id;
   ana = await u("ana@correo.com", "capturista");
@@ -226,8 +228,8 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
   });
 
   it("al inicio no tiene datos fiscales (y se puede saber sin sesión)", async () => {
-    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, ana)).json()).toEqual({ tiene: false });
-    expect(await (await fetch(`${base}/tortillerias/${tA}/fiscal/existe`)).json()).toEqual({ tiene: false });
+    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, ana)).json()).toEqual({ tiene: false, ultimaNegativa: null });
+    expect(await (await fetch(`${base}/tortillerias/${tA}/fiscal/existe`)).json()).toEqual({ tiene: false, ultimaNegativa: null });
   });
 
   it("el primero los captura; el RFC se guarda cifrado", async () => {
@@ -240,7 +242,7 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
     expect(Buffer.from(f.rfc_cifrado).toString("utf8")).not.toContain("TGU100101AB1");
     expect(f.celular_cifrado).not.toBeNull();
     expect((await q("SELECT count(*)::int AS n FROM consentimientos WHERE tortilleria_id = $1", [tA]))[0].n).toBe(1);
-    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, beto)).json()).toEqual({ tiene: true });
+    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, beto)).json()).toEqual({ tiene: true, ultimaNegativa: null });
   });
 
   it("la segunda vez NO sobrescribe: responde 200 con lo existente, enmascarado", async () => {
@@ -283,7 +285,7 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
        VALUES ($1,'ANA','PEREZ',$2,'h',$3,'h2','fisica',$4,'h3',NULL)`,
       [t, cifrar("CURPXXXXXXXXXXXXXX"), cifrar("5511111111"), cifrar("PEPA800101AB1")],
     );
-    expect(await (await get(`/tortillerias/${t}/fiscal/existe`, ana)).json()).toEqual({ tiene: true });
+    expect(await (await get(`/tortillerias/${t}/fiscal/existe`, ana)).json()).toEqual({ tiene: true, ultimaNegativa: null });
     const r = await post(`/tortillerias/${t}/fiscal`, ana, moral);
     expect(r.status).toBe(200);
     expect((await q("SELECT count(*)::int AS n FROM tortilleria_fiscal WHERE tortilleria_id = $1", [t]))[0].n).toBe(0);
@@ -584,7 +586,7 @@ describe("sin conexión: tortillería nueva y foto con idCliente", () => {
 describe("catálogo por estado para el teléfono", () => {
   it("solo trae ese estado, sin rechazadas ni sin ubicación, y con tiene_fiscal correcto", async () => {
     const r = await (await get("/catalogo/estado/09", ana)).json();
-    expect(r.columnas).toEqual(["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal"]);
+    expect(r.columnas).toEqual(["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal", "ultima_negativa"]);
     const nombres = r.filas.map((f: any[]) => f[1]);
     expect(nombres).toContain("LA GUERA");
     expect(nombres).not.toContain("RECHAZADA");
@@ -670,5 +672,119 @@ describe("recuperar contraseña (restablece la administración, sin correo)", ()
     if (!Array.isArray(lista)) throw new Error(`/admin/usuarios ${resp.status}: ${JSON.stringify(lista)}`);
     expect(lista.find((u: any) => u.id === otro).debe_cambiar_password).toBe(true);
     expect(lista.find((u: any) => u.id === olvido).debe_cambiar_password).toBe(false);
+  });
+});
+
+/* Al final: estas pruebas agregan tortillerías al estado 09 y no deben alterar las anteriores */
+describe("no se obtuvieron los datos fiscales (C14)", () => {
+  const nueva = async (nombre: string) =>
+    (await q("INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus) VALUES ($1,'09','09015', point(-99.2, 19.5),'denue','validada') RETURNING id", [nombre]))[0].id as string;
+  const neg = (id: string, usuario: string, body: unknown) => post(`/tortillerias/${id}/fiscal/negativa`, usuario, body);
+
+  it("un motivo válido se guarda (201); sin motivo o con motivo desconocido, 400", async () => {
+    const t = await nueva("NEG 1");
+    const r = await neg(t, ana, { motivo: "inseguridad" });
+    expect(r.status).toBe(201);
+    const filas = await q("SELECT motivo, capturista_id FROM fiscal_negativas WHERE tortilleria_id = $1", [t]);
+    expect(filas).toEqual([{ motivo: "inseguridad", capturista_id: ana }]);
+    expect((await neg(t, ana, {})).status).toBe(400);
+    expect((await neg(t, ana, { motivo: "porque_si" })).status).toBe(400);
+    expect((await fetch(`${base}/tortillerias/${t}/fiscal/negativa`, { method: "POST", headers: json, body: JSON.stringify({ motivo: "se_nego" }) })).status).toBe(401);
+  });
+
+  it("'otro' pide el texto (5 a 200 caracteres)", async () => {
+    const t = await nueva("NEG 2");
+    expect((await neg(t, ana, { motivo: "otro" })).status).toBe(400);
+    expect((await neg(t, ana, { motivo: "otro", motivoOtro: "abc" })).status).toBe(400);
+    expect((await neg(t, ana, { motivo: "otro", motivoOtro: "x".repeat(201) })).status).toBe(400);
+    expect((await neg(t, ana, { motivo: "otro", motivoOtro: "Está de vacaciones" })).status).toBe(201);
+    // el texto solo se guarda con "otro"
+    expect((await neg(t, ana, { motivo: "se_nego", motivoOtro: "no debe guardarse" })).status).toBe(201);
+    const filas = await q("SELECT motivo, motivo_otro FROM fiscal_negativas WHERE tortilleria_id = $1 ORDER BY creado_en", [t]);
+    expect(filas.map((f) => f.motivo_otro)).toEqual(["Está de vacaciones", null]);
+  });
+
+  it("el mismo idCliente dos veces deja una sola fila", async () => {
+    const t = await nueva("NEG 3");
+    const idCliente = crypto.randomUUID();
+    expect((await neg(t, ana, { motivo: "se_nego", idCliente })).status).toBe(201);
+    const otra = await neg(t, ana, { motivo: "se_nego", idCliente });
+    expect(otra.status).toBe(200);
+    expect((await otra.json()).existente).toBe(true);
+    expect((await q("SELECT count(*)::int AS n FROM fiscal_negativas WHERE tortilleria_id = $1", [t]))[0].n).toBe(1);
+  });
+
+  it("cada intento distinto queda en el historial", async () => {
+    const t = await nueva("NEG 4");
+    await neg(t, ana, { motivo: "cerrado" });
+    await neg(t, beto, { motivo: "inseguridad" });
+    expect((await q("SELECT count(*)::int AS n FROM fiscal_negativas WHERE tortilleria_id = $1", [t]))[0].n).toBe(2);
+  });
+
+  it("tortillería inexistente → 404; ya con datos fiscales → 200 yaTenia y no se guarda", async () => {
+    expect((await neg(crypto.randomUUID(), ana, { motivo: "se_nego" })).status).toBe(404);
+    const t = await nueva("NEG 5");
+    expect((await post(`/tortillerias/${t}/fiscal`, beto, { tipoPersona: "moral", rfc: "tgu100101ab1", razonSocial: "Empresa", aceptoAviso: true })).status).toBe(201);
+    const r = await neg(t, ana, { motivo: "se_nego" });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ yaTenia: true });
+    expect((await q("SELECT count(*)::int AS n FROM fiscal_negativas WHERE tortilleria_id = $1", [t]))[0].n).toBe(0);
+  });
+
+  it("la hora del teléfono sigue las reglas de /precios (7 días atrás, 10 minutos adelante)", async () => {
+    const t = await nueva("NEG 6");
+    const hace = (ms: number) => new Date(Date.now() - ms).toISOString();
+    expect((await neg(t, ana, { motivo: "cerrado", capturadoEn: hace(8 * 24 * 3600 * 1000) })).status).toBe(400);
+    expect((await neg(t, ana, { motivo: "cerrado", capturadoEn: hace(-30 * 60 * 1000) })).status).toBe(400);
+    expect((await neg(t, ana, { motivo: "cerrado", capturadoEn: hace(2 * 3600 * 1000) })).status).toBe(201);
+  });
+
+  it("fiscal/existe da el último intento (solo motivo y fecha, sin el texto de 'otro') y sigue en tiene:false", async () => {
+    const t = await nueva("NEG 7");
+    await neg(t, ana, { motivo: "otro", motivoOtro: "Texto privado del censador" });
+    await neg(t, beto, { motivo: "inseguridad" });
+    const r = await (await fetch(`${base}/tortillerias/${t}/fiscal/existe`)).json();
+    expect(r.tiene).toBe(false);
+    expect(r.ultimaNegativa.motivo).toBe("inseguridad");
+    expect(r.ultimaNegativa.fecha).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(Object.keys(r.ultimaNegativa).sort()).toEqual(["fecha", "motivo"]);
+    expect(JSON.stringify(r)).not.toContain("privado");
+  });
+
+  it("tras una negativa se puede registrar el precio y otro censador puede capturar los datos fiscales", async () => {
+    const t = await nueva("NEG 8");
+    expect((await neg(t, ana, { motivo: "no_conoce" })).status).toBe(201);
+    expect((await post("/precios", ana, { tortilleriaId: t, producto: "maiz", precioKg: 22 })).status).toBe(201);
+    expect((await post(`/tortillerias/${t}/fiscal`, beto, { tipoPersona: "fisica", rfc: "pepa800101ab1", razonSocial: "José Pérez", aceptoAviso: true })).status).toBe(201);
+    const r = await (await fetch(`${base}/tortillerias/${t}/fiscal/existe`)).json();
+    expect(r.tiene).toBe(true);
+  });
+
+  it("el catálogo del estado trae la última negativa y su versión cambia", async () => {
+    const t = await nueva("NEG 9");
+    const antes = await (await get("/catalogo/estado/09", ana)).json();
+    await neg(t, ana, { motivo: "desconfianza" });
+    const des = await (await get("/catalogo/estado/09", ana)).json();
+    expect(des.version).not.toBe(antes.version);
+    const i = des.columnas.indexOf("ultima_negativa");
+    expect(des.filas.find((f: any[]) => f[0] === t)[i]).toBe("desconfianza");
+  });
+
+  it("el administrador ve el historial con el texto y el censador; las estadísticas cuentan por motivo", async () => {
+    const t = await nueva("NEG 10");
+    await neg(t, ana, { motivo: "otro", motivoOtro: "Texto para el administrador" });
+    const h1 = await (await get(`/admin/tortillerias/${t}/negativas`, sup, "supervisor")).json();
+    expect(h1).toHaveLength(1);
+    expect(h1[0]).toMatchObject({ motivo: "otro", motivo_otro: "Texto para el administrador", censador: "ana@correo.com" });
+    expect((await get(`/admin/tortillerias/${t}/negativas`, ana)).status).toBe(403);
+
+    const e = await (await get("/admin/sin-fiscal", adm, "admin")).json();
+    expect(e.sin_fiscal).toBeGreaterThan(0);
+    expect(e.total).toBeGreaterThanOrEqual(e.sin_fiscal);
+    expect(e.por_motivo.otro).toBeGreaterThan(0);
+    expect(e.zonas.find((z: any) => z.clave === "09").sin_fiscal).toBe(e.sin_fiscal);
+    const m = await (await get("/admin/sin-fiscal?estado=09", adm, "admin")).json();
+    expect(m.zonas.find((z: any) => z.clave === "09015")).toBeTruthy();
+    expect((await get("/admin/sin-fiscal", ana)).status).toBe(403);
   });
 });

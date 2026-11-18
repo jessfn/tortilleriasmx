@@ -30,6 +30,8 @@ type Props = {
   /** Días hacia atrás (0 = todo el historial) */
   dias: number;
   soloConPrecios: boolean;
+  /** Solo tortillerías sin datos fiscales cuyo último intento fue por inseguridad (zonas de riesgo) */
+  soloInseguridad?: boolean;
   /** Se incrementa para volver a pedir los datos (actualización en vivo) */
   tick: number;
   onVista: (v: VistaMapa) => void;
@@ -145,7 +147,7 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
     const q = new URLSearchParams({
       bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((n) => n.toFixed(6)).join(","),
       dias: String(p.current.dias),
-      ...(p.current.soloConPrecios ? { solo: "precios" } : {}),
+      ...(p.current.soloInseguridad ? { solo: "inseguridad" } : p.current.soloConPrecios ? { solo: "precios" } : {}),
     });
     // A poco zoom (o si hay demasiadas tortillerías en pantalla) el servidor las agrupa por zonas
     const pedirZonas = () =>
@@ -311,7 +313,7 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
   useEffect(() => {
     if (listo.current) cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.producto, props.dias, props.soloConPrecios, props.tick]);
+  }, [props.producto, props.dias, props.soloConPrecios, props.soloInseguridad, props.tick]);
 
   return <div ref={cont} className="h-full w-full" role="application" aria-label="Mapa de precios de tortillas" />;
 });

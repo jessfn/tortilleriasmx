@@ -6,7 +6,7 @@ import { pool } from "../db.js";
  * Catálogo de un estado completo para guardarlo en el teléfono (modo sin conexión).
  * Formato compacto: cada tortillería es un arreglo en este orden (ver COLUMNAS).
  */
-export const COLUMNAS = ["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal"] as const;
+export const COLUMNAS = ["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal", "ultima_negativa"] as const;
 
 export function rutasCatalogoEstado(app: FastifyInstance) {
   app.get<{ Params: { clave: string }; Querystring: { version?: string } }>(
@@ -28,7 +28,8 @@ export function rutasCatalogoEstado(app: FastifyInstance) {
       const { rows } = await pool.query(
         `SELECT t.id, t.nombre, t.domicilio, ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng, t.estatus, t.municipio_clave, d.razon_social,
                 (EXISTS (SELECT 1 FROM tortilleria_fiscal f WHERE f.tortilleria_id = t.id)
-              OR EXISTS (SELECT 1 FROM responsables r WHERE r.tortilleria_id = t.id)) AS tiene_fiscal
+              OR EXISTS (SELECT 1 FROM responsables r WHERE r.tortilleria_id = t.id)) AS tiene_fiscal,
+                (SELECT n.motivo FROM fiscal_negativas n WHERE n.tortilleria_id = t.id ORDER BY n.creado_en DESC LIMIT 1) AS ultima_negativa
            FROM tortillerias t
            LEFT JOIN denue_catalogo d ON d.id_denue = t.id_denue
           WHERE t.estado_clave = $1 AND t.estatus <> 'rechazada' AND t.geom IS NOT NULL`,
@@ -39,7 +40,7 @@ export function rutasCatalogoEstado(app: FastifyInstance) {
         columnas: COLUMNAS,
         filas: rows.map((r) => [
           r.id, r.nombre, r.domicilio, Math.round(r.lat * 1e6) / 1e6, Math.round(r.lng * 1e6) / 1e6,
-          r.estatus === "pendiente" ? 1 : 0, r.municipio_clave, r.razon_social ?? null, r.tiene_fiscal ? 1 : 0,
+          r.estatus === "pendiente" ? 1 : 0, r.municipio_clave, r.razon_social ?? null, r.tiene_fiscal ? 1 : 0, r.ultima_negativa ?? null,
         ]),
       };
     },

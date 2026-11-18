@@ -20,6 +20,8 @@ export type Local = {
   municipio_clave: string;
   tiene_fiscal: boolean;
   estado_clave: string;
+  /** clave del motivo del último intento sin datos fiscales (si lo hubo) */
+  ultima_negativa?: string | null;
 };
 
 export type RegistroCatalogo = { clave: string; nombre: string; version: string; descargado: string; puntos: Local[] };
@@ -43,9 +45,11 @@ export type Paquete = {
   tortilleria: { id: string; nombre: string; domicilio: string | null; lat: number; lng: number };
   nueva?: { idCliente: string; datos: Record<string, unknown>; fotoIdCliente: string; foto?: Blob; confirmoNoDuplicado?: boolean };
   fiscal?: { tipoPersona: string; rfc: string; razonSocial: string; celular?: string; aceptoAviso: boolean };
+  /** "No se obtuvieron los datos fiscales" (con su motivo). Un paquete lleva `fiscal` o `sinFiscal`, nunca los dos. */
+  sinFiscal?: { motivo: string; motivoOtro?: string; idCliente: string };
   precios: Precio[];
   gps?: { lat: number; lng: number; precision?: number };
-  hecho: { tortilleria?: boolean; foto?: boolean; fiscal?: boolean };
+  hecho: { tortilleria?: boolean; foto?: boolean; fiscal?: boolean; sinFiscal?: boolean };
   /** parecidas que encontró el servidor (conflicto de duplicado) */
   posibles?: { id: string; nombre: string; domicilio: string | null }[];
 };

@@ -10,6 +10,11 @@ const uuid = z.string().uuid();
 const HOY_MX = "(now() AT TIME ZONE 'America/Mexico_City')::date";
 export const MAX_PUNTOS_ADMIN = 5000;
 
+/** Sin datos fiscales (ni en la tabla nueva ni en el registro viejo) */
+const SIN_FISCAL = "(NOT EXISTS (SELECT 1 FROM tortilleria_fiscal x WHERE x.tortilleria_id = t.id) AND NOT EXISTS (SELECT 1 FROM responsables r WHERE r.tortilleria_id = t.id))";
+/** Sin datos fiscales y el último intento fue por inseguridad: zonas de riesgo para los censadores */
+const SIN_FISCAL_INSEGURIDAD = `(${SIN_FISCAL} AND (SELECT n.motivo FROM fiscal_negativas n WHERE n.tortilleria_id = t.id ORDER BY n.creado_en DESC LIMIT 1) = 'inseguridad')`;
+
 const periodo = z.coerce.number().int().min(0).max(3650).default(30); // 0 = todo el historial
 const bboxSchema = z
   .string()
@@ -36,6 +41,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
     const dias = periodo.safeParse(q.dias);
     const [x1, y1, x2, y2] = b.data;
     const soloConPrecios = q.solo === "precios";
+    const soloInseguridad = q.solo === "inseguridad";
     const { rows } = await pool.query(
       `SELECT t.id, t.nombre, t.domicilio, t.estatus, t.origen, ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng,
               COALESCE(s.n, 0) AS n_capturas,
@@ -54,8 +60,9 @@ export function rutasAdminMapa(app: FastifyInstance) {
          ) s ON true
         WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada'
           AND ($7::boolean IS NOT TRUE OR COALESCE(s.n, 0) > 0)
+          AND ($8::boolean IS NOT TRUE OR ${SIN_FISCAL_INSEGURIDAD})
         LIMIT $5`,
-      [x1, y1, x2, y2, MAX_PUNTOS_ADMIN + 1, desde(dias.success ? dias.data : 30), soloConPrecios],
+      [x1, y1, x2, y2, MAX_PUNTOS_ADMIN + 1, desde(dias.success ? dias.data : 30), soloConPrecios, soloInseguridad],
     );
     if (rows.length > MAX_PUNTOS_ADMIN) return { demasiadas: true };
     return {
@@ -90,9 +97,10 @@ export function rutasAdminMapa(app: FastifyInstance) {
          LEFT JOIN cap a ON a.tortilleria_id = t.id AND a.producto = 'masa'
         WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada'
           AND ($7::boolean IS NOT TRUE OR m.precio IS NOT NULL OR a.precio IS NOT NULL)
+          AND ($9::boolean IS NOT TRUE OR ${SIN_FISCAL_INSEGURIDAD})
         GROUP BY floor(ST_X(t.geom) / $5::float8), floor(ST_Y(t.geom) / $5::float8)
         LIMIT $8`,
-      [x1, y1, x2, y2, tamanoCelda(zoomSchema.parse(q.zoom)), desde(dias.success ? dias.data : 30), q.solo === "precios", MAX_CELDAS],
+      [x1, y1, x2, y2, tamanoCelda(zoomSchema.parse(q.zoom)), desde(dias.success ? dias.data : 30), q.solo === "precios", MAX_CELDAS, q.solo === "inseguridad"],
     );
     return {
       celdas: rows.map((r) => ({
@@ -202,6 +210,61 @@ export function rutasAdminMapa(app: FastifyInstance) {
       [limite.success ? limite.data : 15],
     );
     return rows;
+  });
+
+  // Historial de "no se obtuvieron los datos fiscales" de una tortillería (con el motivo escrito y quién lo registró)
+  app.get<{ Params: { id: string } }>("/admin/tortillerias/:id/negativas", { preHandler: staff(app) }, async (req, reply) => {
+    if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+    const { rows } = await pool.query(
+      `SELECT n.id, n.motivo, n.motivo_otro, to_char(coalesce(n.capturado_en, n.creado_en) AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD') AS fecha, u.correo AS censador
+         FROM fiscal_negativas n LEFT JOIN usuarios u ON u.id = n.capturista_id
+        WHERE n.tortilleria_id = $1 ORDER BY coalesce(n.capturado_en, n.creado_en) DESC`,
+      [req.params.id],
+    );
+    return rows;
+  });
+
+  // Tortillerías sin datos fiscales: total, porcentaje, por motivo (el último intento) y por estado o, con ?estado=, por municipio
+  app.get("/admin/sin-fiscal", { preHandler: staff(app) }, async (req, reply) => {
+    const q = req.query as Record<string, string | undefined>;
+    const estado = q.estado && /^\d{2}$/.test(q.estado) ? q.estado : null;
+    if (q.estado && !estado) return reply.code(400).send({ error: "estado inválido" });
+    const municipio = q.municipio && /^\d{3,5}$/.test(q.municipio) ? q.municipio : null;
+    const porMunicipio = !!estado;
+    const col = porMunicipio ? "municipio_clave" : "estado_clave";
+    const donde = `t.estatus <> 'rechazada' AND ($1::text IS NULL OR t.estado_clave = $1) AND ($2::text IS NULL OR t.municipio_clave = $2)`;
+    const ultimoMotivo = "(SELECT n.motivo FROM fiscal_negativas n WHERE n.tortilleria_id = t.id ORDER BY n.creado_en DESC LIMIT 1)";
+    const filas = await pool.query(
+      `SELECT t.${col} AS clave, count(*)::int AS tortillerias,
+              (count(*) FILTER (WHERE ${SIN_FISCAL}))::int AS sin_fiscal
+         FROM tortillerias t WHERE ${donde} AND t.${col} IS NOT NULL GROUP BY t.${col}`,
+      [estado, municipio],
+    );
+    const nombres = porMunicipio ? await pool.query("SELECT clave, nombre FROM municipios WHERE estado_clave = $1", [estado]) : await pool.query("SELECT clave, nombre FROM estados");
+    const nombre = new Map<string, string>(nombres.rows.map((n: any) => [n.clave, n.nombre]));
+    const motivos = await pool.query(
+      `SELECT coalesce(${ultimoMotivo}, 'sin_intento') AS motivo, count(*)::int AS n
+         FROM tortillerias t WHERE ${donde} AND ${SIN_FISCAL} GROUP BY 1`,
+      [estado, municipio],
+    );
+    const porZona = await pool.query(
+      `SELECT t.${col} AS clave, coalesce(${ultimoMotivo}, 'sin_intento') AS motivo, count(*)::int AS n
+         FROM tortillerias t WHERE ${donde} AND t.${col} IS NOT NULL AND ${SIN_FISCAL} GROUP BY 1, 2`,
+      [estado, municipio],
+    );
+    const total = filas.rows.reduce((a: number, r: any) => a + r.tortillerias, 0);
+    const sin = filas.rows.reduce((a: number, r: any) => a + r.sin_fiscal, 0);
+    return {
+      total, sin_fiscal: sin, porcentaje: total ? Math.round((sin / total) * 1000) / 10 : 0,
+      por_motivo: Object.fromEntries(motivos.rows.map((m: any) => [m.motivo, m.n])),
+      zonas: filas.rows
+        .map((r: any) => ({
+          clave: r.clave, nombre: nombre.get(r.clave) ?? r.clave, tortillerias: r.tortillerias, sin_fiscal: r.sin_fiscal,
+          porcentaje: r.tortillerias ? Math.round((r.sin_fiscal / r.tortillerias) * 1000) / 10 : 0,
+          por_motivo: Object.fromEntries(porZona.rows.filter((m: any) => m.clave === r.clave).map((m: any) => [m.motivo, m.n])),
+        }))
+        .sort((a: any, b: any) => b.sin_fiscal - a.sin_fiscal || a.nombre.localeCompare(b.nombre, "es")),
+    };
   });
 
   // Una tortillería (para abrir su detalle desde el mapa)

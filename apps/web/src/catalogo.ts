@@ -71,6 +71,7 @@ function aLocales(clave: string, r: Extract<Respuesta, { filas: unknown }>): Loc
     municipio_clave: f[i.municipio_clave] as string,
     tiene_fiscal: f[i.tiene_fiscal] === 1,
     estado_clave: clave,
+    ultima_negativa: i.ultima_negativa === undefined ? null : ((f[i.ultima_negativa] as string | null) ?? null),
   }));
 }
 
