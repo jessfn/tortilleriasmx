@@ -187,28 +187,41 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
   }
 
   const chip = (activo: boolean) => `shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${activo ? "bg-guinda text-white shadow" : "bg-white text-stone-600 ring-1 ring-stone-200"}`;
-  const numTab = (s: "tortillerias" | "precios") => {
-    const n = s === seccion ? actual?.total : totalOtra;
-    return n === undefined ? "" : ` (${n})`;
-  };
   const desde = total === 0 ? 0 : (pagina - 1) * limite + 1;
   const hasta = Math.min(pagina * limite, total);
   const vacio = (txt: string) => <Vacio icono={CheckCheck} titulo={estatus === "pendiente" ? "Todo al día" : "Sin resultados"} texto={estatus === "pendiente" ? txt : undefined} />;
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-[92rem] flex-col gap-2.5 px-3 pb-3 pt-4 lg:px-6 lg:pb-5">
-      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="grid w-full grid-cols-2 gap-1 rounded-2xl bg-stone-200/70 p-1 sm:w-80">
-          {(["tortillerias", "precios"] as const).map((s) => (
-            <button key={s} onClick={() => cambiarSeccion(s)} className={`rounded-xl py-2 text-sm font-semibold transition ${seccion === s ? "bg-white text-guinda shadow" : "text-stone-500"}`}>
-              {s === "tortillerias" ? "Tortillerías nuevas" : "Precios capturados"}{numTab(s)}
-            </button>
-          ))}
+      <div className="flex shrink-0 flex-col gap-2 md:flex-row md:items-center md:gap-4">
+        {/* Qué se revisa: tortillerías nuevas o precios capturados, cada una con su cuenta */}
+        <div role="tablist" aria-label="Qué revisar" className="grid w-full grid-cols-2 gap-1 rounded-2xl bg-stone-200/70 p-1 md:w-[30rem]">
+          {(["tortillerias", "precios"] as const).map((s) => {
+            const on = seccion === s;
+            const Icono = s === "tortillerias" ? Store : Banknote;
+            const n = s === seccion ? actual?.total : totalOtra;
+            return (
+              <button
+                key={s}
+                role="tab"
+                aria-selected={on}
+                onClick={() => cambiarSeccion(s)}
+                className={`flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-xl px-2 text-[13px] font-semibold transition sm:text-sm ${on ? "bg-white text-guinda shadow" : "text-stone-500 hover:text-stone-700"}`}
+              >
+                <span className={`hidden h-7 w-7 shrink-0 place-items-center rounded-full sm:grid ${on ? "bg-guinda/10" : "bg-stone-300/50"}`}><Icono className="h-4 w-4" aria-hidden /></span>
+                <span className="min-w-0 text-center leading-tight">{s === "tortillerias" ? "Tortillerías nuevas" : "Precios capturados"}</span>
+                {n !== undefined && (
+                  <span className={`grid h-5 min-w-5 shrink-0 place-items-center rounded-full px-1.5 text-[11px] font-bold ${on ? "bg-guinda text-white" : "bg-stone-300/70 text-stone-600"}`}>{n}</span>
+                )}
+              </button>
+            );
+          })}
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-0.5">
-          <button className={chip(estatus === "pendiente")} onClick={() => cambiarEstatus("pendiente")}>Por revisar</button>
-          <button className={chip(estatus === "validada")} onClick={() => cambiarEstatus("validada")}>Aprobadas</button>
-          <button className={chip(estatus === "rechazada")} onClick={() => cambiarEstatus("rechazada")}>Rechazadas</button>
+        {/* Estatus: en el celular reparten el ancho; en pantallas grandes van en una fila */}
+        <div role="tablist" aria-label="Estatus" className="grid grid-cols-3 gap-1.5 md:flex">
+          {([["pendiente", "Por revisar"], ["validada", "Aprobadas"], ["rechazada", "Rechazadas"]] as const).map(([k, t]) => (
+            <button key={k} role="tab" aria-selected={estatus === k} className={`${chip(estatus === k)} min-h-9 text-center`} onClick={() => cambiarEstatus(k)}>{t}</button>
+          ))}
         </div>
       </div>
 
@@ -229,7 +242,7 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
                     <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-guinda/10 text-guinda"><Store className="h-5 w-5" aria-hidden /></span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="truncate font-semibold leading-tight">{t.nombre}</p>
+                        <p className="[display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden break-words font-semibold leading-tight">{t.nombre}</p>
                         <Insignia estatus={t.estatus} />
                       </div>
                       <p className="truncate text-xs text-stone-500">{[t.municipio, t.estado].filter(Boolean).join(", ") || "Sin ubicación"}</p>
@@ -251,7 +264,7 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
                   <Tarjeta key={c.id} className="space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate font-semibold leading-tight">{c.nombre}</p>
+                        <p className="[display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden break-words font-semibold leading-tight">{c.nombre}</p>
                         <p className="truncate text-xs text-stone-500">{[c.municipio, c.estado].filter(Boolean).join(", ")}</p>
                       </div>
                       <Insignia estatus={c.estatus} />
