@@ -183,7 +183,8 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
       </div>
 
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <Tarjeta className="overflow-hidden !p-0">
+        {/* En computadora la tarjeta se estira a lo largo de la columna de la derecha y la tabla llena todo su alto (se desplaza por dentro): sin espacio en blanco */}
+        <Tarjeta className="flex flex-col overflow-hidden !p-0">
           {!filas ? (
             <div className="grid place-items-center py-16 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
           ) : filas.length === 0 ? (
@@ -191,7 +192,8 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
           ) : (
             <>
               {/* Computadora y tableta */}
-              <div className="hidden max-h-[calc(100dvh-24rem)] min-h-[16rem] overflow-auto md:block">
+              <div className="hidden max-h-[calc(100dvh-24rem)] min-h-[16rem] overflow-auto md:block xl:relative xl:max-h-none xl:flex-1 xl:overflow-hidden">
+                <div className="xl:absolute xl:inset-0 xl:overflow-auto">
                 <table className="w-full min-w-[40rem] text-sm">
                   <thead className="sticky top-0 z-10 bg-stone-50 text-xs text-stone-500 shadow-[0_1px_0_#e7e5e4]">
                     <tr>
@@ -231,6 +233,7 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
                     })}
                   </tbody>
                 </table>
+                </div>
               </div>
 
               {/* Celular */}
