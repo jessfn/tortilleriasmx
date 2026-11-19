@@ -81,24 +81,36 @@ export function rutasAdminMapa(app: FastifyInstance) {
     const dias = periodo.safeParse(q.dias);
     const [x1, y1, x2, y2] = b.data;
     const { rows } = await pool.query(
+      // Ojo con el rendimiento: unir cada tortillería (112 mil) con los precios hacía un ciclo anidado de ~28 s. Aquí las zonas se cuentan
+      // solo con las tortillerías y los precios se suman aparte (solo las que tienen capturas) y se unen por zona: ~0.3 s.
       `WITH cap AS (
          SELECT DISTINCT ON (c.tortilleria_id, c.producto) c.tortilleria_id, c.producto, c.precio_kg::float8 AS precio
            FROM capturas_precio c
           WHERE c.estatus <> 'rechazada' AND c.producto IN ('maiz','masa') AND c.fecha >= ${HOY_MX} - $6::int
           ORDER BY c.tortilleria_id, c.producto, c.fecha DESC, c.creado_en DESC
+       ),
+       base AS (
+         SELECT t.id, t.estatus, ST_X(t.geom) AS x, ST_Y(t.geom) AS y,
+                floor(ST_X(t.geom) / $5::float8) AS gx, floor(ST_Y(t.geom) / $5::float8) AS gy
+           FROM tortillerias t
+          WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada'
+            AND ($7::boolean IS NOT TRUE OR t.id IN (SELECT tortilleria_id FROM cap))
+            AND ($9::boolean IS NOT TRUE OR ${SIN_FISCAL_INSEGURIDAD})
+       ),
+       precios AS (
+         SELECT b.gx, b.gy,
+                (count(*) FILTER (WHERE c.producto = 'maiz'))::int AS maiz_n, COALESCE(sum(c.precio) FILTER (WHERE c.producto = 'maiz'), 0)::float8 AS maiz_suma,
+                (count(*) FILTER (WHERE c.producto = 'masa'))::int AS masa_n, COALESCE(sum(c.precio) FILTER (WHERE c.producto = 'masa'), 0)::float8 AS masa_suma
+           FROM base b JOIN cap c ON c.tortilleria_id = b.id
+          GROUP BY b.gx, b.gy
        )
-       SELECT count(*)::int AS n, avg(ST_X(t.geom)) AS lng, avg(ST_Y(t.geom)) AS lat,
-              min(ST_X(t.geom)) AS x1, min(ST_Y(t.geom)) AS y1, max(ST_X(t.geom)) AS x2, max(ST_Y(t.geom)) AS y2,
-              (count(*) FILTER (WHERE t.estatus = 'pendiente'))::int AS pendientes,
-              count(m.precio)::int AS maiz_n, COALESCE(sum(m.precio), 0)::float8 AS maiz_suma,
-              count(a.precio)::int AS masa_n, COALESCE(sum(a.precio), 0)::float8 AS masa_suma
-         FROM tortillerias t
-         LEFT JOIN cap m ON m.tortilleria_id = t.id AND m.producto = 'maiz'
-         LEFT JOIN cap a ON a.tortilleria_id = t.id AND a.producto = 'masa'
-        WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada'
-          AND ($7::boolean IS NOT TRUE OR m.precio IS NOT NULL OR a.precio IS NOT NULL)
-          AND ($9::boolean IS NOT TRUE OR ${SIN_FISCAL_INSEGURIDAD})
-        GROUP BY floor(ST_X(t.geom) / $5::float8), floor(ST_Y(t.geom) / $5::float8)
+       SELECT count(*)::int AS n, avg(b.x) AS lng, avg(b.y) AS lat,
+              min(b.x) AS x1, min(b.y) AS y1, max(b.x) AS x2, max(b.y) AS y2,
+              (count(*) FILTER (WHERE b.estatus = 'pendiente'))::int AS pendientes,
+              COALESCE(max(p.maiz_n), 0)::int AS maiz_n, COALESCE(max(p.maiz_suma), 0)::float8 AS maiz_suma,
+              COALESCE(max(p.masa_n), 0)::int AS masa_n, COALESCE(max(p.masa_suma), 0)::float8 AS masa_suma
+         FROM base b LEFT JOIN precios p ON p.gx = b.gx AND p.gy = b.gy
+        GROUP BY b.gx, b.gy
         LIMIT $8`,
       [x1, y1, x2, y2, tamanoCelda(zoomSchema.parse(q.zoom)), desde(dias.success ? dias.data : 30), q.solo === "precios", MAX_CELDAS, q.solo === "inseguridad"],
     );
