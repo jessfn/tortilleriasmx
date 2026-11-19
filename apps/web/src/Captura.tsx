@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  Banknote, Briefcase, Building2, Camera, Check, FileX, Info, CircleCheck, CloudOff, TriangleAlert, Eye, EyeOff, FileText, Hash, ImagePlus, KeyRound, Landmark, Layers, ListChecks,
+  Banknote, Briefcase, Building2, Camera, Check, FileX, Info, CircleCheck, CloudOff, TriangleAlert, Eye, EyeOff, FileText, Hash, ImageOff, ImagePlus, KeyRound, Landmark, Layers, ListChecks,
   Loader2, LocateFixed, Mail, MapPin, Minus, Phone, Plus, RotateCcw, Route, Send, ShieldCheck, Store, UserPlus, Users, Wheat, type LucideIcon,
 } from "lucide-react";
 import {
-  fiscalSchema, MOTIVOS_SIN_FISCAL, nuevaTortilleriaSchema, normalizarTexto, PASSWORD_MIN, PERSONAL_OCUPADO, PRECIO_MAX, PRECIO_MIN, registroSchema, sinFiscalSchema, textoMotivoSinFiscal, TIPOS_VIAL,
+  fiscalSchema, MOTIVOS_SIN_FISCAL, nuevaTortilleriaSchema, normalizarTexto, PASSWORD_MIN, PERSONAL_OCUPADO, PRECIO_MAX, PRECIO_MIN, registroSchema, sinFiscalSchema, sinFotoSchema, textoMotivoSinFiscal, textoMotivoSinFoto, MOTIVOS_SIN_FOTO, TIPOS_VIAL,
 } from "@tortillerias/shared";
 import { api, ApiError, guardarSesion, leerSesion, type Sesion } from "./api";
 import { buscarLugar } from "./geocoder";
@@ -12,7 +12,7 @@ import { comprimirFoto } from "./imagen";
 import { borrarBorrador, guardarBorrador } from "./borrador";
 import { diaMexico, nuevoId, type Paquete } from "./bd";
 import { capturadoHoyLocal, esTemporal, guardarPaquete, idTemporal, listarPaquetes, sincronizar } from "./bandeja";
-import { delMunicipio, listaEstados, listaMunicipios, marcarFiscalLocal, masCercana, parecidas, porId, type Item as ItemCat } from "./catalogo";
+import { delMunicipio, listaEstados, listaMunicipios, marcarFiscalLocal, marcarFotoLocal, masCercana, parecidas, porId, type Item as ItemCat } from "./catalogo";
 import type { Local } from "./bd";
 import PasoTortilleria from "./PasoTortilleria";
 import type { Punto } from "./MapaTortillerias";
@@ -31,6 +31,8 @@ const PRODUCTOS: { id: Producto; clave: "precioMaiz" | "precioMasa"; texto: stri
 
 /** "Por inseguridad o miedo a extorsión"; con "Otro motivo", el texto que escribió el censador */
 const motivoTexto = (s: { motivo: string; motivoOtro: string }) => (s.motivo === "otro" && s.motivoOtro ? `Otro: ${s.motivoOtro}` : textoMotivoSinFiscal(s.motivo));
+/** "El establecimiento estaba cerrado"; con "Otro motivo", el texto que escribió el censador */
+const motivoFotoTexto = (s: { motivo: string; motivoOtro: string }) => (s.motivo === "otro" && s.motivoOtro ? `Otro: ${s.motivoOtro}` : textoMotivoSinFoto(s.motivo));
 /** "2026-11-12" → "12 nov" */
 const fechaCorta = (f: string) => {
   const [a, m, dia] = f.split("-").map(Number);
@@ -55,6 +57,8 @@ type Datos = {
   fiscal: { tipoPersona: "fisica" | "moral"; rfc: string; razonSocial: string; celular: string; aviso: boolean };
   /** "No se obtuvieron los datos fiscales": el motivo. Si está, no se pide ni se envía ningún dato fiscal. */
   sinFiscal?: { motivo: string; motivoOtro: string };
+  /** Tortillería que ya existía y aún no tenía foto: el motivo de por qué no se pudo tomar (si hay foto, no hay motivo) */
+  sinFoto?: { motivo: string; motivoOtro: string };
   /** Solo se pide si la persona aún no tiene cuenta: se crea al enviar el registro */
   cuenta: { correo: string; password: string; confirmar: string };
   precioMaiz: string;
@@ -73,16 +77,16 @@ const inicial: Datos = {
 
 /**
  * Pasos del asistente según el caso:
- *  A) tortillería existente:  [estado → municipio, solo sin GPS] → tortilleria (mapa) → [fiscal, si no los tiene] → precio → [cuenta] → resumen
+ *  A) tortillería existente:  [estado → municipio, solo sin GPS] → tortilleria (mapa) → [foto, si aún no tiene] → [fiscal, si no los tiene] → precio → [cuenta] → resumen
  *  B) tortillería nueva:      [estado → municipio] → tortilleria (mapa + pin) → nueva → foto → fiscal → precio → [cuenta] → resumen
- *  C) actualizar precio:      [fiscal, si no los tiene] → precio → resumen
+ *  C) actualizar precio:      [foto, si aún no tiene] → [fiscal, si no los tiene] → precio → resumen
  */
-function armarPasos(o: { caso: Caso; zonaManual: boolean; nueva: boolean; faltaFiscal: boolean; conCuenta: boolean }): string[] {
-  if (o.caso === "actualizar") return [...(o.faltaFiscal ? ["fiscal"] : []), "precio", "resumen"];
+function armarPasos(o: { caso: Caso; zonaManual: boolean; nueva: boolean; faltaFiscal: boolean; faltaFoto?: boolean; conCuenta: boolean }): string[] {
+  if (o.caso === "actualizar") return [...(o.faltaFoto ? ["foto"] : []), ...(o.faltaFiscal ? ["fiscal"] : []), "precio", "resumen"];
   return [
     ...(o.zonaManual ? ["estado", "municipio"] : []),
     "tortilleria",
-    ...(o.nueva ? ["nueva", "foto", "fiscal"] : o.faltaFiscal ? ["fiscal"] : []),
+    ...(o.nueva ? ["nueva", "foto", "fiscal"] : [...(o.faltaFoto ? ["foto"] : []), ...(o.faltaFiscal ? ["fiscal"] : [])]),
     "precio",
     ...(o.conCuenta ? ["cuenta"] : []),
     "resumen",
@@ -112,6 +116,7 @@ export type Borrador = {
   foto?: Blob;
   caso: Caso;
   tieneFiscal?: boolean;
+  tieneFoto?: boolean;
 };
 
 /** Cómo terminó el envío: enviado al servidor, guardado en el teléfono (sin señal) o con un problema que el censador debe ver */
@@ -159,6 +164,11 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   /** Último intento fallido de esta tortillería (de una visita anterior): se avisa en el paso de datos fiscales */
   const [negativaPrev, setNegativaPrev] = useState<{ motivo: string; fecha?: string } | null>(null);
   const [hojaSinFiscal, setHojaSinFiscal] = useState(false);
+  /** ¿la tortillería elegida ya tiene foto? (si no, la primera visita debe traerla) */
+  const [tieneFoto, setTieneFoto] = useState<boolean | undefined>(borrador?.tieneFoto);
+  const [hojaSinFoto, setHojaSinFoto] = useState(false);
+  const [motivoFotoSel, setMotivoFotoSel] = useState("");
+  const [motivoFotoTxt, setMotivoFotoTxt] = useState("");
   const [motivoSel, setMotivoSel] = useState("");
   const [motivoTxt, setMotivoTxt] = useState("");
   const [pasoId, setPasoId] = useState<string>(() => borrador?.pasoId ?? (tortilleriaInicial ? "precio" : "tortilleria"));
@@ -185,9 +195,10 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   const setFiscal = (p: Partial<Datos["fiscal"]>) => setD((x) => ({ ...x, fiscal: { ...x.fiscal, ...p } }));
 
   const faltaFiscal = d.nueva ? true : tieneFiscal === false;
+  const faltaFoto = !d.nueva && tieneFoto === false;
   const pasos = useMemo(
-    () => armarPasos({ caso, zonaManual: d.zonaManual, nueva: d.nueva, faltaFiscal, conCuenta }),
-    [caso, d.zonaManual, d.nueva, faltaFiscal, conCuenta],
+    () => armarPasos({ caso, zonaManual: d.zonaManual, nueva: d.nueva, faltaFiscal, faltaFoto, conCuenta }),
+    [caso, d.zonaManual, d.nueva, faltaFiscal, faltaFoto, conCuenta],
   );
   const id = pasos.includes(pasoId) ? pasoId : pasos[0];
   const paso = pasos.indexOf(id);
@@ -273,34 +284,36 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   }, [id, d.estado, d.pin?.lat, d.pin?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---------------- ¿ya tiene datos fiscales? Con internet se pregunta al servidor; sin él se usa lo guardado en el teléfono ---------------- */
-  async function tieneFiscalDe(tortilleriaId: string): Promise<boolean> {
+  async function tieneFiscalDe(tortilleriaId: string): Promise<{ tiene: boolean; foto: boolean }> {
     const loc = porId(tortilleriaId);
     const local = loc?.tiene_fiscal;
+    // Si no se sabe si tiene foto (catálogo viejo) no se exige: se vuelve a preguntar en cuanto haya catálogo nuevo o internet
     if (esTemporal(tortilleriaId)) {
       setNegativaPrev(null);
-      return local ?? false; // tortillería nueva de este teléfono: el servidor aún no la conoce
+      return { tiene: local ?? false, foto: true }; // tortillería nueva de este teléfono: el servidor aún no la conoce y su foto ya va con ella
     }
     if (navigator.onLine) {
       try {
-        const r = await api<{ tiene: boolean; ultimaNegativa?: { motivo: string; fecha: string } | null }>(`/tortillerias/${tortilleriaId}/fiscal/existe`);
+        const r = await api<{ tiene: boolean; ultimaNegativa?: { motivo: string; fecha: string } | null; tieneFoto?: boolean }>(`/tortillerias/${tortilleriaId}/fiscal/existe`);
         setNegativaPrev(r.tiene ? null : (r.ultimaNegativa ?? null));
-        return r.tiene;
+        return { tiene: r.tiene, foto: r.tieneFoto ?? true };
       } catch (e) {
         if (e instanceof ApiError && e.status > 0) throw e;
       }
     }
-    // Sin señal: si estaba desactualizado no pasa nada, el servidor no sobrescribe datos fiscales ya capturados
+    // Sin señal: si estaba desactualizado no pasa nada, el servidor no sobrescribe datos fiscales ya capturados ni duplica fotos
     setNegativaPrev(!local && loc?.ultima_negativa ? { motivo: loc.ultima_negativa } : null);
-    return local ?? false;
+    return { tiene: local ?? false, foto: loc?.tiene_foto ?? true };
   }
 
   /* ---------------- caso C: ¿faltan los datos fiscales? ---------------- */
   useEffect(() => {
     if (!tortilleriaInicial || !preparando) return;
     tieneFiscalDe(tortilleriaInicial.id)
-      .then((tiene) => {
+      .then(({ tiene, foto }) => {
         setTieneFiscal(tiene);
-        setPasoId(tiene ? "precio" : "fiscal");
+        setTieneFoto(foto);
+        setPasoId(!foto ? "foto" : tiene ? "precio" : "fiscal"); // primero la foto, luego los datos fiscales, luego el precio
       })
       .catch((e) => setError(e.message))
       .finally(() => setPreparando(false));
@@ -351,11 +364,11 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     const t = setTimeout(() => {
       const { foto, fotoUrl: _u, ...resto } = d;
       const sinClave = { ...resto, cuenta: { correo: d.cuenta.correo, password: "", confirmar: "" } };
-      const base: Borrador = { v: 3, d: sinClave, pasoId: id, creada, caso, tieneFiscal, foto };
+      const base: Borrador = { v: 3, d: sinClave, pasoId: id, creada, caso, tieneFiscal, tieneFoto, foto };
       void guardarBorrador(sesion?.usuario.id ?? null, base);
     }, 400);
     return () => clearTimeout(t);
-  }, [d, id, creada, listo, preparando, caso, tieneFiscal, sesion]);
+  }, [d, id, creada, listo, preparando, caso, tieneFiscal, tieneFoto, sesion]);
 
   // Registro nuevo terminado: entrar solo al panel después de un momento
   useEffect(() => {
@@ -380,6 +393,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   const tocadoNv = (valor: string) => valor.trim() !== "";
 
   const resFiscal = fiscalSchema.safeParse({ tipoPersona: d.fiscal.tipoPersona, rfc: d.fiscal.rfc, razonSocial: d.fiscal.razonSocial, celular: d.fiscal.celular });
+  const sinFotoOk = !!d.sinFoto && sinFotoSchema.safeParse({ motivo: d.sinFoto.motivo, motivoOtro: d.sinFoto.motivoOtro }).success;
   const sinFiscalOk = !!d.sinFiscal && sinFiscalSchema.safeParse({ motivo: d.sinFiscal.motivo, motivoOtro: d.sinFiscal.motivoOtro }).success;
   const errFiscal = (campo: string) => {
     if (resFiscal.success) return undefined;
@@ -405,7 +419,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     municipio: !!d.municipio,
     tortilleria: false, // se avanza con "Elegir esta tortillería" o "Confirmar ubicación"
     nueva: resNv.success,
-    foto: !!d.foto,
+    foto: d.nueva ? !!d.foto : !!d.foto || sinFotoOk, // en una tortillería que ya existía la foto se puede omitir si se indica el motivo
     fiscal: (resFiscal.success && d.fiscal.aviso) || sinFiscalOk, // los datos fiscales se pueden omitir si se indica el motivo
     cuenta: resCuenta.success,
     precio: hoy != null && preciosListos && !todoCapturado,
@@ -423,25 +437,26 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
 
   /** Mapa → tortillería existente elegida. Antes de seguir se averigua si ya tiene datos fiscales. */
   async function elegirTortilleria(punto: Punto) {
-    const tiene = await tieneFiscalDe(punto.id);
-    const r = { tiene };
+    const r = await tieneFiscalDe(punto.id);
     setTieneFiscal(r.tiene);
+    setTieneFoto(r.foto);
     setHoy(undefined);
     setD((x) => ({
-      ...x, tortilleria: punto, nueva: false, foto: undefined, fotoUrl: undefined,
+      ...x, tortilleria: punto, nueva: false, foto: undefined, fotoUrl: undefined, sinFoto: undefined,
       fiscal: x.tortilleria?.id === punto.id ? x.fiscal : { ...inicial.fiscal },
       sinFiscal: x.tortilleria?.id === punto.id ? x.sinFiscal : undefined,
       precioMaiz: x.tortilleria?.id === punto.id ? x.precioMaiz : "", precioMasa: x.tortilleria?.id === punto.id ? x.precioMasa : "",
     }));
     setCreada((c) => ({ cuenta: c.cuenta }));
     setModoMapa("elegir");
-    // el siguiente paso depende del resultado: fiscal si faltan, si no el precio
-    setPasoId(r.tiene ? "precio" : "fiscal");
+    // el siguiente paso depende del resultado: la foto si aún no tiene, luego los datos fiscales si faltan, si no el precio
+    setPasoId(!r.foto ? "foto" : r.tiene ? "precio" : "fiscal");
   }
 
   function confirmarPin() {
     setD((x) => ({ ...x, nueva: true, tortilleria: undefined }));
     setTieneFiscal(false);
+    setTieneFoto(undefined);
     setNegativaPrev(null);
     setPasoId("nueva");
   }
@@ -474,6 +489,12 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     const base = {
       id: nuevoId(), usuarioId, capturadoEn: new Date().toISOString(), estado: "por_enviar" as const, intentos: 0, hecho: {}, precios,
       ...(gps.pos ? { gps: { lat: gps.pos.lat, lng: gps.pos.lng, precision: gps.pos.precision } } : {}),
+      // tortillería que ya existía y no tenía foto: la foto del frente o el motivo de por qué no se pudo, nunca las dos
+      ...(faltaFoto && d.sinFoto && !d.foto
+        ? { sinFoto: { motivo: d.sinFoto.motivo, ...(d.sinFoto.motivo === "otro" ? { motivoOtro: d.sinFoto.motivoOtro.trim() } : {}), idCliente: nuevoId() } }
+        : faltaFoto && d.foto
+          ? { fotoExistente: { idCliente: nuevoId(), archivo: d.foto } }
+          : {}),
       // un paquete lleva los datos fiscales o la negativa con su motivo, nunca los dos (y nunca un RFC a medias)
       ...(faltaFiscal && d.sinFiscal
         ? { sinFiscal: { motivo: d.sinFiscal.motivo, ...(d.sinFiscal.motivo === "otro" ? { motivoOtro: d.sinFiscal.motivoOtro.trim() } : {}), idCliente: nuevoId() } }
@@ -525,6 +546,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
       const paquete = armarPaquete(usuarioId, confirmoNoDuplicado);
       await guardarPaquete(paquete);
       if (paquete.fiscal && !esTemporal(paquete.tortilleria.id)) await marcarFiscalLocal(paquete.tortilleria.id);
+      if (paquete.fotoExistente && !esTemporal(paquete.tortilleria.id)) await marcarFotoLocal(paquete.tortilleria.id); // ya no se vuelve a pedir en este teléfono
       await borrarBorrador();
 
       // Con señal se envía en seguida; sin ella queda guardado y sale solo cuando regrese
@@ -559,12 +581,13 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     setParecidasLocal(null);
     setD((x) => ({
       ...x, nueva: false, tortilleria: { id: t.id, nombre: t.nombre, domicilio: t.domicilio, estatus: t.estatus, lat: t.lat, lng: t.lng, razon_social: t.razon_social },
-      foto: undefined, fotoUrl: undefined, precioMaiz: "", precioMasa: "", sinFiscal: undefined,
+      foto: undefined, fotoUrl: undefined, precioMaiz: "", precioMasa: "", sinFiscal: undefined, sinFoto: undefined,
     }));
     setTieneFiscal(esTemporal(t.id) ? t.tiene_fiscal : t.tiene_fiscal);
+    setTieneFoto(t.tiene_foto ?? true);
     setNegativaPrev(!t.tiene_fiscal && t.ultima_negativa ? { motivo: t.ultima_negativa } : null);
     setHoy(undefined);
-    setPasoId(t.tiene_fiscal ? "precio" : "fiscal");
+    setPasoId(t.tiene_foto === false ? "foto" : t.tiene_fiscal ? "precio" : "fiscal");
   }
 
   function otra() {
@@ -572,6 +595,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     setD({ ...inicial, estado: d.estado, municipio: d.municipio, zonaManual: d.zonaManual });
     setCreada((c) => ({ cuenta: c.cuenta }));
     setTieneFiscal(undefined);
+    setTieneFoto(undefined);
     setNegativaPrev(null);
     setHoy(undefined);
     setFiltro("");
@@ -631,7 +655,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
       </div>
     );
 
-  const m = META[id];
+  const m = id === "foto" && !d.nueva ? { ...META.foto, sub: "Foto del frente del negocio" } : META[id];
   const buscaEn: Record<string, string> = { estado: "Buscar estado", municipio: "Buscar municipio" };
   const norm = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
   const filtrar = (items: Item[]) => items.filter((i) => norm(i.nombre).includes(norm(filtro)));
@@ -725,8 +749,27 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
             </>
           )}
 
-          {id === "foto" && (
+          {id === "foto" && !d.nueva && d.sinFoto && !d.foto && (
+            <div className="space-y-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-stone-200">
+              <div className="flex items-start gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-amber-100 text-amber-700"><ImageOff className="h-5 w-5" aria-hidden /></span>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold">No se tomó la foto</p>
+                  <p className="mt-0.5 text-sm text-stone-600">{motivoFotoTexto(d.sinFoto)}</p>
+                </div>
+              </div>
+              <p className="text-xs text-stone-500">Puedes seguir al precio. La próxima visita se volverá a pedir.</p>
+              <Boton variante="secundario" icono={Camera} onClick={() => set({ sinFoto: undefined })}>Tomar la foto</Boton>
+            </div>
+          )}
+
+          {id === "foto" && !(!d.nueva && d.sinFoto && !d.foto) && (
             <>
+              {!d.nueva && (
+                <p className="shrink-0 px-1 text-xs leading-snug text-stone-500">
+                  Esta tortillería aún no tiene foto. Toma una del <b>frente del negocio</b>, sin personas. Solo se pide la primera vez.
+                </p>
+              )}
               <div className="min-h-0 flex-1 overflow-hidden rounded-2xl">
                 {d.fotoUrl ? (
                   <img src={d.fotoUrl} alt="Vista previa de la tortillería" className="h-full w-full object-cover" />
@@ -735,7 +778,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                     <div className="text-center">
                       <Camera className="mx-auto h-12 w-12" aria-hidden />
                       <p className="mt-2 text-sm">Aún no hay foto</p>
-                      <p className="mt-0.5 text-xs">Es obligatoria para las tortillerías nuevas</p>
+                      <p className="mt-0.5 text-xs">{d.nueva ? "Es obligatoria para las tortillerías nuevas" : "Es obligatoria la primera vez que se visita"}</p>
                     </div>
                   </div>
                 )}
@@ -746,7 +789,51 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
               </div>
               <input ref={inputCamara} type="file" accept="image/*" capture="environment" className="sr-only" onChange={(e) => { recibirFoto(e.target.files?.[0]); e.target.value = ""; }} />
               <input ref={inputGaleria} type="file" accept="image/*" className="sr-only" onChange={(e) => { recibirFoto(e.target.files?.[0]); e.target.value = ""; }} />
+              {!d.nueva && !d.foto && (
+                <button type="button" onClick={() => { setMotivoFotoSel(""); setMotivoFotoTxt(""); setHojaSinFoto(true); }} className="shrink-0 py-1 text-sm font-semibold text-guinda">
+                  No se pudo tomar la foto
+                </button>
+              )}
             </>
+          )}
+
+          {hojaSinFoto && (
+            <HojaModal titulo="¿Por qué no se pudo?" alCerrar={() => setHojaSinFoto(false)}>
+              <Selector
+                etiqueta="Motivo *"
+                icono={ImageOff}
+                value={motivoFotoSel}
+                onChange={(e) => setMotivoFotoSel(e.target.value)}
+                placeholder="Elige un motivo"
+                opciones={MOTIVOS_SIN_FOTO.map((m) => ({ valor: m.clave, texto: m.texto }))}
+              />
+              {motivoFotoSel === "otro" && (
+                <Campo
+                  etiqueta="Especifica el motivo *"
+                  value={motivoFotoTxt}
+                  maxLength={200}
+                  autoComplete="off"
+                  onChange={(e) => setMotivoFotoTxt(e.target.value)}
+                  error={motivoFotoTxt.trim() !== "" && motivoFotoTxt.trim().length < 5 ? "Escribe al menos 5 caracteres" : undefined}
+                  placeholder="Ej. El local está en remodelación"
+                  ayuda="De 5 a 200 caracteres"
+                />
+              )}
+              <p className="text-xs text-stone-500">El precio se captura igual. La foto se volverá a pedir en la próxima visita.</p>
+              <div className="grid grid-cols-2 gap-2">
+                <Boton variante="secundario" onClick={() => setHojaSinFoto(false)}>Cancelar</Boton>
+                <Boton
+                  disabled={!sinFotoSchema.safeParse({ motivo: motivoFotoSel, motivoOtro: motivoFotoTxt }).success}
+                  onClick={() => {
+                    set({ sinFoto: { motivo: motivoFotoSel, motivoOtro: motivoFotoSel === "otro" ? motivoFotoTxt.trim() : "" } });
+                    setHojaSinFoto(false);
+                    ir(1);
+                  }}
+                >
+                  Continuar
+                </Boton>
+              </div>
+            </HojaModal>
           )}
 
           {id === "fiscal" && (
@@ -997,6 +1084,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                 <Fila key={p.id} icono={p.icono} k={p.texto} v={`${dinero(precioNumero(d[p.clave]))} por kilo`} />
               ))}
               {d.nueva && <Fila icono={Camera} k="Foto" v="Incluida" />}
+              {pasos.includes("foto") && !d.nueva && (d.foto ? <Fila icono={Camera} k="Foto" v="Incluida" /> : d.sinFoto ? <Fila icono={ImageOff} k="Foto" v={`No se tomó — ${motivoFotoTexto(d.sinFoto)}`} /> : null)}
               {pasos.includes("fiscal") && d.sinFiscal && (
                 <Fila icono={FileX} k="Datos fiscales" v={`No se obtuvieron — ${motivoTexto(d.sinFiscal)}`} />
               )}

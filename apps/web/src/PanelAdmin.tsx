@@ -1,5 +1,6 @@
 import { formatearTelefono, permisosEfectivos, type Permiso } from "@tortillerias/shared";
 import { NegativasFiscales } from "./NegativasFiscales";
+import { NegativasFoto } from "./NegativasFoto";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowUpDown, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, ChevronDown, ChevronLeft, ChevronRight, Clock, Eye, History, Loader2, Search, Mail, MapPin, Navigation, Phone, Store, TriangleAlert,
@@ -534,7 +535,7 @@ function DetalleTortilleria({
       {fotos === undefined ? (
         <div className="aspect-[4/3] animate-pulse rounded-2xl bg-stone-200" />
       ) : fotos.length === 0 ? (
-        <div className="flex items-center justify-center gap-2 rounded-2xl bg-stone-100 py-5 text-sm text-stone-400"><Camera className="h-5 w-5" aria-hidden /> Esta tortillería no tiene foto</div>
+        <div className="space-y-2"><div className="flex items-center justify-center gap-2 rounded-2xl bg-stone-100 py-5 text-sm text-stone-400"><Camera className="h-5 w-5" aria-hidden /> Esta tortillería no tiene foto</div><NegativasFoto tortilleriaId={t.id} /></div>
       ) : (
         <>
           <FotoAuth id={fotos[foto].id} className="aspect-[4/3] w-full rounded-2xl" />

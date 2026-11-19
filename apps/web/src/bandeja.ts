@@ -1,12 +1,12 @@
 import { api, ApiError, leerSesion } from "./api";
 import { abrir, diaMexico, kvBorrar, kvGuardar, kvLeer, type Paquete, type Precio } from "./bd";
-import { marcarFiscalLocal, ponerTemporales } from "./catalogo";
+import { marcarFiscalLocal, marcarFotoLocal, ponerTemporales } from "./catalogo";
 import type { Local } from "./bd";
 
 /**
  * Bandeja de pendientes: todo lo que se captura pasa por aquí, con o sin conexión (un solo camino).
  * Funciona como la bandeja de salida del correo: se guarda en el teléfono y sale solo cuando hay señal.
- * Orden de envío por paquete: tortillería nueva → foto → datos fiscales (o la negativa con su motivo) → precios. Un paquete a la vez, en el orden en que se capturaron.
+ * Orden de envío por paquete: tortillería nueva → foto (o la de una que ya existía, o el motivo de por qué no se pudo) → datos fiscales (o la negativa) → precios. Un paquete a la vez, en el orden en que se capturaron.
  */
 
 export const DIAS_ENVIADOS = 7; // un paquete ya enviado se borra de la bandeja después de este tiempo
@@ -160,6 +160,7 @@ export async function refrescarTemporales() {
       municipio_clave: d.municipioClave ?? "",
       estado_clave: d.estadoClave ?? "",
       tiene_fiscal: !!p.fiscal,
+      tiene_foto: true, // una tortillería nueva siempre lleva su foto
     });
   }
   ponerTemporales(lista);
@@ -205,6 +206,26 @@ async function enviarPaquete(p: Paquete): Promise<Resultado> {
       f.append("file", p.nueva.foto, "foto.jpg");
       await api(`/tortillerias/${real}/fotos`, { form: f, headers: { "x-id-cliente": p.nueva.fotoIdCliente } });
       p = { ...p, hecho: { ...p.hecho, foto: true }, nueva: { ...p.nueva, foto: undefined } }; // la foto ya no hace falta en el teléfono
+      await poner(p);
+    }
+
+    // 2b) tortillería que ya existía y no tenía foto: la foto del frente, o el motivo de por qué no se pudo tomar
+    if (p.fotoExistente?.archivo && !p.hecho.fotoExistente) {
+      etapa = "foto";
+      const f = new FormData();
+      f.append("file", p.fotoExistente.archivo, "foto.jpg");
+      await api(`/tortillerias/${real}/fotos`, { form: f, headers: { "x-id-cliente": p.fotoExistente.idCliente } });
+      await marcarFotoLocal(real);
+      p = { ...p, hecho: { ...p.hecho, fotoExistente: true }, fotoExistente: { idCliente: p.fotoExistente.idCliente } }; // la foto ya no hace falta en el teléfono
+      await poner(p);
+    }
+    if (p.sinFoto && !p.hecho.sinFoto) {
+      etapa = "foto";
+      const r = await api<{ yaTenia?: boolean }>(`/tortillerias/${real}/foto/negativa`, {
+        json: { motivo: p.sinFoto.motivo, motivoOtro: p.sinFoto.motivoOtro || undefined, idCliente: p.sinFoto.idCliente, capturadoEn: p.capturadoEn },
+      });
+      if (r?.yaTenia) await marcarFotoLocal(real); // otra persona ya la subió: el catálogo local lo recuerda
+      p = { ...p, hecho: { ...p.hecho, sinFoto: true } };
       await poner(p);
     }
 
@@ -321,8 +342,11 @@ export async function usarExistente(id: string, existente: { id: string; nombre:
   const p = (await todos()).find((x) => x.id === id);
   if (!p?.nueva) return;
   await registrarIdReal(p.tortilleria.id, existente.id);
+  // la foto que se tomó para la nueva (si aún no se enviaba) sirve para la que ya existía
+  const fotoPendiente = p.nueva.foto && !p.hecho.foto ? { idCliente: p.nueva.fotoIdCliente, archivo: p.nueva.foto } : undefined;
   await poner({
     ...p, estado: "por_enviar", mensaje: undefined, posibles: undefined, nueva: undefined, intentos: 0, proximoIntento: undefined,
+    ...(fotoPendiente ? { fotoExistente: fotoPendiente } : {}),
     tortilleria: { ...p.tortilleria, id: existente.id, nombre: existente.nombre, domicilio: existente.domicilio },
   });
   await refrescarTemporales();

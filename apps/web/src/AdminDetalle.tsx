@@ -1,5 +1,6 @@
 import { formatearTelefono } from "@tortillerias/shared";
 import { NegativasFiscales } from "./NegativasFiscales";
+import { NegativasFoto } from "./NegativasFoto";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, Building2, CalendarDays, Camera, Check, ChevronLeft, ChevronRight, ExternalLink, FileText, Hash, Layers, Loader2, Mail, MapPin, Phone, ShieldCheck, UserRound, Users, Wheat, X,
@@ -148,8 +149,11 @@ export default function DetalleLateral({
         {fotos === undefined ? (
           <div className="aspect-[16/10] animate-pulse rounded-xl bg-stone-200" />
         ) : fotos.length === 0 ? (
-          <div className="grid aspect-[16/10] place-items-center rounded-xl bg-stone-100 text-stone-400">
-            <span className="flex flex-col items-center gap-1 text-xs"><Camera className="h-6 w-6" aria-hidden /> Sin foto</span>
+          <div className="space-y-2">
+            <div className="grid aspect-[16/10] place-items-center rounded-xl bg-stone-100 text-stone-400">
+              <span className="flex flex-col items-center gap-1 text-xs"><Camera className="h-6 w-6" aria-hidden /> Sin foto</span>
+            </div>
+            <NegativasFoto tortilleriaId={id} />
           </div>
         ) : (
           <div>

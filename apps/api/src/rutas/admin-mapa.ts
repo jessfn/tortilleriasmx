@@ -277,6 +277,18 @@ export function rutasAdminMapa(app: FastifyInstance) {
     return rows;
   });
 
+  // Veces que no se pudo tomar la foto de una tortillería (con el motivo escrito y quién lo registró)
+  app.get<{ Params: { id: string } }>("/admin/tortillerias/:id/negativas-foto", { preHandler: con(app, "ver_revision", "ver_mapa") }, async (req, reply) => {
+    if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+    const { rows } = await pool.query(
+      `SELECT n.id, n.motivo, n.motivo_otro, to_char(coalesce(n.capturado_en, n.creado_en) AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD') AS fecha, u.correo AS censador
+         FROM foto_negativas n LEFT JOIN usuarios u ON u.id = n.capturista_id
+        WHERE n.tortilleria_id = $1 ORDER BY coalesce(n.capturado_en, n.creado_en) DESC`,
+      [req.params.id],
+    );
+    return rows;
+  });
+
   // Tortillerías sin datos fiscales: total, porcentaje, por motivo (el último intento) y por estado o, con ?estado=, por municipio
   app.get("/admin/sin-fiscal", { preHandler: con(app, "ver_estadisticas") }, async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;

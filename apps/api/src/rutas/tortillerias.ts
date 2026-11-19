@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { fiscalSchema, nuevaTortilleriaSchema, sinFiscalSchema } from "@tortillerias/shared";
+import { fiscalSchema, nuevaTortilleriaSchema, sinFiscalSchema, sinFotoSchema } from "@tortillerias/shared";
 import { auditar, pool } from "../db.js";
 import { cifrar, descifrar, enmascarar, hashBusqueda } from "../crypto.js";
 import { domicilioDe, type Fila } from "../denue.js";
@@ -154,7 +154,44 @@ export function rutasTortillerias(app: FastifyInstance) {
          FROM fiscal_negativas WHERE tortilleria_id = $1 ORDER BY creado_en DESC LIMIT 1`,
       [req.params.id],
     );
-    return { tiene: !!rows[0]?.tiene, ultimaNegativa: n.rows[0] ? { motivo: n.rows[0].motivo, fecha: n.rows[0].fecha } : null };
+    // ¿Ya tiene foto? La primera visita a una tortillería que ya existe debe traerla (o el motivo de por qué no se pudo)
+    const f = await pool.query("SELECT EXISTS (SELECT 1 FROM fotos WHERE tortilleria_id = $1) AS tiene_foto", [req.params.id]);
+    return { tiene: !!rows[0]?.tiene, ultimaNegativa: n.rows[0] ? { motivo: n.rows[0].motivo, fecha: n.rows[0].fecha } : null, tieneFoto: !!f.rows[0]?.tiene_foto };
+  });
+
+  // "No se pudo tomar la foto" de una tortillería que ya existe: queda el motivo (una fila por intento). Nunca bloquea el precio.
+  app.post<{ Params: { id: string } }>("/tortillerias/:id/foto/negativa", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
+    if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+    const p = sinFotoSchema.safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
+    const d = p.data;
+    if (d.idCliente) {
+      const ya = await pool.query("SELECT id FROM foto_negativas WHERE id_cliente = $1", [d.idCliente]);
+      if (ya.rowCount) return reply.code(200).send({ id: ya.rows[0].id, existente: true });
+    }
+    let capturadoEn: Date | null = null;
+    if (d.capturadoEn) {
+      capturadoEn = new Date(d.capturadoEn);
+      const dif = Date.now() - capturadoEn.getTime();
+      if (dif < -TOLERANCIA_FUTURO_MS) return reply.code(400).send({ error: "La hora de captura está en el futuro. Revisa la hora de tu teléfono." });
+      if (dif > MAX_DIAS_ATRASO * 24 * 3600 * 1000) return reply.code(400).send({ error: `La captura tiene más de ${MAX_DIAS_ATRASO} días y ya no se puede enviar` });
+    }
+    const t = await pool.query("SELECT 1 FROM tortillerias WHERE id = $1", [req.params.id]);
+    if (!t.rowCount) return reply.code(404).send({ error: "Tortillería no existe" });
+    // Otro censador subió la foto mientras este no tenía señal: no es error, ya no hace falta
+    const tiene = await pool.query("SELECT EXISTS (SELECT 1 FROM fotos WHERE tortilleria_id = $1) AS tiene", [req.params.id]);
+    if (tiene.rows[0]?.tiene) return reply.code(200).send({ yaTenia: true });
+    const ins = await pool.query(
+      `INSERT INTO foto_negativas(tortilleria_id, capturista_id, motivo, motivo_otro, capturado_en, id_cliente)
+       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id_cliente) DO NOTHING RETURNING id`,
+      [req.params.id, req.user.sub, d.motivo, d.motivo === "otro" ? d.motivoOtro : null, capturadoEn ? capturadoEn.toISOString() : null, d.idCliente ?? null],
+    );
+    if (!ins.rowCount) {
+      const ya = await pool.query("SELECT id FROM foto_negativas WHERE id_cliente = $1", [d.idCliente]);
+      return reply.code(200).send({ id: ya.rows[0].id, existente: true });
+    }
+    await auditar(req.user.sub, "foto_negativa", "foto_negativas", ins.rows[0].id);
+    return reply.code(201).send({ id: ins.rows[0].id });
   });
 
   // "No se obtuvieron los datos fiscales": queda el motivo (una fila por intento). Nunca bloquea el precio.

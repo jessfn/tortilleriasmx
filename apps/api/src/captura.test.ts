@@ -34,6 +34,7 @@ const migracion8 = readFileSync(path.join(aqui, "../../../db/migrations/008_rest
 const migracion9 = readFileSync(path.join(aqui, "../../../db/migrations/009_sin_datos_fiscales.sql"), "utf8");
 const migracion10 = readFileSync(path.join(aqui, "../../../db/migrations/010_aprobacion_automatica.sql"), "utf8");
 const migracion11 = readFileSync(path.join(aqui, "../../../db/migrations/011_personal_y_permisos.sql"), "utf8");
+const migracion12 = readFileSync(path.join(aqui, "../../../db/migrations/012_foto_negativas.sql"), "utf8");
 
 const PRE = `
 CREATE DOMAIN geometry AS point;
@@ -105,6 +106,7 @@ beforeAll(async () => {
   await h.db.exec(migracion9);
   await h.db.exec(migracion10);
   await h.db.exec(migracion11);
+  await h.db.exec(migracion12);
   process.env.UPLOADS_DIR = mkdtempSync(path.join(tmpdir(), "fotos-"));
   const u = async (nombre: string, rol: string) => (await q("INSERT INTO usuarios(usuario, rol, correo) VALUES ($1,$2,$1) RETURNING id", [nombre, rol]))[0].id;
   ana = await u("ana@correo.com", "capturista");
@@ -233,8 +235,8 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
   });
 
   it("al inicio no tiene datos fiscales (y se puede saber sin sesión)", async () => {
-    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, ana)).json()).toEqual({ tiene: false, ultimaNegativa: null });
-    expect(await (await fetch(`${base}/tortillerias/${tA}/fiscal/existe`)).json()).toEqual({ tiene: false, ultimaNegativa: null });
+    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, ana)).json()).toEqual({ tiene: false, ultimaNegativa: null, tieneFoto: false });
+    expect(await (await fetch(`${base}/tortillerias/${tA}/fiscal/existe`)).json()).toEqual({ tiene: false, ultimaNegativa: null, tieneFoto: false });
   });
 
   it("el primero los captura; el RFC se guarda cifrado", async () => {
@@ -247,7 +249,7 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
     expect(Buffer.from(f.rfc_cifrado).toString("utf8")).not.toContain("TGU100101AB1");
     expect(f.celular_cifrado).not.toBeNull();
     expect((await q("SELECT count(*)::int AS n FROM consentimientos WHERE tortilleria_id = $1", [tA]))[0].n).toBe(1);
-    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, beto)).json()).toEqual({ tiene: true, ultimaNegativa: null });
+    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, beto)).json()).toEqual({ tiene: true, ultimaNegativa: null, tieneFoto: false });
   });
 
   it("la segunda vez NO sobrescribe: responde 200 con lo existente, enmascarado", async () => {
@@ -290,7 +292,7 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
        VALUES ($1,'ANA','PEREZ',$2,'h',$3,'h2','fisica',$4,'h3',NULL)`,
       [t, cifrar("CURPXXXXXXXXXXXXXX"), cifrar("5511111111"), cifrar("PEPA800101AB1")],
     );
-    expect(await (await get(`/tortillerias/${t}/fiscal/existe`, ana)).json()).toEqual({ tiene: true, ultimaNegativa: null });
+    expect(await (await get(`/tortillerias/${t}/fiscal/existe`, ana)).json()).toEqual({ tiene: true, ultimaNegativa: null, tieneFoto: false });
     const r = await post(`/tortillerias/${t}/fiscal`, ana, moral);
     expect(r.status).toBe(200);
     expect((await q("SELECT count(*)::int AS n FROM tortilleria_fiscal WHERE tortilleria_id = $1", [t]))[0].n).toBe(0);
@@ -591,7 +593,7 @@ describe("sin conexión: tortillería nueva y foto con idCliente", () => {
 describe("catálogo por estado para el teléfono", () => {
   it("solo trae ese estado, sin rechazadas ni sin ubicación, y con tiene_fiscal correcto", async () => {
     const r = await (await get("/catalogo/estado/09", ana)).json();
-    expect(r.columnas).toEqual(["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal", "ultima_negativa"]);
+    expect(r.columnas).toEqual(["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal", "ultima_negativa", "tiene_foto"]);
     const nombres = r.filas.map((f: any[]) => f[1]);
     expect(nombres).toContain("LA GUERA");
     expect(nombres).not.toContain("RECHAZADA");
@@ -1390,3 +1392,89 @@ describe("orden y filtros en Revisión y Usuarios", () => {
 function capt0() {
   return ana; // un usuario de la app no entra al administrador, ordene como ordene
 }
+
+/* ===================== C17: foto también en tortillerías que ya existen ===================== */
+describe("C17: foto de las tortillerías que ya existen (o el motivo de por qué no se pudo)", () => {
+  const nuevaF = async (nombre: string) =>
+    (await q("INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus) VALUES ($1,'09','09015', point(-99.7, 19.97),'denue','validada') RETURNING id", [nombre]))[0].id as string;
+  const neg = (id: string, usuario: string, body: unknown) => post(`/tortillerias/${id}/foto/negativa`, usuario, body);
+  const subir = async (id: string, usuario = ana) => {
+    const jpg = await sharp({ create: { width: 900, height: 700, channels: 3, background: "#33cc66" } }).jpeg().toBuffer();
+    const fd = new FormData();
+    fd.append("file", new Blob([jpg], { type: "image/jpeg" }), "f.jpg");
+    return fetch(`${base}/tortillerias/${id}/fotos`, { method: "POST", headers: { authorization: auth(usuario).authorization, "x-id-cliente": crypto.randomUUID() }, body: fd });
+  };
+  const existe = async (id: string) => (await (await fetch(`${base}/tortillerias/${id}/fiscal/existe`)).json()) as any;
+
+  it("la consulta pública dice si la tortillería ya tiene foto, y cambia al subir una", async () => {
+    const t = await nuevaF("FOTO 1");
+    expect((await existe(t)).tieneFoto).toBe(false);
+    expect((await subir(t)).status).toBe(201); // una tortillería que ya existía acepta su foto como las nuevas
+    expect((await existe(t)).tieneFoto).toBe(true);
+  });
+
+  it("'No se pudo tomar la foto': motivo válido 201; sin motivo, desconocido, 'otro' sin texto o sin sesión se rechazan", async () => {
+    const t = await nuevaF("FOTO 2");
+    const r = await neg(t, ana, { motivo: "cerrado" });
+    expect(r.status).toBe(201);
+    expect(await q("SELECT motivo, capturista_id FROM foto_negativas WHERE tortilleria_id = $1", [t])).toEqual([{ motivo: "cerrado", capturista_id: ana }]);
+    expect((await neg(t, ana, {})).status).toBe(400);
+    expect((await neg(t, ana, { motivo: "porque_si" })).status).toBe(400);
+    expect((await neg(t, ana, { motivo: "otro" })).status).toBe(400);
+    expect((await neg(t, ana, { motivo: "otro", motivoOtro: "abc" })).status).toBe(400);
+    expect((await neg(t, ana, { motivo: "otro", motivoOtro: "El dueño no deja fotografiar" })).status).toBe(201);
+    expect((await fetch(`${base}/tortillerias/${t}/foto/negativa`, { method: "POST", headers: json, body: JSON.stringify({ motivo: "cerrado" }) })).status).toBe(401);
+    expect((await neg(crypto.randomUUID(), ana, { motivo: "cerrado" })).status).toBe(404);
+    expect((await neg("no-es-id", ana, { motivo: "cerrado" })).status).toBe(400);
+    // el texto solo se guarda con "otro"
+    expect((await neg(t, ana, { motivo: "sin_camara", motivoOtro: "no debe guardarse" })).status).toBe(201);
+    const filas = await q("SELECT motivo, motivo_otro FROM foto_negativas WHERE tortilleria_id = $1 ORDER BY creado_en", [t]);
+    expect(filas.map((f) => f.motivo_otro)).toEqual([null, "El dueño no deja fotografiar", null]);
+  });
+
+  it("un reintento (mismo idCliente) no duplica; si otro censador ya subió la foto, responde yaTenia y no guarda", async () => {
+    const t = await nuevaF("FOTO 3");
+    const idCliente = crypto.randomUUID();
+    expect((await neg(t, ana, { motivo: "no_permitieron", idCliente })).status).toBe(201);
+    const otra = await neg(t, ana, { motivo: "no_permitieron", idCliente });
+    expect(otra.status).toBe(200);
+    expect((await otra.json()).existente).toBe(true);
+    expect((await q("SELECT count(*)::int AS n FROM foto_negativas WHERE tortilleria_id = $1", [t]))[0].n).toBe(1);
+    const t2 = await nuevaF("FOTO 4");
+    expect((await subir(t2, beto)).status).toBe(201);
+    const r = await neg(t2, ana, { motivo: "cerrado" });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ yaTenia: true });
+    expect((await q("SELECT count(*)::int AS n FROM foto_negativas WHERE tortilleria_id = $1", [t2]))[0].n).toBe(0);
+  });
+
+  it("la hora del teléfono sigue las reglas de siempre (7 días atrás, 10 minutos adelante)", async () => {
+    const t = await nuevaF("FOTO 5");
+    const hace = (ms: number) => new Date(Date.now() - ms).toISOString();
+    expect((await neg(t, ana, { motivo: "cerrado", capturadoEn: hace(8 * 24 * 3600 * 1000) })).status).toBe(400);
+    expect((await neg(t, ana, { motivo: "cerrado", capturadoEn: hace(-30 * 60 * 1000) })).status).toBe(400);
+    expect((await neg(t, ana, { motivo: "cerrado", capturadoEn: hace(3600 * 1000) })).status).toBe(201);
+  });
+
+  it("el catálogo del estado trae si cada tortillería tiene foto, y su versión cambia al subirla", async () => {
+    const t = await nuevaF("FOTO 6");
+    const antes = await (await get("/catalogo/estado/09", ana)).json();
+    const i = antes.columnas.indexOf("tiene_foto");
+    expect(i).toBeGreaterThan(-1);
+    expect(antes.filas.find((f: any[]) => f[0] === t)[i]).toBe(0);
+    expect(antes.version).toMatch(/-f2$/); // marca del formato: los teléfonos con catálogo viejo lo descargan de nuevo
+    expect((await subir(t)).status).toBe(201);
+    const des = await (await get("/catalogo/estado/09", ana)).json();
+    expect(des.version).not.toBe(antes.version);
+    expect(des.filas.find((f: any[]) => f[0] === t)[i]).toBe(1);
+  });
+
+  it("el administrador ve los intentos sin foto con su motivo y quién los registró", async () => {
+    const t = await nuevaF("FOTO 7");
+    await neg(t, ana, { motivo: "otro", motivoOtro: "Local en remodelación" });
+    const h = await (await get(`/admin/tortillerias/${t}/negativas-foto`, sup, "supervisor")).json();
+    expect(h).toHaveLength(1);
+    expect(h[0]).toMatchObject({ motivo: "otro", motivo_otro: "Local en remodelación", censador: "ana@correo.com" });
+    expect((await get(`/admin/tortillerias/${t}/negativas-foto`, ana)).status).toBe(403);
+  });
+});

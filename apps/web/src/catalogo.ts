@@ -72,6 +72,7 @@ function aLocales(clave: string, r: Extract<Respuesta, { filas: unknown }>): Loc
     tiene_fiscal: f[i.tiene_fiscal] === 1,
     estado_clave: clave,
     ultima_negativa: i.ultima_negativa === undefined ? null : ((f[i.ultima_negativa] as string | null) ?? null),
+    tiene_foto: i.tiene_foto === undefined ? undefined : f[i.tiene_foto] === 1,
   }));
 }
 
@@ -117,6 +118,24 @@ export async function actualizarCatalogos(): Promise<number> {
     }
   }
   return n;
+}
+
+/** Marca localmente que una tortillería ya tiene foto (sin esperar a la siguiente descarga) */
+export async function marcarFotoLocal(id: string) {
+  for (const c of descargadas) {
+    const p = c.puntos.find((x) => x.id === id);
+    if (p && p.tiene_foto !== true) {
+      p.tiene_foto = true;
+      try {
+        await (await abrir()).put("catalogo", c);
+      } catch {
+        /* se corrige en la siguiente descarga */
+      }
+    }
+  }
+  const t = temporales.find((x) => x.id === id);
+  if (t) t.tiene_foto = true;
+  recomponer();
 }
 
 /** Marca localmente que una tortillería ya tiene datos fiscales (sin esperar a la siguiente descarga) */

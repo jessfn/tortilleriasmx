@@ -177,3 +177,24 @@ export const sinFiscalSchema = z
   })
   .refine((d) => d.motivo !== "otro" || !!d.motivoOtro, { message: "Especifica el motivo", path: ["motivoOtro"] });
 export type SinFiscalInput = z.infer<typeof sinFiscalSchema>;
+
+/* ---------- Cuando no se pudo tomar la foto de una tortillería que ya existe (C17) ---------- */
+
+export const MOTIVOS_SIN_FOTO = [
+  { clave: "cerrado", texto: "El establecimiento estaba cerrado" },
+  { clave: "no_permitieron", texto: "No permitieron tomar la foto" },
+  { clave: "sin_camara", texto: "No funciona la cámara de mi teléfono" },
+  { clave: "otro", texto: "Otro motivo" },
+] as const;
+export type MotivoSinFoto = (typeof MOTIVOS_SIN_FOTO)[number]["clave"];
+export const textoMotivoSinFoto = (clave: string | null | undefined) => MOTIVOS_SIN_FOTO.find((m) => m.clave === clave)?.texto ?? clave ?? "";
+
+export const sinFotoSchema = z
+  .object({
+    motivo: z.enum(MOTIVOS_SIN_FOTO.map((m) => m.clave) as [MotivoSinFoto, ...MotivoSinFoto[]]),
+    motivoOtro: z.preprocess(vacioAUndefined, z.string().trim().min(5, "Especifica el motivo (mínimo 5 caracteres)").max(200, "Máximo 200 caracteres").optional()),
+    idCliente: z.string().uuid().optional(),
+    capturadoEn: z.string().datetime({ offset: true }).optional(),
+  })
+  .refine((d) => d.motivo !== "otro" || !!d.motivoOtro, { message: "Especifica el motivo", path: ["motivoOtro"] });
+export type SinFotoInput = z.infer<typeof sinFotoSchema>;

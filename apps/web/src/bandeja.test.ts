@@ -106,6 +106,54 @@ describe("bandeja de pendientes", () => {
     expect(rutas()).toEqual(["/precios"]);
   });
 
+  it("tortillería que ya existía y no tenía foto: se envía su foto antes de los datos fiscales y los precios, y la foto ya no ocupa espacio", async () => {
+    h.respuesta = () => ({});
+    await guardarPaquete(
+      paquete({
+        fotoExistente: { idCliente: nuevoId(), archivo: new Blob(["x"], { type: "image/jpeg" }) },
+        fiscal: { tipoPersona: "moral", rfc: "ABC100101AB1", razonSocial: "X SA", aceptoAviso: true },
+      }),
+    );
+    await sincronizar();
+    expect(rutas()).toEqual(["/tortillerias/:id/fotos", "/tortillerias/:id/fiscal", "/precios"]);
+    expect(h.llamadas[0].headers["x-id-cliente"]).toBeTruthy(); // lleva su id para que un reintento no la duplique
+    const [p] = await listarPaquetes();
+    expect(p.estado).toBe("enviado");
+    expect(p.fotoExistente?.archivo).toBeUndefined();
+  });
+
+  it("'No se pudo tomar la foto': se envía el motivo (sin foto) antes de los precios y no se marca la tortillería como con foto", async () => {
+    h.respuesta = () => ({});
+    await guardarPaquete(paquete({ sinFoto: { motivo: "otro", motivoOtro: "Local en remodelación", idCliente: nuevoId() } }));
+    await sincronizar();
+    expect(rutas()).toEqual(["/tortillerias/:id/foto/negativa", "/precios"]);
+    expect(h.llamadas[0].cuerpo).toMatchObject({ motivo: "otro", motivoOtro: "Local en remodelación" });
+    expect(h.llamadas[0].cuerpo.idCliente).toBeTruthy();
+    expect(h.llamadas[0].cuerpo.capturadoEn).toBeTruthy();
+    expect((await listarPaquetes())[0].estado).toBe("enviado");
+  });
+
+  it("un reintento no vuelve a enviar la foto ni el motivo que ya llegaron", async () => {
+    h.respuesta = () => ({});
+    await guardarPaquete(paquete({ sinFoto: { motivo: "cerrado", idCliente: nuevoId() }, hecho: { sinFoto: true } }));
+    await guardarPaquete(paquete({ fotoExistente: { idCliente: nuevoId(), archivo: new Blob(["x"]) }, hecho: { fotoExistente: true } }));
+    await sincronizar();
+    expect(rutas()).toEqual(["/precios", "/precios"]);
+  });
+
+  it("'Era la misma': la foto que se había tomado para la nueva sirve para la que ya existía", async () => {
+    const idCliente = nuevoId();
+    const temp = idTemporal(idCliente);
+    const fotoIdCliente = nuevoId();
+    h.respuesta = (ruta) => (ruta === "/tortillerias" ? { id: REAL } : {});
+    await guardarPaquete(paquete({ tortilleria: { id: temp, nombre: "N", domicilio: null, lat: 1, lng: 1 }, nueva: { idCliente, datos: {}, fotoIdCliente, foto: new Blob(["x"], { type: "image/jpeg" }) }, estado: "conflicto", posibles: [{ id: REAL, nombre: "LA GUERA", domicilio: null }] }));
+    const [antes] = await listarPaquetes();
+    await usarExistente(antes.id, { id: REAL, nombre: "LA GUERA", domicilio: null });
+    await sincronizar({ forzar: true });
+    expect(rutas()).toEqual(["/tortillerias/:id/fotos", "/precios"]);
+    expect(h.llamadas[0].headers["x-id-cliente"]).toBe(fotoIdCliente);
+  });
+
   it("el id temporal de una tortillería nueva se reemplaza por el real en los paquetes que la usan", async () => {
     const idCliente = nuevoId();
     const temp = idTemporal(idCliente);
@@ -274,6 +322,35 @@ describe("catálogo local", () => {
   beforeEach(async () => {
     h.respuesta = () => ({ version: "v1", columnas, filas });
     await descargarEstado("09", "CIUDAD DE MEXICO");
+  });
+
+  it("el catálogo trae si cada tortillería tiene foto; sin esa columna (catálogo viejo) no se sabe y no se exige", async () => {
+    h.respuesta = () => ({ version: "v3", columnas: [...columnas, "ultima_negativa", "tiene_foto"], filas: filas.map((f, n) => [...f, null, n === 1 ? 0 : 1]) });
+    await descargarEstado("09", "CIUDAD DE MEXICO");
+    expect(porId("i1")?.tiene_foto).toBe(true);
+    expect(porId("i2")?.tiene_foto).toBe(false);
+    h.respuesta = () => ({ version: "v4", columnas, filas });
+    await descargarEstado("09", "CIUDAD DE MEXICO");
+    expect(porId("i2")?.tiene_foto).toBeUndefined();
+  });
+
+  it("al enviar la foto, el catálogo local recuerda que ya tiene (no se pide de nuevo sin conexión)", async () => {
+    h.respuesta = () => ({ version: "v3", columnas: [...columnas, "ultima_negativa", "tiene_foto"], filas: filas.map((f) => [...f, null, 0]) });
+    await descargarEstado("09", "CIUDAD DE MEXICO");
+    expect(porId("i2")?.tiene_foto).toBe(false);
+    h.respuesta = () => ({});
+    await guardarPaquete(paquete({ tortilleria: { id: "i2", nombre: "EL MAIZ", domicilio: null, lat: 19.44, lng: -99.14 }, fotoExistente: { idCliente: nuevoId(), archivo: new Blob(["x"]) } }));
+    await sincronizar();
+    expect(porId("i2")?.tiene_foto).toBe(true);
+  });
+
+  it("si el servidor dice que otra persona ya subió la foto, el catálogo local también lo recuerda", async () => {
+    h.respuesta = () => ({ version: "v3", columnas: [...columnas, "ultima_negativa", "tiene_foto"], filas: filas.map((f) => [...f, null, 0]) });
+    await descargarEstado("09", "CIUDAD DE MEXICO");
+    h.respuesta = (ruta) => (ruta.endsWith("/foto/negativa") ? { yaTenia: true } : {});
+    await guardarPaquete(paquete({ tortilleria: { id: "i2", nombre: "EL MAIZ", domicilio: null, lat: 19.44, lng: -99.14 }, sinFoto: { motivo: "cerrado", idCliente: nuevoId() } }));
+    await sincronizar();
+    expect(porId("i2")?.tiene_foto).toBe(true);
   });
 
   it("una negativa NO marca tiene_fiscal en el catálogo local (la tortillería sigue sin datos)", async () => {

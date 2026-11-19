@@ -22,6 +22,8 @@ export type Local = {
   estado_clave: string;
   /** clave del motivo del último intento sin datos fiscales (si lo hubo) */
   ultima_negativa?: string | null;
+  /** ¿ya tiene foto? Si no, la primera visita debe traerla. undefined = no se sabe (catálogo viejo): no se exige. */
+  tiene_foto?: boolean;
 };
 
 export type RegistroCatalogo = { clave: string; nombre: string; version: string; descargado: string; puntos: Local[] };
@@ -47,9 +49,12 @@ export type Paquete = {
   fiscal?: { tipoPersona: string; rfc: string; razonSocial: string; celular?: string; aceptoAviso: boolean };
   /** "No se obtuvieron los datos fiscales" (con su motivo). Un paquete lleva `fiscal` o `sinFiscal`, nunca los dos. */
   sinFiscal?: { motivo: string; motivoOtro?: string; idCliente: string };
+  /** Tortillería que ya existía y aún no tenía foto: la foto del frente, o el motivo de por qué no se pudo (nunca las dos) */
+  fotoExistente?: { idCliente: string; archivo?: Blob };
+  sinFoto?: { motivo: string; motivoOtro?: string; idCliente: string };
   precios: Precio[];
   gps?: { lat: number; lng: number; precision?: number };
-  hecho: { tortilleria?: boolean; foto?: boolean; fiscal?: boolean; sinFiscal?: boolean };
+  hecho: { tortilleria?: boolean; foto?: boolean; fiscal?: boolean; sinFiscal?: boolean; fotoExistente?: boolean; sinFoto?: boolean };
   /** parecidas que encontró el servidor (conflicto de duplicado) */
   posibles?: { id: string; nombre: string; domicilio: string | null }[];
 };
