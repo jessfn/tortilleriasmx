@@ -788,3 +788,20 @@ describe("no se obtuvieron los datos fiscales (C14)", () => {
     expect((await get("/admin/sin-fiscal", ana)).status).toBe(403);
   });
 });
+
+describe("revisión de precios: detalle de la captura", () => {
+  it("el administrador ve dónde y cuándo se capturó (GPS, precisión y hora del teléfono)", async () => {
+    const t = (await q("INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus) VALUES ('DET 1','09','09015', point(-99.3, 19.6),'denue','validada') RETURNING id"))[0].id as string;
+    const hora = new Date(Date.now() - 3600_000).toISOString();
+    expect((await post("/precios", ana, { tortilleriaId: t, producto: "maiz", precioKg: 23, lat: 19.601, lng: -99.301, precisionGps: 12, capturadoEn: hora })).status).toBe(201);
+    expect((await post("/precios", beto, { tortilleriaId: t, producto: "masa", precioKg: 18 })).status).toBe(201); // sin GPS
+    const lista = await (await get(`/admin/capturas?tortilleria=${t}`, sup, "supervisor")).json();
+    const conGps = lista.find((c: any) => c.producto === "maiz");
+    expect(conGps).toMatchObject({ captura_lat: 19.601, captura_lng: -99.301, precision_gps: 12 });
+    expect(new Date(conGps.capturado_en).toISOString()).toBe(hora);
+    const sinGps = lista.find((c: any) => c.producto === "masa");
+    expect(sinGps.captura_lat).toBeNull();
+    expect(sinGps.capturado_en).toBeTruthy(); // sin hora del teléfono, la de llegada al servidor
+    expect((await get(`/admin/capturas?tortilleria=${t}`, ana)).status).toBe(403);
+  });
+});

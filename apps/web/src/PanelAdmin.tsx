@@ -2,7 +2,7 @@ import { formatearTelefono } from "@tortillerias/shared";
 import { NegativasFiscales } from "./NegativasFiscales";
 import { useCallback, useEffect, useState } from "react";
 import {
-  AlertTriangle, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, Loader2, Mail, MapPin, Phone, Store, TriangleAlert,
+  AlertTriangle, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, ChevronDown, Clock, Eye, Loader2, Mail, MapPin, Navigation, Phone, Store, TriangleAlert,
   UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, KeyRound, Copy, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog,
 } from "lucide-react";
 import { api, type Sesion } from "./api";
@@ -10,6 +10,8 @@ import FotoAuth from "./FotoAuth";
 import Perfil from "./Perfil";
 import { CLAVES, usePersistente } from "./persist";
 import { Aviso, Boton, HojaModal, Insignia, Tarjeta, Vacio } from "./ui";
+import MiniMapa from "./MiniMapa";
+import { distanciaM } from "./catalogo";
 import AdminBarra from "./AdminBarra";
 import AdminResumen, { type Resumen } from "./AdminResumen";
 import AdminMapa, { type FocoMapa } from "./AdminMapa";
@@ -26,6 +28,8 @@ export type TortilleriaAdm = {
 export type CapturaAdm = {
   id: string; producto: "maiz" | "harina" | "masa"; precio_kg: string; fecha: string; estatus: string; alerta: boolean; tortilleria_id: string;
   nombre: string; municipio: string | null; estado: string | null; capturista: string | null;
+  /** dónde y cuándo se hizo la captura (el GPS puede faltar) */
+  precision_gps?: number | null; captura_lat?: number | null; captura_lng?: number | null; capturado_en?: string | null;
 };
 type UsuarioAdm = { id: string; correo: string | null; usuario: string; nombre: string; apellidos: string; rol: string; activo: boolean; creado_en: string; capturas: number; debe_cambiar_password?: boolean };
 /** Datos fiscales de la tortillería; si solo hay un registro viejo de responsable, llega con legado = true */
@@ -33,6 +37,11 @@ export type Fiscal = { tipoPersona: string; razonSocial: string; rfc: string; ce
 
 const PRODUCTO = { maiz: { t: "Tortilla", i: Wheat }, harina: { t: "Harina", i: PackageOpen }, masa: { t: "Masa", i: Layers } };
 const fecha = (s: string) => new Date(s).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
+/** Día de una captura ("AAAA-MM-DD", día de México): se arma sin pasar por UTC para que no se corra un día */
+const dia = (s: string) => {
+  const [y, m, d] = s.slice(0, 10).split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
+};
 
 export default function PanelAdmin({
   sesion, alActualizarSesion, alSalir, alInicio,
@@ -91,6 +100,9 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
   const [tortillerias, setTortillerias] = useState<TortilleriaAdm[]>();
   const [capturas, setCapturas] = useState<CapturaAdm[]>();
   const [detalle, setDetalle] = useState<TortilleriaAdm>();
+  /** "Ver más detalles" de un precio por revisar: la tortillería completa y la captura que se está revisando */
+  const [detalleCaptura, setDetalleCaptura] = useState<{ t: TortilleriaAdm; c: CapturaAdm }>();
+  const [abriendo, setAbriendo] = useState<string>();
   const [trabajando, setTrabajando] = useState<string>();
   const [error, setError] = useState("");
 
@@ -113,6 +125,18 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
       setError(e.message);
     } finally {
       setTrabajando(undefined);
+    }
+  }
+
+  async function verCaptura(c: CapturaAdm) {
+    setAbriendo(c.id);
+    setError("");
+    try {
+      setDetalleCaptura({ t: await api<TortilleriaAdm>(`/admin/tortillerias/${c.tortilleria_id}`), c });
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setAbriendo(undefined);
     }
   }
 
@@ -202,7 +226,10 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
                     <TriangleAlert className="h-3.5 w-3.5" aria-hidden /> Precio atípico respecto a la mediana del municipio
                   </div>
                 )}
-                <p className="truncate text-xs text-stone-400">{c.capturista ?? "Sin usuario"} · {fecha(c.fecha)}</p>
+                <p className="truncate text-xs text-stone-400">{c.capturista ?? "Sin usuario"} · {dia(c.fecha)}</p>
+                <Boton variante="secundario" className="!min-h-10 !text-sm" disabled={abriendo === c.id} icono={abriendo === c.id ? Loader2 : Eye} onClick={() => verCaptura(c)}>
+                  Ver más detalles
+                </Boton>
                 {c.estatus === "pendiente" && (
                   <div className="grid grid-cols-2 gap-2">
                     <Boton variante="peligro" className="!min-h-10" disabled={trabajando === c.id} icono={X} onClick={() => resolverCaptura(c.id, "rechazada")}>Rechazar</Boton>
@@ -214,22 +241,41 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
           })
         ))}
 
+      {detalleCaptura && (
+        <DetalleTortilleria
+          t={detalleCaptura.t}
+          captura={detalleCaptura.c}
+          trabajando={trabajando === detalleCaptura.c.id}
+          alCerrar={() => setDetalleCaptura(undefined)}
+          alResolver={resolverTortilleria}
+          alResolverCaptura={async (id, nuevo) => {
+            await resolverCaptura(id, nuevo);
+            setDetalleCaptura(undefined);
+          }}
+        />
+      )}
       {detalle && <DetalleTortilleria t={detalle} trabajando={trabajando === detalle.id} alCerrar={() => setDetalle(undefined)} alResolver={resolverTortilleria} />}
     </>
   );
 }
 
 function DetalleTortilleria({
-  t, trabajando, alCerrar, alResolver,
-}: { t: TortilleriaAdm; trabajando: boolean; alCerrar: () => void; alResolver: (id: string, e: "validada" | "rechazada") => void }) {
+  t, captura, trabajando, alCerrar, alResolver, alResolverCaptura,
+}: {
+  t: TortilleriaAdm; trabajando: boolean; alCerrar: () => void; alResolver: (id: string, e: "validada" | "rechazada") => void;
+  /** Si viene, es la revisión de un precio: se muestra la captura arriba y los botones aprueban o rechazan ese precio */
+  captura?: CapturaAdm; alResolverCaptura?: (id: string, e: "validada" | "rechazada") => void;
+}) {
   const [fotos, setFotos] = useState<{ id: string }[]>();
   const [fiscal, setFiscal] = useState<Fiscal | null>();
   const [foto, setFoto] = useState(0);
+  const [historial, setHistorial] = useState<CapturaAdm[]>();
   const sinFoto = t.origen === "nueva" && (fotos === undefined ? t.n_fotos === 0 : fotos.length === 0);
 
   useEffect(() => {
     api<{ id: string }[]>(`/admin/tortillerias/${t.id}/fotos`).then(setFotos).catch(() => setFotos([]));
     api<Fiscal>(`/tortillerias/${t.id}/fiscal`).then(setFiscal).catch(() => setFiscal(null));
+    api<CapturaAdm[]>(`/admin/capturas?tortilleria=${t.id}`).then(setHistorial).catch(() => setHistorial([]));
   }, [t.id]);
 
   const Fila = ({ i: I, k, v }: { i: typeof Store; k: string; v: string }) => (
@@ -243,16 +289,20 @@ function DetalleTortilleria({
   );
 
   return (
-    <HojaModal titulo={t.nombre} alCerrar={alCerrar}>
-      <div className="flex items-center justify-between">
-        <Insignia estatus={t.estatus} />
-        <span className="text-xs text-stone-400">{fecha(t.creado_en)}</span>
-      </div>
+    <HojaModal titulo={captura ? "Revisión del precio" : t.nombre} alCerrar={alCerrar}>
+      {captura ? (
+        <TarjetaCaptura c={captura} t={t} />
+      ) : (
+        <div className="flex items-center justify-between">
+          <Insignia estatus={t.estatus} />
+          <span className="text-xs text-stone-400">{fecha(t.creado_en)}</span>
+        </div>
+      )}
 
       {fotos === undefined ? (
         <div className="aspect-[4/3] animate-pulse rounded-2xl bg-stone-200" />
       ) : fotos.length === 0 ? (
-        <div className="grid aspect-[4/3] place-items-center rounded-2xl bg-stone-100 text-stone-400"><Camera className="h-8 w-8" aria-hidden /></div>
+        <div className="flex items-center justify-center gap-2 rounded-2xl bg-stone-100 py-5 text-sm text-stone-400"><Camera className="h-5 w-5" aria-hidden /> Esta tortillería no tiene foto</div>
       ) : (
         <>
           <FotoAuth id={fotos[foto].id} className="aspect-[4/3] w-full rounded-2xl" />
@@ -268,20 +318,15 @@ function DetalleTortilleria({
         </>
       )}
 
-      <Tarjeta className="divide-y divide-stone-100 !py-1">
-        <Fila i={Building2} k="Ubicación" v={[t.municipio, t.estado].filter(Boolean).join(", ") || "—"} />
-        <Fila i={MapPin} k="Dirección" v={t.domicilio ?? "—"} />
-        {t.localidad && <Fila i={Building2} k="Localidad" v={t.localidad} />}
-        {(t.tipo_vial || t.calle) && <Fila i={MapPin} k="Vialidad" v={[t.tipo_vial, t.calle].filter(Boolean).join(" ")} />}
-        {(t.numero_ext || t.numero_int) && <Fila i={Hash} k="Número" v={[t.numero_ext && `Ext. ${t.numero_ext}`, t.numero_int && `Int. ${t.numero_int}`].filter(Boolean).join(" · ")} />}
-        {t.colonia && <Fila i={Building2} k="Colonia" v={t.colonia} />}
-        {t.codigo_postal && <Fila i={Hash} k="Código postal" v={t.codigo_postal} />}
-        {t.telefono && <Fila i={Phone} k="Teléfono de la tortillería" v={formatearTelefono(t.telefono)} />}
-        {t.correo && <Fila i={Mail} k="Correo de la tortillería" v={t.correo} />}
-        {t.personal_ocupado && <Fila i={Users} k="Personal ocupado" v={t.personal_ocupado} />}
-        {t.fecha_alta && <Fila i={CalendarDays} k="Fecha de alta" v={t.fecha_alta} />}
-        <Fila i={UserRound} k="Registrada por" v={t.creador ?? "DENUE"} />
-      </Tarjeta>
+      {t.lat != null && t.lng != null && (
+        <div className="space-y-1.5">
+          <MiniMapa tortilleria={{ lat: t.lat, lng: t.lng }} captura={captura?.captura_lat != null && captura.captura_lng != null ? { lat: captura.captura_lat, lng: captura.captura_lng } : null} />
+          <p className="flex items-center gap-3 px-1 text-[11px] text-stone-500">
+            <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-[#7a1b3f]" aria-hidden /> Tortillería</span>
+            {captura?.captura_lat != null && <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-[#2563eb]" aria-hidden /> Dónde se capturó</span>}
+          </p>
+        </div>
+      )}
       {t.lat != null && t.lng != null && (
         <a
           href={`https://www.openstreetmap.org/?mlat=${t.lat}&mlon=${t.lng}#map=18/${t.lat}/${t.lng}`}
@@ -292,6 +337,59 @@ function DetalleTortilleria({
           <ExternalLink className="h-4 w-4" aria-hidden /> Ver ubicación en el mapa
         </a>
       )}
+
+      <Tarjeta className="divide-y divide-stone-100 !py-1">
+        <Fila i={Building2} k="Ubicación" v={[t.municipio, t.estado].filter(Boolean).join(", ") || "—"} />
+        <Fila i={MapPin} k="Dirección" v={t.domicilio ?? "—"} />
+        <details className="group">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-center gap-1.5 text-sm font-semibold text-guinda">
+            <ChevronDown className="h-4 w-4 transition group-open:rotate-180" aria-hidden /> <span className="group-open:hidden">Ver todos los datos</span><span className="hidden group-open:inline">Ocultar datos</span>
+          </summary>
+          <div className="divide-y divide-stone-100">
+        {t.localidad && <Fila i={Building2} k="Localidad" v={t.localidad} />}
+        {(t.tipo_vial || t.calle) && <Fila i={MapPin} k="Vialidad" v={[t.tipo_vial, t.calle].filter(Boolean).join(" ")} />}
+        {(t.numero_ext || t.numero_int) && <Fila i={Hash} k="Número" v={[t.numero_ext && `Ext. ${t.numero_ext}`, t.numero_int && `Int. ${t.numero_int}`].filter(Boolean).join(" · ")} />}
+        {t.colonia && <Fila i={Building2} k="Colonia" v={t.colonia} />}
+        {t.codigo_postal && <Fila i={Hash} k="Código postal" v={t.codigo_postal} />}
+        {t.telefono && <Fila i={Phone} k="Teléfono de la tortillería" v={formatearTelefono(t.telefono)} />}
+        {t.correo && <Fila i={Mail} k="Correo de la tortillería" v={t.correo} />}
+        {t.personal_ocupado && <Fila i={Users} k="Personal ocupado" v={t.personal_ocupado} />}
+        {t.fecha_alta && <Fila i={CalendarDays} k="Fecha de alta" v={t.fecha_alta} />}
+        <Fila i={UserRound} k="Registrada por" v={t.creador ?? "DENUE"} />
+          </div>
+        </details>
+      </Tarjeta>
+
+      <Tarjeta className="!py-2">
+        <h3 className="flex items-center gap-2 py-1 text-sm font-bold"><Banknote className="h-4 w-4 text-guinda" aria-hidden /> Precios de esta tortillería</h3>
+        {historial === undefined ? (
+          <p className="py-2 text-sm text-stone-400">Cargando…</p>
+        ) : historial.length === 0 ? (
+          <p className="py-2 text-sm text-stone-500">Todavía no tiene precios capturados.</p>
+        ) : (
+          <ul className="divide-y divide-stone-100">
+            {historial.slice(0, 10).map((h) => {
+              const P = PRODUCTO[h.producto];
+              const actual = h.id === captura?.id;
+              return (
+                <li key={h.id} className={`flex items-center justify-between gap-2 py-2 text-sm ${actual ? "-mx-2 rounded-lg bg-guinda/5 px-2 ring-1 ring-guinda/20" : ""}`}>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <P.i className="h-4 w-4 shrink-0 text-guinda" aria-hidden />
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{P.t}{actual ? " · este precio" : ""}</span>
+                      <span className="block truncate text-[11px] text-stone-400">{dia(h.fecha)} · {h.capturista ?? "Sin usuario"}</span>
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    <b>${Number(h.precio_kg).toFixed(2)}</b>
+                    <Insignia estatus={h.estatus} />
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Tarjeta>
 
       <Tarjeta className="!py-2">
         <h3 className="flex items-center gap-2 py-1 text-sm font-bold"><ShieldCheck className="h-4 w-4 text-verde" aria-hidden /> Datos fiscales</h3>
@@ -313,13 +411,19 @@ function DetalleTortilleria({
         <p className="pt-1 text-[11px] text-stone-400">La consulta de datos fiscales queda registrada en la auditoría.</p>
       </Tarjeta>
 
-      {t.estatus === "pendiente" && (
+      {captura && alResolverCaptura && captura.estatus === "pendiente" && (
+        <div className="sticky -bottom-4 -mx-4 -mb-4 grid grid-cols-2 gap-2 border-t border-stone-200 bg-stone-50/95 px-4 pb-[max(1rem,calc(var(--sb)*.35))] pt-3 backdrop-blur">
+          <Boton variante="peligro" disabled={trabajando} icono={X} onClick={() => alResolverCaptura(captura.id, "rechazada")}>Rechazar precio</Boton>
+          <Boton disabled={trabajando} icono={trabajando ? Loader2 : Check} onClick={() => alResolverCaptura(captura.id, "validada")}>Aprobar precio</Boton>
+        </div>
+      )}
+      {!captura && t.estatus === "pendiente" && (
         <div className="grid grid-cols-2 gap-2">
           <Boton variante="peligro" disabled={trabajando} icono={X} onClick={() => alResolver(t.id, "rechazada")}>Rechazar</Boton>
           <Boton disabled={trabajando || sinFoto} icono={trabajando ? Loader2 : Check} onClick={() => alResolver(t.id, "validada")}>Validar</Boton>
         </div>
       )}
-      {t.estatus === "pendiente" && sinFoto && (
+      {!captura && t.estatus === "pendiente" && sinFoto && (
         <p className="flex items-center gap-1.5 text-xs text-amber-700">
           <Camera className="h-3.5 w-3.5 shrink-0" aria-hidden /> Una tortillería nueva no se puede validar sin foto.
         </p>
@@ -460,5 +564,46 @@ function VistaUsuarios({ miId }: { miId: string }) {
         </HojaModal>
       )}
     </>
+  );
+}
+
+/** Lo que se está revisando de un precio: cuánto, quién, cuándo, y qué tan lejos de la tortillería se capturó */
+function TarjetaCaptura({ c, t }: { c: CapturaAdm; t: TortilleriaAdm }) {
+  const P = PRODUCTO[c.producto];
+  const lejos =
+    c.captura_lat != null && c.captura_lng != null && t.lat != null && t.lng != null
+      ? distanciaM({ lat: c.captura_lat, lng: c.captura_lng }, { lat: t.lat, lng: t.lng })
+      : null;
+  const distancia = lejos == null ? null : lejos < 1000 ? `${Math.round(lejos)} m` : `${(lejos / 1000).toFixed(1)} km`;
+  return (
+    <Tarjeta className="space-y-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate font-semibold leading-tight">{t.nombre}</p>
+          <p className="truncate text-xs text-stone-500">{[t.municipio, t.estado].filter(Boolean).join(", ")}</p>
+        </div>
+        <Insignia estatus={c.estatus} />
+      </div>
+      <div className="flex items-center justify-between rounded-xl bg-stone-100/80 px-3 py-2">
+        <span className="flex items-center gap-1.5 text-sm text-stone-600"><P.i className="h-4 w-4 text-guinda" aria-hidden /> {P.t}</span>
+        <span className="text-2xl font-bold">${Number(c.precio_kg).toFixed(2)}<span className="text-xs font-medium text-stone-400"> /kg</span></span>
+      </div>
+      {c.alerta && (
+        <div className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
+          <TriangleAlert className="h-3.5 w-3.5" aria-hidden /> Precio atípico respecto a la mediana del municipio
+        </div>
+      )}
+      <ul className="space-y-1 text-xs text-stone-500">
+        <li className="flex items-center gap-1.5"><UserRound className="h-3.5 w-3.5 text-guinda" aria-hidden /> {c.capturista ?? "Sin usuario"}</li>
+        <li className="flex items-center gap-1.5">
+          <Clock className="h-3.5 w-3.5 text-guinda" aria-hidden />
+          {c.capturado_en ? new Date(c.capturado_en).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" }) : dia(c.fecha)}
+        </li>
+        <li className="flex items-center gap-1.5">
+          <Navigation className="h-3.5 w-3.5 text-guinda" aria-hidden />
+          {distancia ? `Se capturó a ${distancia} de la tortillería${c.precision_gps ? ` (precisión del GPS ±${Math.round(c.precision_gps)} m)` : ""}` : "Esta captura no trae ubicación GPS"}
+        </li>
+      </ul>
+    </Tarjeta>
   );
 }

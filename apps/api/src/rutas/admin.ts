@@ -76,6 +76,8 @@ export function rutasAdmin(app: FastifyInstance) {
     if (tortilleria && !tortilleria.success) return reply.code(400).send({ error: "Id inválido" });
     const { rows } = await pool.query(
       `SELECT c.id, c.producto, c.precio_kg, c.fecha, c.estatus, c.alerta, c.tortilleria_id,
+              c.precision_gps, ST_Y(c.geom_captura) AS captura_lat, ST_X(c.geom_captura) AS captura_lng,
+              coalesce(c.capturado_en, c.creado_en) AS capturado_en,
               t.nombre, m.nombre AS municipio, e.nombre AS estado, u.correo AS capturista
          FROM capturas_precio c
          JOIN tortillerias t ON t.id = c.tortilleria_id
