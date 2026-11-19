@@ -45,7 +45,7 @@ export default function LoginAdmin({ alEntrar }: { alEntrar: (s: Sesion) => void
     <div className="flex min-h-dvh flex-col bg-guinda-oscuro lg:h-dvh lg:flex-row lg:overflow-hidden">
       {/* Portada institucional */}
       <aside className="relative shrink-0 overflow-hidden px-6 pb-14 pt-[max(1.5rem,env(safe-area-inset-top))] text-white lg:flex lg:w-[46%] lg:flex-col lg:justify-between lg:px-12 lg:pb-12 lg:pt-12">
-        <img src="/login-tortilleria.jpg" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
+        <img src="/login-tortilleria.webp" alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-b from-[#2a0615]/95 via-guinda-oscuro/90 to-guinda-oscuro/70 lg:bg-gradient-to-br" aria-hidden />
 
         <div className="relative flex items-center gap-3">

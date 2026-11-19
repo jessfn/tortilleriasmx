@@ -32,6 +32,7 @@ const migracion = readFileSync(path.join(aqui, "../../../db/migrations/006_limit
 const migracion7 = readFileSync(path.join(aqui, "../../../db/migrations/007_sin_conexion.sql"), "utf8");
 const migracion8 = readFileSync(path.join(aqui, "../../../db/migrations/008_restablecer_password.sql"), "utf8");
 const migracion9 = readFileSync(path.join(aqui, "../../../db/migrations/009_sin_datos_fiscales.sql"), "utf8");
+const migracion10 = readFileSync(path.join(aqui, "../../../db/migrations/010_aprobacion_automatica.sql"), "utf8");
 
 const PRE = `
 CREATE DOMAIN geometry AS point;
@@ -71,7 +72,8 @@ CREATE TABLE capturas_precio (
   creado_en timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE fotos (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tortilleria_id uuid NOT NULL REFERENCES tortillerias(id), archivo text NOT NULL, miniatura text, capturista_id uuid);
-CREATE TABLE alertas (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tipo text NOT NULL, captura_id uuid REFERENCES capturas_precio(id));
+CREATE TABLE alertas (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tipo text NOT NULL, captura_id uuid REFERENCES capturas_precio(id), estatus text NOT NULL DEFAULT 'abierta');
+CREATE TABLE auditoria (id bigserial PRIMARY KEY, usuario_id uuid, accion text NOT NULL, entidad text, entidad_id text, fecha timestamptz NOT NULL DEFAULT now());
 CREATE TABLE consentimientos (id bigserial PRIMARY KEY, responsable_id uuid REFERENCES responsables(id), version text NOT NULL, aceptado_en timestamptz NOT NULL DEFAULT now());
 `;
 
@@ -100,6 +102,7 @@ beforeAll(async () => {
   await h.db.exec(migracion7);
   await h.db.exec(migracion8);
   await h.db.exec(migracion9);
+  await h.db.exec(migracion10);
   process.env.UPLOADS_DIR = mkdtempSync(path.join(tmpdir(), "fotos-"));
   const u = async (nombre: string, rol: string) => (await q("INSERT INTO usuarios(usuario, rol, correo) VALUES ($1,$2,$1) RETURNING id", [nombre, rol]))[0].id;
   ana = await u("ana@correo.com", "capturista");
@@ -854,5 +857,293 @@ describe("listas de revisión sin límite y con paginación", () => {
     expect(h).toHaveLength(100);
     const rech = await (await get("/admin/tortillerias?estatus=rechazada&pagina=1", sup, "supervisor")).json();
     expect(rech.filas.every((f: any) => f.estatus === "rechazada")).toBe(true);
+  });
+});
+
+/* ===================== C15: aprobación automática, qué cuenta y cómo se promedia ===================== */
+describe("C15: aprobación automática de precios", () => {
+  const nueva15 = async (nombre: string, mun = "15001", est = "15", geom = "point(-97, 21)", origen = "denue", estatus = "validada") =>
+    (await q(`INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus) VALUES ($1,$2,$3,${geom},$4,$5) RETURNING id`, [nombre, est, mun, origen, estatus]))[0].id as string;
+  const precio = (usuario: string, t: string, p: number, producto = "maiz") => post("/precios", usuario, { tortilleriaId: t, producto, precioKg: p });
+  const patch = (url: string, usuario: string, body: unknown, rol = "supervisor") => fetch(base + url, { method: "PATCH", headers: auth(usuario, rol), body: JSON.stringify(body) });
+  let capAtipica: string;
+
+  beforeAll(async () => {
+    await q("INSERT INTO estados VALUES ('15','ESTADO QUINCE'), ('16','ESTADO DIECISEIS')");
+    await q("INSERT INTO municipios VALUES ('15001','15','MUN QUINCE'), ('16001','16','MUN DIECISEIS')");
+  });
+
+  it("un precio normal entra validado y con aprobación automática (sin referencia aún)", async () => {
+    const t = await nueva15("AUTO 1");
+    const r = await precio(ana, t, 25);
+    expect(r.status).toBe(201);
+    expect((await r.json()).alerta).toBe(false);
+    const [c] = await q("SELECT estatus, aprobacion, alerta, mediana_ref, n_ref FROM capturas_precio WHERE tortilleria_id = $1", [t]);
+    expect(c).toMatchObject({ estatus: "validada", aprobacion: "automatica", alerta: false, mediana_ref: null, n_ref: null });
+  });
+
+  it("un precio atípico (más de 30 % de la mediana con al menos 3 precios) entra pendiente y guarda su referencia", async () => {
+    for (const n of ["AUTO 2", "AUTO 3"]) expect((await precio(ana, await nueva15(n), 25)).status).toBe(201); // con AUTO 1: 3 precios de $25
+    const t = await nueva15("ATIPICO 1");
+    const r = await precio(beto, t, 40); // +60 %
+    expect(r.status).toBe(201);
+    expect((await r.json()).alerta).toBe(true);
+    const [c] = await q("SELECT id, estatus, aprobacion, alerta, mediana_ref::float8 AS mediana_ref, n_ref FROM capturas_precio WHERE tortilleria_id = $1", [t]);
+    expect(c).toMatchObject({ estatus: "pendiente", aprobacion: null, alerta: true, mediana_ref: 25, n_ref: 3 });
+    capAtipica = c.id;
+    expect((await q("SELECT count(*)::int AS n FROM alertas WHERE captura_id = $1", [c.id]))[0].n).toBe(1);
+  });
+
+  it("la mediana solo usa precios que cuentan: ignora atípicos pendientes y tortillerías rechazadas", async () => {
+    // un precio desmedido en una tortillería rechazada y el atípico pendiente NO mueven la referencia
+    const rech = await nueva15("RECHAZADA 1", "15001", "15", "point(-97, 21)", "nueva", "rechazada");
+    await q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, fecha, estatus, aprobacion) VALUES ($1,'maiz',55,current_date - 1,'validada','automatica')", [rech]);
+    const t = await nueva15("MEDIANA 1");
+    expect((await precio(ana, t, 26)).status).toBe(201); // dentro de ±30 % de $25
+    const [c] = await q("SELECT mediana_ref::float8 AS mediana_ref, n_ref, estatus FROM capturas_precio WHERE tortilleria_id = $1", [t]);
+    expect(c).toMatchObject({ mediana_ref: 25, n_ref: 3, estatus: "validada" });
+  });
+
+  it("la migración 010 aprueba los pendientes normales y deja intactos los atípicos (una sola fila de auditoría)", async () => {
+    const db3 = new PGlite();
+    await db3.exec(PRE);
+    for (const m of [migracion, migracion7, migracion8, migracion9]) await db3.exec(m);
+    const t = (await db3.query<any>("INSERT INTO tortillerias(nombre, origen) VALUES ('M','denue') RETURNING id")).rows[0].id;
+    for (const [n, alerta] of [[1, false], [2, false], [3, true]] as const)
+      await db3.query("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, fecha, estatus, alerta) VALUES ($1,'maiz',20,current_date - $2::int,'pendiente',$3)", [t, n, alerta]);
+    await db3.query("INSERT INTO alertas(tipo, captura_id) SELECT 'precio_atipico', id FROM capturas_precio WHERE alerta");
+    await db3.exec(migracion10);
+    const filas = (await db3.query<any>("SELECT alerta, estatus, aprobacion FROM capturas_precio ORDER BY alerta")).rows;
+    expect(filas).toEqual([
+      { alerta: false, estatus: "validada", aprobacion: "automatica" },
+      { alerta: false, estatus: "validada", aprobacion: "automatica" },
+      { alerta: true, estatus: "pendiente", aprobacion: null },
+    ]);
+    const aud = (await db3.query<any>("SELECT accion, entidad_id FROM auditoria")).rows;
+    expect(aud).toEqual([{ accion: "aprobacion_masiva_migracion_010", entidad_id: "2" }]);
+    expect((await db3.query<any>("SELECT estatus FROM alertas")).rows).toEqual([{ estatus: "abierta" }]);
+    await db3.exec(migracion10); // volver a correrla no rompe nada
+    await db3.close();
+  });
+
+  it("aprobar o rechazar VARIOS a la vez: queda quién y cuándo, y la auditoría de cada uno", async () => {
+    const t2 = await nueva15("ATIPICO 2");
+    expect((await precio(ana, t2, 60)).status).toBe(201); // otro atípico pendiente
+    const [{ id: cap2 }] = await q("SELECT id FROM capturas_precio WHERE tortilleria_id = $1", [t2]);
+    vi.mocked(auditar).mockClear();
+    const r = await patch("/admin/capturas", sup, { ids: [capAtipica, cap2], estatus: "rechazada" });
+    expect(r.status).toBe(200);
+    expect((await r.json()).actualizadas).toBe(2);
+    const filas = await q("SELECT estatus, aprobacion, revisado_por, revisado_en FROM capturas_precio WHERE id IN ($1,$2)", [capAtipica, cap2]);
+    expect(filas.every((f) => f.estatus === "rechazada" && f.aprobacion === "manual" && f.revisado_por === sup && f.revisado_en)).toBe(true);
+    expect(vi.mocked(auditar).mock.calls.filter((c) => c[1] === "captura_rechazada").map((c) => c[3]).sort()).toEqual([capAtipica, cap2].sort());
+    expect((await q("SELECT estatus FROM alertas WHERE captura_id = $1", [capAtipica]))[0].estatus).toBe("resuelta");
+    expect((await patch("/admin/capturas", sup, { ids: [], estatus: "validada" })).status).toBe(400);
+    expect((await patch("/admin/capturas", sup, { ids: Array.from({ length: 201 }, () => crypto.randomUUID()), estatus: "validada" })).status).toBe(400);
+    expect((await patch("/admin/capturas", ana, { ids: [cap2], estatus: "validada" }, "capturista")).status).toBe(403);
+  });
+
+  it("el individual también deja quién lo revisó", async () => {
+    const t = await nueva15("ATIPICO 3");
+    expect((await precio(beto, t, 5.5)).status).toBe(201);
+    const [{ id }] = await q("SELECT id FROM capturas_precio WHERE tortilleria_id = $1", [t]);
+    expect((await patch(`/admin/capturas/${id}`, sup, { estatus: "validada" })).status).toBe(200);
+    expect((await q("SELECT estatus, aprobacion, revisado_por FROM capturas_precio WHERE id = $1", [id]))[0]).toMatchObject({ estatus: "validada", aprobacion: "manual", revisado_por: sup });
+  });
+
+  it("la lista de precios por revisar trae la mediana y con cuántos precios se calculó", async () => {
+    const t = await nueva15("ATIPICO 4");
+    expect((await precio(ana, t, 59)).status).toBe(201);
+    const lista = await (await get("/admin/capturas?estatus=pendiente", sup, "supervisor")).json();
+    const c = lista.find((x: any) => x.tortilleria_id === t);
+    expect(c.alerta).toBe(true);
+    expect(c.mediana_ref).toBeGreaterThan(0); // la mediana del municipio al capturar
+    expect(c.n_ref).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("C15: qué precio cuenta y cómo se promedia", () => {
+  const nuevaT = async (nombre: string, geom = "point(-98, 20)", origen = "denue", estatus = "validada") =>
+    (await q(`INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus) VALUES ($1,'16','16001',${geom},$2,$3) RETURNING id`, [nombre, origen, estatus]))[0].id as string;
+  const cap = (t: string, p: number, dia: number, estatus = "validada", alerta = false) =>
+    q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, fecha, estatus, aprobacion, alerta) VALUES ($1,'maiz',$2,current_date - $3::int,$4,$5,$6)", [t, p, dia, estatus, estatus === "validada" ? "automatica" : null, alerta]);
+  const estad = async () => (await (await get("/admin/estadisticas?estado=16&dias=30", sup, "supervisor")).json()).find((z: any) => z.clave === "16001");
+  const celda = async () => (await (await get("/admin/mapa/celdas?bbox=-98.5,19.5,-97.5,20.5&zoom=5", sup, "supervisor")).json()).celdas[0];
+  const porEstado16 = async () => (await (await get("/admin/resumen", sup, "supervisor")).json()).porEstado.find((e: any) => e.estado === "ESTADO DIECISEIS");
+  let A: string, B: string;
+
+  beforeAll(async () => {
+    A = await nuevaT("PROM A");
+    B = await nuevaT("PROM B");
+    for (let i = 1; i <= 10; i++) await cap(A, 22, i); // A: $22, capturada 10 veces
+    await cap(B, 28, 1); //                              B: $28, capturada 1 vez
+  });
+
+  it("el promedio es por tortillería (una = un valor): A $22 x10 + B $28 x1 → $25.00 en estadísticas, mapa y resumen", async () => {
+    const z = await estad();
+    expect(z.maiz).toMatchObject({ promedio: 25, minimo: 22, maximo: 28, tortillerias: 2 });
+    expect(z.maiz.capturas).toBe(11); // el número de capturas se muestra aparte, no pesa en el promedio
+    const c = await celda();
+    expect(c.maiz_n).toBe(2);
+    expect(c.maiz_suma / c.maiz_n).toBe(25);
+    expect(Number((await porEstado16()).promedio)).toBe(25);
+  });
+
+  it("la tendencia diaria usa el último precio de cada tortillería ese día y promedia entre tortillerías", async () => {
+    await cap(A, 30, 1); // el mismo día que B ($28): A ese día tuvo $22 y luego $30 → cuenta el último ($30)
+    const t = await (await get("/admin/tendencia?estado=16&dias=30", sup, "supervisor")).json();
+    const [{ f }] = await q("SELECT to_char(current_date - 1, 'YYYY-MM-DD') AS f");
+    const dia = t.find((d: any) => d.fecha === f);
+    expect(dia.maiz).toBe(29); // (30 + 28) / 2
+    expect(dia.n).toBe(2);
+  });
+
+  it("un atípico pendiente no aparece en ningún número; al aprobarlo, sí", async () => {
+    const T = await nuevaT("PROM ATIPICO");
+    await cap(T, 50, 2, "pendiente", true);
+    const [{ id }] = await q("SELECT id FROM capturas_precio WHERE tortilleria_id = $1", [T]);
+    const antes = { z: await estad(), c: await celda(), r: await porEstado16() };
+    expect(antes.z.maiz.tortillerias).toBe(2);
+    expect(antes.c.maiz_n).toBe(2);
+    expect(antes.r.tortillerias).toBe(2);
+    const punto = (await (await get("/admin/mapa?bbox=-98.1,19.9,-97.9,20.1&dias=30", sup, "supervisor")).json()).puntos.find((p: any) => p.id === T);
+    expect(punto.ultimo_maiz).toBeNull(); // el mapa tampoco lo muestra como precio
+    expect(punto.alerta).toBe(true); // pero sí avisa que hay un atípico por revisar
+    const tend = await (await get("/admin/tendencia?estado=16&dias=30", sup, "supervisor")).json();
+    expect(tend.every((d: any) => d.maiz !== 50)).toBe(true);
+    expect((await fetch(`${base}/admin/capturas/${id}`, { method: "PATCH", headers: auth(sup, "supervisor"), body: JSON.stringify({ estatus: "validada" }) })).status).toBe(200);
+    const des = { z: await estad(), c: await celda(), r: await porEstado16() };
+    expect(des.z.maiz.tortillerias).toBe(3);
+    expect(des.c.maiz_n).toBe(3);
+    expect(des.z.maiz.maximo).toBe(50);
+    await q("UPDATE capturas_precio SET estatus = 'rechazada' WHERE id = $1", [id]); // se deja fuera para las demás pruebas
+  });
+
+  it("los precios de una tortillería nueva pendiente no cuentan hasta que se valida; al rechazarla, desaparecen", async () => {
+    const N = await nuevaT("PROM NUEVA", "point(-98, 20)", "nueva", "pendiente");
+    await cap(N, 58, 1);
+    expect((await estad()).maiz.tortillerias).toBe(2);
+    expect((await celda()).maiz_n).toBe(2);
+    await q("UPDATE tortillerias SET estatus = 'validada' WHERE id = $1", [N]);
+    expect((await estad()).maiz.tortillerias).toBe(3);
+    expect((await estad()).maiz.maximo).toBe(58);
+    // al rechazar una tortillería, sus precios dejan de contar en todas las vistas
+    expect((await fetch(`${base}/tortillerias/${N}/estatus`, { method: "PATCH", headers: auth(sup, "supervisor"), body: JSON.stringify({ estatus: "rechazada" }) })).status).toBe(200);
+    expect((await estad()).maiz.tortillerias).toBe(2);
+    expect((await estad()).maiz.maximo).toBe(30);
+    expect((await celda()).maiz_n).toBe(2);
+    expect((await porEstado16()).tortillerias).toBe(2);
+    const tend = await (await get("/admin/tendencia?estado=16&dias=30", sup, "supervisor")).json();
+    expect(tend.every((d: any) => d.maiz !== 58)).toBe(true);
+  });
+
+  it("DENUE y nuevas van por separado: la lista de nuevas no trae las del DENUE y el resumen las cuenta aparte", async () => {
+    const N2 = await nuevaT("SEP NUEVA 1", "point(-98, 20)", "nueva", "validada");
+    await nuevaT("SEP NUEVA 2", "point(-98, 20)", "nueva", "pendiente");
+    await cap(N2, 24, 1);
+    const val = await (await get("/admin/tortillerias?origen=nueva&estatus=validada", sup, "supervisor")).json();
+    expect(val.length).toBeGreaterThan(0);
+    expect(val.every((t: any) => t.origen === "nueva" && t.estatus === "validada")).toBe(true);
+    const pend = await (await get("/admin/tortillerias?origen=nueva&estatus=pendiente&pagina=1&limite=5", sup, "supervisor")).json();
+    expect(pend.filas.every((t: any) => t.origen === "nueva")).toBe(true);
+    const den = await (await get("/admin/tortillerias?origen=denue&estatus=validada", sup, "supervisor")).json();
+    expect(den.length).toBeGreaterThan(0);
+    expect(den.every((t: any) => t.origen === "denue")).toBe(true);
+    const r = await (await get("/admin/resumen", sup, "supervisor")).json();
+    const [{ n: nuevas }] = await q("SELECT count(*)::int AS n FROM tortillerias WHERE origen = 'nueva'");
+    const [{ n: visitadas }] = await q("SELECT count(DISTINCT tortilleria_id)::int AS n FROM precios_que_cuentan WHERE origen_tortilleria = 'denue'");
+    expect(r.nuevas.total).toBe(nuevas);
+    expect(r.nuevas.validadas + r.nuevas.pendientes + r.nuevas.rechazadas).toBe(nuevas);
+    expect(r.denue_visitadas).toBe(visitadas);
+    expect(r.denue_total).toBeGreaterThan(r.denue_visitadas);
+    expect(r.avance_censo).toBeGreaterThan(0);
+    const z = (await (await get("/admin/estadisticas?estado=16&dias=30", sup, "supervisor")).json()).find((x: any) => x.clave === "16001");
+    expect(z.nuevas).toBe(2); // SEP NUEVA 1 y 2 (PROM NUEVA está rechazada y ya no cuenta como tortillería de la zona)
+    expect(z.denue_visitadas).toBe(2);
+  });
+
+  it("sin datos fiscales: una tortillería del DENUE nunca visitada no entra en el total", async () => {
+    const sin = await nuevaT("NUNCA VISITADA");
+    const antes = await (await get("/admin/sin-fiscal", sup, "supervisor")).json();
+    const [{ n }] = await q(`WITH v AS (SELECT tortilleria_id AS id FROM capturas_precio WHERE estatus <> 'rechazada' UNION SELECT tortilleria_id FROM fiscal_negativas UNION SELECT id FROM tortillerias WHERE origen = 'nueva')
+                              SELECT count(*)::int AS n FROM tortillerias t JOIN v ON v.id = t.id WHERE t.estatus <> 'rechazada'`);
+    expect(antes.total).toBe(n);
+    expect(antes.total).toBeLessThan((await q("SELECT count(*)::int AS n FROM tortillerias WHERE estatus <> 'rechazada'"))[0].n);
+    expect(antes.sin_fiscal).toBeLessThanOrEqual(antes.total);
+    // al visitarla (un precio) sí entra
+    await cap(sin, 24, 1);
+    expect((await (await get("/admin/sin-fiscal", sup, "supervisor")).json()).total).toBe(antes.total + 1);
+  });
+});
+
+describe("C15: usuarios, exportación y auditoría", () => {
+  it("el buscador de usuarios ignora acentos y mayúsculas y pagina con más de 300 cuentas", async () => {
+    await q("INSERT INTO usuarios(usuario, rol, correo, nombre, apellidos) SELECT 'mass' || i, 'capturista', 'mass' || i || '@correo.com', 'José', 'Núñez ' || i FROM generate_series(1, 320) i");
+    const todos = await (await get("/admin/usuarios?q=jose&pagina=1&limite=50", adm, "admin")).json();
+    expect(todos.total).toBeGreaterThanOrEqual(320);
+    expect(todos.filas).toHaveLength(50);
+    expect(todos.paginas).toBe(Math.ceil(todos.total / 50));
+    const mayus = await (await get(`/admin/usuarios?q=${encodeURIComponent("JOSÉ NUÑEZ")}&pagina=1&limite=50`, adm, "admin")).json();
+    expect(mayus.total).toBe(todos.total);
+    const ultima = await (await get(`/admin/usuarios?q=jose&pagina=${todos.paginas}&limite=50`, adm, "admin")).json();
+    expect(ultima.filas.length).toBe(todos.total - 50 * (todos.paginas - 1));
+    const sinPagina = await (await get("/admin/usuarios?q=jose", adm, "admin")).json();
+    expect(sinPagina.length).toBe(todos.total); // sin ?pagina se devuelven todos (ya no se corta en 300)
+    const rol = await (await get("/admin/usuarios?rol=admin&pagina=1", adm, "admin")).json();
+    expect(rol.filas.every((u: any) => u.rol === "admin")).toBe(true);
+    const inactivos = await (await get("/admin/usuarios?activo=0&pagina=1", adm, "admin")).json();
+    expect(inactivos.filas.every((u: any) => u.activo === false)).toBe(true);
+    expect((await get("/admin/usuarios?pagina=1", sup, "supervisor")).status).toBe(403);
+  });
+
+  it("cada usuario trae su última captura y las de los últimos 7 días", async () => {
+    const lista = await (await get("/admin/usuarios?q=ana@correo.com&pagina=1", adm, "admin")).json();
+    const u = lista.filas.find((x: any) => x.correo === "ana@correo.com");
+    expect(u.capturas).toBeGreaterThan(0);
+    expect(u.ultima_captura).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(u.capturas_7d).toBeGreaterThan(0);
+  });
+
+  it("la exportación de capturas es CSV con BOM, respeta los filtros, no trae datos personales y queda en la auditoría", async () => {
+    const t = (await q("SELECT id FROM tortillerias WHERE nombre = 'PROM A'"))[0].id as string;
+    await post(`/tortillerias/${t}/fiscal`, ana, { tipoPersona: "moral", rfc: "tgu100101ab1", razonSocial: "Empresa Secreta SA", celular: "5598765432", aceptoAviso: true });
+    vi.mocked(auditar).mockClear();
+    const r = await get("/admin/exportar/capturas?estado=16", sup, "supervisor");
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toMatch(/text\/csv; charset=utf-8/);
+    expect(r.headers.get("content-disposition")).toMatch(/attachment; filename="capturas-\d{4}-\d{2}-\d{2}\.csv"/);
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]); // BOM de UTF-8: Excel muestra bien los acentos
+    const txt = new TextDecoder("utf-8").decode(bytes);
+    const lineas = txt.trim().split("\r\n");
+    expect(lineas[0]).toBe(
+      "id_captura,fecha,hora_captura,producto,precio_kg,estatus,atipico,mediana_ref,aprobacion,id_tortilleria,id_denue,origen,estatus_tortilleria,nombre_tortilleria,domicilio,estado,municipio,lat,lng,tiene_datos_fiscales,ultimo_motivo_sin_fiscal,censador_correo,gps_lat,gps_lng,precision_gps",
+    );
+    const [{ n }] = await q("SELECT count(*)::int AS n FROM precios_que_cuentan WHERE estado_clave = '16'"); // por omisión: solo lo que cuenta
+    expect(lineas.length - 1).toBe(n);
+    expect(txt).toContain("ESTADO DIECISEIS");
+    expect(txt).not.toContain("ESTADO QUINCE"); // el filtro de estado se respeta
+    expect(txt).not.toMatch(/tgu100101ab1|Empresa Secreta|5598765432|rfc|razon_social|celular/i);
+    expect(txt).toContain(",si,"); // PROM A ya tiene datos fiscales: solo se dice sí/no
+    expect(vi.mocked(auditar).mock.calls.some((c) => c[1] === "exportar_capturas" && String(c[3]).includes('"estado":"16"'))).toBe(true);
+    // con municipio y "todos" (incluye rechazadas) y con fechas
+    const todos = await (await get("/admin/exportar/capturas?estado=16&municipio=16001&estatus=todos", sup, "supervisor")).text();
+    const [{ n: nt }] = await q("SELECT count(*)::int AS n FROM capturas_precio c JOIN tortillerias t ON t.id = c.tortilleria_id WHERE t.municipio_clave = '16001'");
+    expect(todos.trim().split("\r\n").length - 1).toBe(nt);
+    const futuro = await (await get("/admin/exportar/capturas?desde=2999-01-01", sup, "supervisor")).text();
+    expect(futuro.trim().split("\r\n")).toHaveLength(1); // solo el encabezado
+    expect((await get("/admin/exportar/capturas?estado=XX", sup, "supervisor")).status).toBe(400);
+    expect((await get("/admin/exportar/capturas", ana)).status).toBe(403);
+  });
+
+  it("la bitácora de auditoría es solo del administrador, de solo lectura y con filtros", async () => {
+    await q("INSERT INTO auditoria(usuario_id, accion, entidad, entidad_id) VALUES ($1,'ver_datos_fiscales','tortilleria_fiscal','x1'), ($1,'captura_validada','capturas_precio','x2')", [sup]);
+    expect((await get("/admin/auditoria", sup, "supervisor")).status).toBe(403);
+    const todo = await (await get("/admin/auditoria?pagina=1&limite=10", adm, "admin")).json();
+    expect(todo.total).toBeGreaterThanOrEqual(2);
+    expect(todo.filas.length).toBeLessThanOrEqual(10);
+    const f = await (await get("/admin/auditoria?accion=ver_datos&usuario=SUP", adm, "admin")).json();
+    expect(f.filas.every((x: any) => x.accion.includes("ver_datos") && x.usuario === "sup@correo.com")).toBe(true);
+    expect(f.total).toBeGreaterThanOrEqual(1);
   });
 });

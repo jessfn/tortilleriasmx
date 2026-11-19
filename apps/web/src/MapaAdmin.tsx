@@ -128,7 +128,7 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
             features: datos.current.map((x) => ({
               type: "Feature" as const,
               geometry: { type: "Point" as const, coordinates: [x.lng, x.lat] },
-              properties: { id: x.id, p: precioDe(x), n: x.n_capturas, estatus: x.estatus, alerta: x.alerta ? 1 : 0 },
+              properties: { id: x.id, p: precioDe(x), n: x.n_capturas, estatus: x.estatus, alerta: x.alerta ? 1 : 0, nueva: x.origen === "nueva" ? 1 : 0 },
             })),
           },
     );
@@ -259,16 +259,23 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
       });
       m.addLayer({
         id: "pts-sin", type: "circle", source: "puntos", filter: ["all", ["!", ["has", "point_count"]], ["==", ["get", "p"], 0]],
-        paint: { "circle-color": "#a8a29e", "circle-radius": 4.5, "circle-opacity": 0.8, "circle-stroke-color": "#fff", "circle-stroke-width": 1 },
+        paint: {
+          "circle-color": "#a8a29e",
+          // una tortillería NUEVA (alta de un censador) se ve distinta a las del DENUE aunque aún no tenga precio
+          "circle-radius": ["case", [">", ["get", "nueva"], 0], 7, 4.5],
+          "circle-opacity": 0.85,
+          "circle-stroke-color": ["case", [">", ["get", "alerta"], 0], "#dc2626", ["==", ["get", "estatus"], "pendiente"], "#BC955C", [">", ["get", "nueva"], 0], "#2563eb", "#ffffff"],
+          "circle-stroke-width": ["case", [">", ["get", "nueva"], 0], 3, 1],
+        },
       });
       m.addLayer({
         id: "pts-con", type: "circle", source: "puntos", filter: ["all", ["!", ["has", "point_count"]], [">", ["get", "p"], 0]],
         paint: {
           "circle-color": COLOR_MEDIO,
           "circle-radius": ["step", ["get", "n"], 8, 3, 10, 10, 13],
-          // borde rojo = alerta de precio · dorado = tortillería por validar · blanco = normal
-          "circle-stroke-color": ["case", [">", ["get", "alerta"], 0], "#dc2626", ["==", ["get", "estatus"], "pendiente"], "#BC955C", "#ffffff"],
-          "circle-stroke-width": ["case", [">", ["get", "alerta"], 0], 3.5, ["==", ["get", "estatus"], "pendiente"], 3, 2],
+          // borde rojo = alerta de precio · dorado = tortillería nueva por validar · azul = tortillería nueva validada · blanco = del DENUE
+          "circle-stroke-color": ["case", [">", ["get", "alerta"], 0], "#dc2626", ["==", ["get", "estatus"], "pendiente"], "#BC955C", [">", ["get", "nueva"], 0], "#2563eb", "#ffffff"],
+          "circle-stroke-width": ["case", [">", ["get", "alerta"], 0], 3.5, ["==", ["get", "estatus"], "pendiente"], 3, [">", ["get", "nueva"], 0], 3, 2],
         },
       });
       listo.current = true;

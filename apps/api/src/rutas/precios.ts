@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { capturaPrecioSchema } from "@tortillerias/shared";
+import { capturaPrecioSchema, PRECIO_ATIPICO_DIAS, PRECIO_ATIPICO_MIN_CAPTURAS, PRECIO_ATIPICO_PORCENTAJE } from "@tortillerias/shared";
 import { pool } from "../db.js";
 
 /** El día de captura se cuenta en hora de México (el servidor puede estar en UTC) */
@@ -13,7 +13,7 @@ export const MAX_DIAS_ATRASO = 7;
 export const TOLERANCIA_FUTURO_MS = 10 * 60 * 1000;
 
 export function rutasPrecios(app: FastifyInstance) {
-  // Solo usuarios registrados. Queda "pendiente" hasta que un supervisor la revise.
+  // Solo usuarios registrados. Un precio normal se aprueba solo ("validada"); uno atípico queda "pendiente" hasta que un supervisor lo revise.
   // Límite: una captura por censador, tortillería, producto y día.
   app.post("/precios", { preHandler: app.autenticar, config: { rateLimit: { max: 90, timeWindow: "1 minute" } } }, async (req, reply) => {
     const p = capturaPrecioSchema.safeParse(req.body);
@@ -50,25 +50,30 @@ export function rutasPrecios(app: FastifyInstance) {
     );
     if (previa.rowCount) return yaCapturado(previa.rows[0].precio_kg);
 
-    // Mediana municipal de los últimos 90 días para detectar precios atípicos (±30 %)
+    // Mediana municipal de los últimos 90 días para detectar precios atípicos (±30 %). Solo con precios que cuentan:
+    // un atípico pendiente o el precio de una tortillería rechazada no contaminan la referencia.
     const med = await pool.query(
-      `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY c.precio_kg) AS mediana, count(*) AS n
-         FROM capturas_precio c JOIN tortillerias t ON t.id = c.tortilleria_id
-        WHERE t.municipio_clave = $1 AND c.producto = $2 AND c.fecha > ${HOY_MX} - 90`,
+      `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY p.precio_kg) AS mediana, count(*)::int AS n
+         FROM precios_que_cuentan p
+        WHERE p.municipio_clave = $1 AND p.producto = $2 AND p.fecha > ${HOY_MX} - ${PRECIO_ATIPICO_DIAS}`,
       [t.rows[0].municipio_clave, d.producto],
     );
     const mediana = med.rows[0].mediana === null ? null : Number(med.rows[0].mediana);
-    const atipico = mediana !== null && Number(med.rows[0].n) >= 3 && Math.abs(d.precioKg - mediana) / mediana > 0.3;
+    const nRef = Number(med.rows[0].n);
+    const atipico = mediana !== null && nRef >= PRECIO_ATIPICO_MIN_CAPTURAS && (Math.abs(d.precioKg - mediana) / mediana) * 100 > PRECIO_ATIPICO_PORCENTAJE;
 
     // El GPS es opcional: sin coordenadas, geom_captura queda en NULL
     const conGps = d.lat !== undefined && d.lng !== undefined;
     let id: string;
     try {
       const { rows } = await pool.query(
-        `INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, geom_captura, precision_gps, alerta, capturista_id, origen, fecha, id_cliente, capturado_en)
-         VALUES ($1,$2,$3, CASE WHEN $4::float8 IS NULL OR $5::float8 IS NULL THEN NULL ELSE ST_SetSRID(ST_MakePoint($4,$5),4326) END, $6,$7,$8,'app', ${FECHA}, $10, $9::timestamptz)
+        `INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, geom_captura, precision_gps, alerta, capturista_id, origen, fecha, id_cliente, capturado_en,
+                                     estatus, aprobacion, mediana_ref, n_ref)
+         VALUES ($1,$2,$3, CASE WHEN $4::float8 IS NULL OR $5::float8 IS NULL THEN NULL ELSE ST_SetSRID(ST_MakePoint($4,$5),4326) END, $6,$7,$8,'app', ${FECHA}, $10, $9::timestamptz,
+                 CASE WHEN $7::boolean THEN 'pendiente' ELSE 'validada' END, CASE WHEN $7::boolean THEN NULL ELSE 'automatica' END, $11::numeric, $12::int)
          RETURNING id`,
-        [d.tortilleriaId, d.producto, d.precioKg, conGps ? d.lng : null, conGps ? d.lat : null, d.precisionGps ?? null, atipico, req.user.sub, capturadoEn ? capturadoEn.toISOString() : null, d.idCliente ?? null],
+        [d.tortilleriaId, d.producto, d.precioKg, conGps ? d.lng : null, conGps ? d.lat : null, d.precisionGps ?? null, atipico, req.user.sub, capturadoEn ? capturadoEn.toISOString() : null, d.idCliente ?? null,
+          mediana === null ? null : Math.round(mediana * 100) / 100, mediana === null ? null : nRef],
       );
       id = rows[0].id;
     } catch (e: any) {

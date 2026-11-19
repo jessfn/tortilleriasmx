@@ -1,12 +1,15 @@
 import { useState } from "react";
-import { AlertTriangle, Banknote, BarChart3, ClipboardList, Clock, Landmark, Layers, Loader2, Map as MapaIcono, Store, TriangleAlert, Users, Wheat } from "lucide-react";
+import { AlertTriangle, Banknote, BarChart3, ClipboardList, Clock, Landmark, Layers, Loader2, Map as MapaIcono, PlusCircle, Store, TriangleAlert, Users, Wheat } from "lucide-react";
 import { api } from "./api";
 import { BarraValor, dinero, entero, EnVivo, Tendencia, useVivo, type DiaPrecio } from "./AdminVivo";
 import type { FilaZona, FocoMapa } from "./AdminMapa";
 import { Dato, Insignia, Tarjeta } from "./ui";
 
 export type Resumen = {
-  usuarios: number; tortillerias: number; catalogo: number; tortillerias_pendientes: number; capturas: number; capturas_pendientes: number; alertas: number;
+  usuarios: number; catalogo: number; tortillerias_pendientes: number; capturas: number; capturas_pendientes: number; alertas: number;
+  /** del catálogo con al menos un precio que cuenta, total del catálogo y avance del censo (%) */
+  denue_visitadas: number; denue_total: number; avance_censo: number;
+  nuevas: { total: number; validadas: number; pendientes: number; rechazadas: number };
   promedio_maiz: string | null; promedio_masa: string | null; capturas_hoy: number; censadores_hoy: number;
   porEstado: { estado: string; promedio: string; n: number }[];
 };
@@ -43,6 +46,7 @@ export default function AdminResumen({
   }, 20_000);
 
   if (!r) return <div className="grid place-items-center py-12 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>;
+  // Solo se revisan a mano los precios atípicos (los normales se aprueban solos) y las tortillerías nuevas
   const porRevisar = r.tortillerias_pendientes + r.capturas_pendientes;
   const top = estados.filter((e) => e.maiz).sort((a, b) => b.maiz!.promedio - a.maiz!.promedio);
   const max = Math.max(1, ...top.map((e) => e.maiz!.promedio));
@@ -81,9 +85,9 @@ export default function AdminResumen({
         <button onClick={alRevisar} className={`flex items-center gap-3 rounded-2xl p-3 text-left shadow-sm ring-1 transition active:scale-[.98] ${porRevisar ? "bg-amber-50 ring-amber-200" : "bg-white ring-stone-200"}`}>
           <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${porRevisar ? "bg-amber-100 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{porRevisar ? <AlertTriangle className="h-6 w-6" aria-hidden /> : <Clock className="h-6 w-6" aria-hidden />}</span>
           <div>
-            <p className="text-xs text-stone-500">Por revisar</p>
-            <p className="text-3xl font-bold leading-tight">{entero(porRevisar)}</p>
-            <p className="text-[11px] text-stone-500">{r.tortillerias_pendientes} tortillerías · {r.capturas_pendientes} precios</p>
+            <p className="text-xs text-stone-500">Precios atípicos por revisar</p>
+            <p className="text-3xl font-bold leading-tight">{entero(r.capturas_pendientes)}</p>
+            <p className="text-[11px] text-stone-500">{entero(r.tortillerias_pendientes)} {r.tortillerias_pendientes === 1 ? "tortillería nueva" : "tortillerías nuevas"} por validar</p>
           </div>
         </button>
       </div>
@@ -149,9 +153,26 @@ export default function AdminResumen({
 
         <div className="grid grid-cols-2 content-start gap-2">
           <Dato icono={Users} etiqueta="Censadores registrados" valor={entero(r.usuarios)} />
-          <Dato icono={Store} etiqueta="Tortillerías con registros" valor={entero(r.tortillerias)} tono="verde" />
           <Dato icono={ClipboardList} etiqueta="Precios capturados" valor={entero(r.capturas)} tono="gris" />
+          <Dato icono={Store} etiqueta="Tortillerías del DENUE visitadas" valor={entero(r.denue_visitadas)} tono="verde" />
           <Dato icono={TriangleAlert} etiqueta="Alertas de precio" valor={entero(r.alertas)} tono="dorado" />
+          <Tarjeta className="col-span-2 space-y-1.5 !py-2.5">
+            <div className="flex items-center gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-guinda/10 text-guinda"><PlusCircle className="h-[18px] w-[18px]" aria-hidden /></span>
+              <p className="text-sm leading-tight"><b className="text-2xl">{entero(r.nuevas.total)}</b> <span className="text-stone-600">tortillerías nuevas</span></p>
+            </div>
+            <p className="text-xs text-stone-500">
+              <b className="text-emerald-700">{entero(r.nuevas.validadas)}</b> validadas · <b className="text-amber-700">{entero(r.nuevas.pendientes)}</b> por revisar · <b className="text-red-700">{entero(r.nuevas.rechazadas)}</b> rechazadas
+            </p>
+          </Tarjeta>
+          <Tarjeta className="col-span-2 space-y-1.5 !py-2.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="text-sm font-semibold">Avance del censo</p>
+              <p className="text-lg font-bold text-guinda">{r.avance_censo.toLocaleString("es-MX", { maximumFractionDigits: 2 })}%</p>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-stone-100"><div className="h-full rounded-full bg-guinda" style={{ width: `${Math.min(100, r.avance_censo)}%` }} /></div>
+            <p className="text-[11px] text-stone-500">{entero(r.denue_visitadas)} de {entero(r.denue_total)} tortillerías del catálogo ya tienen un precio.</p>
+          </Tarjeta>
           <Tarjeta className="col-span-2 flex items-center gap-3 !py-2.5">
             <Landmark className="h-5 w-5 shrink-0 text-guinda" aria-hidden />
             <p className="text-sm"><b>{entero(r.catalogo)}</b> tortillerías en el catálogo DENUE para elegir al registrar.</p>

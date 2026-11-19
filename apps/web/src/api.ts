@@ -43,6 +43,27 @@ export async function apiImagenUrl(ruta: string): Promise<string> {
   return URL.createObjectURL(await r.blob());
 }
 
+/** Descarga un archivo que requiere sesión (por ejemplo un CSV) y lo guarda con el nombre que manda el servidor */
+export async function apiDescargar(ruta: string, nombreSugerido: string): Promise<void> {
+  const s = leerSesion();
+  let r: Response;
+  try {
+    r = await fetch(BASE + ruta, { headers: s ? { authorization: `Bearer ${s.token}` } : {} });
+  } catch {
+    throw new ApiError(0, "Sin conexión con el servidor");
+  }
+  if (!r.ok) {
+    const cuerpo = await r.json().catch(() => null);
+    throw new ApiError(r.status, cuerpo?.error ?? "No se pudo descargar el archivo", cuerpo);
+  }
+  const nombre = /filename="?([^";]+)"?/.exec(r.headers.get("content-disposition") ?? "")?.[1] ?? nombreSugerido;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(await r.blob());
+  a.download = nombre;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
 export async function api<T = any>(
   ruta: string,
   op: { metodo?: string; json?: unknown; form?: FormData; signal?: AbortSignal; headers?: Record<string, string> } = {},

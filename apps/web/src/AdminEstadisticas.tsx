@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { MOTIVOS_SIN_FISCAL, textoMotivoSinFiscal } from "@tortillerias/shared";
-import { ArrowDown, ArrowUp, ChevronRight, Download, FileX, Layers, Loader2, Map as MapaIcono, Store, Wheat } from "lucide-react";
-import { api } from "./api";
+import { ArrowDown, ArrowUp, ChevronRight, Download, FileSpreadsheet, FileX, Layers, Loader2, Map as MapaIcono, Store, Wheat } from "lucide-react";
+import { api, apiDescargar } from "./api";
 import { dinero, entero, EnVivo, Tendencia, useVivo, type DiaPrecio } from "./AdminVivo";
 import { BarraValor } from "./AdminVivo";
 import type { FilaZona, FocoMapa } from "./AdminMapa";
 import { Tarjeta } from "./ui";
 
 const PERIODOS: [number, string][] = [[7, "7 días"], [30, "30 días"], [90, "90 días"], [0, "Todo"]];
-type Orden = "nombre" | "tortillerias" | "con_precios" | "capturas" | "promedio" | "minimo" | "maximo";
+type Orden = "nombre" | "tortillerias" | "nuevas" | "denue_visitadas" | "con_precios" | "capturas" | "promedio" | "minimo" | "maximo";
 
 /** Estadísticas por estado y municipio, con tendencia, exportación y salto al mapa */
 export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) => void }) {
@@ -32,6 +32,7 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
   const valor = (f: FilaZona, k: Orden): number | string => {
     if (k === "nombre") return f.nombre;
     if (k === "tortillerias" || k === "con_precios" || k === "capturas") return f[k];
+    if (k === "nuevas" || k === "denue_visitadas") return f[k] ?? 0;
     return f[producto]?.[k] ?? -1;
   };
   const ordenadas = useMemo(() => {
@@ -48,10 +49,13 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
 
   const totales = useMemo(() => {
     const f = filas ?? [];
-    const conteo = f.reduce((a, x) => a + (x[producto]?.capturas ?? 0), 0);
-    const ponderado = f.reduce((a, x) => a + (x[producto] ? x[producto]!.promedio * x[producto]!.capturas : 0), 0);
+    // Promedio entre tortillerías (una tortillería = un valor): cada zona pesa por las tortillerías con las que se promedió, no por sus capturas
+    const conteo = f.reduce((a, x) => a + (x[producto]?.tortillerias ?? 0), 0);
+    const ponderado = f.reduce((a, x) => a + (x[producto] ? x[producto]!.promedio * (x[producto]!.tortillerias ?? 0) : 0), 0);
     return {
       tortillerias: f.reduce((a, x) => a + x.tortillerias, 0),
+      nuevas: f.reduce((a, x) => a + (x.nuevas ?? 0), 0),
+      denue: f.reduce((a, x) => a + (x.denue_visitadas ?? 0), 0),
       con: f.reduce((a, x) => a + x.con_precios, 0),
       capturas: f.reduce((a, x) => a + x.capturas, 0),
       promedio: conteo ? ponderado / conteo : null,
@@ -77,11 +81,32 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
     } else alMapa({ bbox: f.bbox, estado: estado.clave, municipio: f.clave, n: f.tortillerias });
   };
 
+  const [descargando, setDescargando] = useState(false);
+  const [errorDescarga, setErrorDescarga] = useState("");
+  /** Baja la base de capturas (una fila por precio, sin datos personales) con los filtros que están en pantalla: estado y periodo */
+  async function descargarCapturas() {
+    setDescargando(true);
+    setErrorDescarga("");
+    try {
+      const p = new URLSearchParams();
+      if (estado) p.set("estado", estado.clave);
+      if (dias > 0) {
+        const d = new Date(Date.now() - dias * 86400000);
+        p.set("desde", `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+      }
+      await apiDescargar(`/admin/exportar/capturas?${p}`, "capturas.csv");
+    } catch (e: any) {
+      setErrorDescarga(e.message);
+    } finally {
+      setDescargando(false);
+    }
+  }
+
   function exportar() {
-    const encabezado = [estado ? "Municipio" : "Estado", "Tortillerías", "Con precios", "Capturas", "Tortilla promedio", "Tortilla mínimo", "Tortilla máximo", "Masa promedio", "Masa mínimo", "Masa máximo"];
+    const encabezado = [estado ? "Municipio" : "Estado", "Tortillerías", "Nuevas", "DENUE visitadas", "Con precios", "Capturas", "Tortilla promedio", "Tortilla mínimo", "Tortilla máximo", "Masa promedio", "Masa mínimo", "Masa máximo"];
     const cel = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const lineas = (filas ?? []).map((f) =>
-      [f.nombre, f.tortillerias, f.con_precios, f.capturas, f.maiz?.promedio, f.maiz?.minimo, f.maiz?.maximo, f.masa?.promedio, f.masa?.minimo, f.masa?.maximo].map(cel).join(","),
+      [f.nombre, f.tortillerias, f.nuevas ?? 0, f.denue_visitadas ?? 0, f.con_precios, f.capturas, f.maiz?.promedio, f.maiz?.minimo, f.maiz?.maximo, f.masa?.promedio, f.masa?.minimo, f.masa?.maximo].map(cel).join(","),
     );
     const blob = new Blob(["﻿" + [encabezado.map(cel).join(","), ...lineas].join("\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
@@ -123,8 +148,13 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
           <button onClick={exportar} disabled={!filas?.length} className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-white px-3 text-xs font-semibold text-stone-700 ring-1 ring-stone-200 hover:ring-guinda/40 disabled:opacity-40">
             <Download className="h-4 w-4" aria-hidden /> Descargar CSV
           </button>
+          <button onClick={descargarCapturas} disabled={descargando} className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-guinda px-3 text-xs font-semibold text-white shadow-sm active:scale-95 disabled:opacity-60">
+            {descargando ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FileSpreadsheet className="h-4 w-4" aria-hidden />} Descargar capturas (CSV)
+          </button>
         </div>
       </div>
+
+      {errorDescarga && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 ring-1 ring-red-200">{errorDescarga}</p>}
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-1.5">{PERIODOS.map(([d, t]) => <button key={d} className={chip(dias === d)} onClick={() => setDias(d)}>{t}</button>)}</div>
@@ -142,7 +172,7 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
           ["Tortillerías", entero(totales.tortillerias), `en ${entero(totales.zonas)} ${estado ? "municipios" : "estados"}`],
           ["Con precios", entero(totales.con), totales.tortillerias ? `${((totales.con / totales.tortillerias) * 100).toFixed(2)} % del total` : ""],
           ["Capturas", entero(totales.capturas), dias === 0 ? "todo el historial" : `últimos ${dias} días`],
-          [`Promedio de ${producto === "maiz" ? "tortilla" : "masa"}`, dinero(totales.promedio), "ponderado por capturas"],
+          [`Promedio de ${producto === "maiz" ? "tortilla" : "masa"}`, dinero(totales.promedio), "promedio entre tortillerías"],
         ].map(([t, v, s]) => (
           <Tarjeta key={t}>
             <div className="text-xs font-medium text-stone-500">{t}</div>
@@ -167,6 +197,8 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
                     <tr>
                       <Th k="nombre">{estado ? "Municipio" : "Estado"}</Th>
                       <Th k="tortillerias" der>Tortillerías</Th>
+                      <Th k="nuevas" der>Nuevas</Th>
+                      <Th k="denue_visitadas" der>DENUE visitadas</Th>
                       <Th k="con_precios" der>Con precios</Th>
                       <Th k="capturas" der>Capturas</Th>
                       <Th k="promedio" der>{`Promedio ${producto === "maiz" ? "tortilla" : "masa"}`}</Th>
@@ -181,6 +213,8 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
                         <tr key={f.clave} onClick={() => abrir(f)} className="cursor-pointer border-t border-stone-100 transition hover:bg-guinda/5">
                           <td className="px-3 py-2.5 font-medium">{f.nombre}</td>
                           <td className="px-3 py-2.5 text-right tabular-nums">{entero(f.tortillerias)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">{entero(f.nuevas ?? 0)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">{entero(f.denue_visitadas ?? 0)}</td>
                           <td className="px-3 py-2.5 text-right tabular-nums">{entero(f.con_precios)}</td>
                           <td className="px-3 py-2.5 text-right tabular-nums">{entero(f.capturas)}</td>
                           <td className="w-44 px-3 py-2.5">
@@ -213,6 +247,8 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
                         {s && <BarraValor valor={s.promedio} max={maxProm} />}
                         <div className="flex flex-wrap gap-x-3 text-xs text-stone-500">
                           <span><Store className="mr-0.5 inline h-3 w-3" aria-hidden />{entero(f.tortillerias)}</span>
+                          <span>{entero(f.denue_visitadas ?? 0)} DENUE visitadas</span>
+                          <span>{entero(f.nuevas ?? 0)} nuevas</span>
                           <span>{entero(f.con_precios)} con precios</span>
                           <span>{entero(f.capturas)} capturas</span>
                           {s && <span>{dinero(s.minimo)} – {dinero(s.maximo)}</span>}
@@ -260,7 +296,7 @@ function SinFiscal({ estado }: { estado?: FilaZona }) {
   }, [estado?.clave]);
 
   const motivos = [...MOTIVOS_SIN_FISCAL.map((m) => m.clave as string), "sin_intento"];
-  const texto = (k: string) => (k === "sin_intento" ? "Aún no se ha intentado" : textoMotivoSinFiscal(k));
+  const texto = (k: string) => (k === "sin_intento" ? "Sin registro de motivo" : textoMotivoSinFiscal(k));
   const maxMotivo = Math.max(1, ...motivos.map((k) => r?.por_motivo[k] ?? 0));
   return (
     <Tarjeta className="space-y-3">
@@ -274,8 +310,11 @@ function SinFiscal({ estado }: { estado?: FilaZona }) {
         <>
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-bold leading-none">{entero(r.sin_fiscal)}</span>
-            <span className="text-xs text-stone-500">de {entero(r.total)} tortillerías · <b className="text-stone-700">{r.porcentaje}%</b></span>
+            <span className="text-xs text-stone-500">sin datos fiscales · <b className="text-stone-700">{r.porcentaje} %</b></span>
           </div>
+          <p className="text-[11px] leading-snug text-stone-500">
+            De las <b>{entero(r.total)} tortillerías visitadas</b>, <b>{entero(r.sin_fiscal)}</b> (<b>{r.porcentaje} %</b>) no tienen datos fiscales. Una tortillería está visitada si tiene un precio capturado, es nueva o tiene un intento sin datos.
+          </p>
           <ul className="space-y-1.5">
             {motivos.filter((k) => r.por_motivo[k]).map((k) => (
               <li key={k} className="text-xs">
@@ -283,7 +322,7 @@ function SinFiscal({ estado }: { estado?: FilaZona }) {
                 <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-stone-100"><div className="h-full rounded-full bg-amber-500" style={{ width: `${(r.por_motivo[k] / maxMotivo) * 100}%` }} /></div>
               </li>
             ))}
-            {!Object.keys(r.por_motivo).length && <li className="text-xs text-stone-500">Todas tienen datos fiscales.</li>}
+            {!Object.keys(r.por_motivo).length && <li className="text-xs text-stone-500">Todas las visitadas tienen datos fiscales.</li>}
           </ul>
           <div className="border-t border-stone-100 pt-2">
             <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-400">{estado ? "Por municipio" : "Por estado"}</p>

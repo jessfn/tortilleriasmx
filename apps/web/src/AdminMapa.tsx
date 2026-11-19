@@ -10,8 +10,10 @@ const Mapa = lazy(() => import("./MapaAdmin"));
 
 export type FilaZona = {
   clave: string; nombre: string; tortillerias: number; con_precios: number; capturas: number;
-  maiz: { promedio: number; minimo: number; maximo: number; capturas: number } | null;
-  masa: { promedio: number; minimo: number; maximo: number; capturas: number } | null;
+  /** dadas de alta por los censadores y tortillerías del DENUE con al menos un precio que cuenta */
+  nuevas?: number; denue_visitadas?: number;
+  maiz: { promedio: number; minimo: number; maximo: number; capturas: number; tortillerias?: number } | null;
+  masa: { promedio: number; minimo: number; maximo: number; capturas: number; tortillerias?: number } | null;
   lat: number; lng: number; bbox: [number, number, number, number];
 };
 export type FocoMapa = { bbox: [number, number, number, number]; estado?: string; municipio?: string; n: number };
@@ -226,8 +228,7 @@ export default function AdminMapa({ foco, alCambio }: { foco?: FocoMapa; alCambi
         </div>
         <ul className="space-y-1">
           <li className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-stone-400" /> Sin precio capturado</li>
-          <li className="flex items-center gap-2"><span className="h-3 w-3 rounded-full border-[3px] border-dorado bg-white" /> Tortillería por validar</li>
-          <li className="flex items-center gap-2"><span className="h-3 w-3 rounded-full border-[3px] border-red-600 bg-white" /> Con alerta de precio</li>
+          <LeyendaPuntos />
           <li className="flex items-center gap-2"><Store className="h-3.5 w-3.5 text-guinda" /> De lejos: cada círculo es una zona (tamaño = tortillerías, color = precio promedio). Al acercarte se ve cada tortillería.</li>
         </ul>
       </div>
@@ -237,6 +238,10 @@ export default function AdminMapa({ foco, alCambio }: { foco?: FocoMapa; alCambi
   return (
     <div className="flex h-full w-full bg-stone-200">
     <div className="relative h-full min-w-0 flex-1">
+      {/* Leyenda siempre visible sobre el mapa */}
+      <div className="pointer-events-none absolute bottom-8 left-2 z-10 hidden rounded-xl bg-white/92 px-2.5 py-1.5 text-[11px] text-stone-600 shadow-md ring-1 ring-stone-200 backdrop-blur sm:block">
+        <ul className="space-y-0.5"><LeyendaPuntos /></ul>
+      </div>
       <Suspense fallback={<div className="grid h-full place-items-center text-stone-500"><Loader2 className="h-7 w-7 animate-spin" /></div>}>
         <Mapa ref={ref} producto={producto} dias={dias} soloConPrecios={solo} soloInseguridad={inseguridad} tick={tick} onVista={setVista} onSeleccion={setSel} seleccion={sel && { id: sel.id, lat: sel.lat, lng: sel.lng }} />
       </Suspense>
@@ -290,5 +295,20 @@ export default function AdminMapa({ foco, alCambio }: { foco?: FocoMapa; alCambi
       <div className="h-full w-[24rem]">{detalle}</div>
     </aside>
     </div>
+  );
+}
+
+/** Qué significa el borde de cada punto: del DENUE, nueva validada, nueva por revisar y con alerta de precio */
+function LeyendaPuntos() {
+  const item = (borde: string, texto: string) => (
+    <li className="flex items-center gap-2"><span className="h-3 w-3 shrink-0 rounded-full border-[3px] bg-white" style={{ borderColor: borde }} /> {texto}</li>
+  );
+  return (
+    <>
+      {item("#d6d3d1", "DENUE")}
+      {item("#2563eb", "Nueva validada")}
+      {item("#BC955C", "Nueva por revisar")}
+      {item("#dc2626", "Con alerta de precio")}
+    </>
   );
 }

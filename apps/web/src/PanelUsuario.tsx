@@ -219,9 +219,10 @@ export default function PanelUsuario({
 
           <div className="grid grid-cols-3 gap-2">
             <Dato icono={ClipboardList} etiqueta="Registros" valor={resumen?.registros ?? "–"} />
-            <Dato icono={Clock} etiqueta="En revisión" valor={resumen?.pendientes ?? "–"} tono="dorado" />
+            <Dato icono={Clock} etiqueta="Atípicos en revisión" valor={resumen?.pendientes ?? "–"} tono="dorado" />
             <Dato icono={CheckCircle2} etiqueta="Aprobados" valor={resumen?.aprobados ?? "–"} tono="verde" />
           </div>
+          <p className="px-1 text-[11px] leading-snug text-stone-500">Un precio se revisa cuando es muy distinto al de la zona. Los demás se aprueban solos.</p>
 
           <div className="flex items-center justify-between pt-1">
             <h2 className="text-sm font-bold">Últimas tortillerías</h2>

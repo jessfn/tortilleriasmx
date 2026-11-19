@@ -2,7 +2,7 @@ import { formatearTelefono } from "@tortillerias/shared";
 import { NegativasFiscales } from "./NegativasFiscales";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlertTriangle, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, ChevronDown, ChevronLeft, ChevronRight, Clock, Eye, Loader2, Mail, MapPin, Navigation, Phone, Store, TriangleAlert,
+  AlertTriangle, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, ChevronDown, ChevronLeft, ChevronRight, Clock, Eye, History, Loader2, Search, Mail, MapPin, Navigation, Phone, Store, TriangleAlert,
   UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, KeyRound, Copy, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog,
 } from "lucide-react";
 import { api, type Sesion } from "./api";
@@ -11,6 +11,8 @@ import Perfil from "./Perfil";
 import { CLAVES, usePersistente } from "./persist";
 import { Aviso, Boton, HojaModal, Insignia, Tarjeta, Vacio } from "./ui";
 import MiniMapa from "./MiniMapa";
+import { Paginacion, POR_PAGINA, type Pagina } from "./Paginacion";
+import AdminAuditoria from "./AdminAuditoria";
 import { distanciaM } from "./catalogo";
 import AdminBarra from "./AdminBarra";
 import AdminResumen, { type Resumen } from "./AdminResumen";
@@ -30,8 +32,14 @@ export type CapturaAdm = {
   nombre: string; municipio: string | null; estado: string | null; capturista: string | null;
   /** dónde y cuándo se hizo la captura (el GPS puede faltar) */
   precision_gps?: number | null; captura_lat?: number | null; captura_lng?: number | null; capturado_en?: string | null;
+  /** mediana del municipio al capturar, con cuántos precios se calculó, y cómo se aprobó */
+  mediana_ref?: number | null; n_ref?: number | null; aprobacion?: string | null;
 };
-type UsuarioAdm = { id: string; correo: string | null; usuario: string; nombre: string; apellidos: string; rol: string; activo: boolean; creado_en: string; capturas: number; debe_cambiar_password?: boolean };
+type UsuarioAdm = {
+  id: string; correo: string | null; usuario: string; nombre: string; apellidos: string; rol: string; activo: boolean; creado_en: string; capturas: number; debe_cambiar_password?: boolean;
+  /** AAAA-MM-DD de su última captura y cuántas hizo en los últimos 7 días: para ver quién está trabajando */
+  ultima_captura?: string | null; capturas_7d?: number;
+};
 /** Datos fiscales de la tortillería; si solo hay un registro viejo de responsable, llega con legado = true */
 export type Fiscal = { tipoPersona: string; razonSocial: string; rfc: string; celular: string | null; legado?: boolean; responsable?: { nombre: string; apellidos: string } };
 
@@ -48,7 +56,7 @@ export default function PanelAdmin({
 }: { sesion: Sesion; alActualizarSesion: (s: Sesion) => void; alSalir: () => void; alInicio?: () => void }) {
   const esAdmin = sesion.usuario.rol === "admin";
   const [tabGuardada, setTab] = usePersistente(CLAVES.tabAdmin, "resumen");
-  const tab = tabGuardada === "usuarios" && !esAdmin ? "resumen" : tabGuardada; // por si cambió su rol
+  const tab = (tabGuardada === "usuarios" || tabGuardada === "auditoria") && !esAdmin ? "resumen" : tabGuardada; // por si cambió su rol
   const [resumen, setResumen] = useState<Resumen>();
   const [foco, setFoco] = useState<FocoMapa>();
 
@@ -69,7 +77,7 @@ export default function PanelAdmin({
       pendientes={pendientes}
       alInicio={alInicio}
       alSalir={alSalir}
-      plano={tab === "mapa" || tab === "revision"}
+      plano={tab === "mapa" || tab === "revision" || tab === "usuarios" || tab === "auditoria"}
       titulo={esAdmin ? "Administración" : "Supervisión"}
       vivo={vivo}
       pestañas={[
@@ -77,7 +85,7 @@ export default function PanelAdmin({
         { id: "mapa", texto: "Mapa", icono: MapaIcono },
         { id: "estadisticas", texto: "Estadísticas", icono: LineChart },
         { id: "revision", texto: "Revisión", icono: ClipboardCheck, insignia: pendientes },
-        ...(esAdmin ? [{ id: "usuarios", texto: "Usuarios", icono: Users }] : []),
+        ...(esAdmin ? [{ id: "usuarios", texto: "Usuarios", icono: Users }, { id: "auditoria", texto: "Auditoría", icono: History }] : []),
         { id: "perfil", texto: "Perfil", icono: UserRound },
       ]}
       activa={tab}
@@ -88,14 +96,13 @@ export default function PanelAdmin({
       {tab === "estadisticas" && <AdminEstadisticas alMapa={alMapa} />}
       {tab === "revision" && <VistaRevision alCambio={cargarResumen} />}
       {tab === "usuarios" && esAdmin && <VistaUsuarios miId={sesion.usuario.id} />}
+      {tab === "auditoria" && esAdmin && <AdminAuditoria />}
       {tab === "perfil" && <Perfil sesion={sesion} alActualizar={alActualizarSesion} alSalir={alSalir} />}
     </AdminBarra>
   );
 }
 
 /* ---------------- Revisión ---------------- */
-type Pagina<T> = { filas: T[]; total: number; pagina: number; paginas: number; limite: number };
-const POR_PAGINA = [25, 50, 100];
 
 function VistaRevision({ alCambio }: { alCambio: () => void }) {
   const [seccion, setSeccion] = useState<"tortillerias" | "precios">("tortillerias");
@@ -113,8 +120,12 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
   const [trabajando, setTrabajando] = useState<string>();
   const [error, setError] = useState("");
   const zona = useRef<HTMLDivElement>(null);
+  /** precios atípicos marcados para aprobar o rechazar de un jalón */
+  const [marcados, setMarcados] = useState<Set<string>>(new Set());
+  const [masivo, setMasivo] = useState<"validada" | "rechazada">();
 
-  const ruta = (s: "tortillerias" | "precios") => (s === "tortillerias" ? "/admin/tortillerias" : "/admin/capturas");
+  // "Tortillerías nuevas" = solo las que dieron de alta los censadores (las del DENUE no se revisan aquí)
+  const ruta = (s: "tortillerias" | "precios") => (s === "tortillerias" ? "/admin/tortillerias?origen=nueva" : "/admin/capturas?v=1");
   const actual = seccion === "tortillerias" ? tortillerias : capturas;
   const total = actual?.total ?? 0;
   const paginas = actual?.paginas ?? 1;
@@ -122,8 +133,8 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
   const cargar = useCallback(() => {
     const otra = seccion === "tortillerias" ? "precios" : "tortillerias";
     Promise.all([
-      api<Pagina<TortilleriaAdm | CapturaAdm>>(`${ruta(seccion)}?estatus=${estatus}&pagina=${pagina}&limite=${limite}`),
-      api<Pagina<unknown>>(`${ruta(otra)}?estatus=${estatus}&pagina=1&limite=1`),
+      api<Pagina<TortilleriaAdm | CapturaAdm>>(`${ruta(seccion)}&estatus=${estatus}&pagina=${pagina}&limite=${limite}`),
+      api<Pagina<unknown>>(`${ruta(otra)}&estatus=${estatus}&pagina=1&limite=1`),
     ])
       .then(([a, b]) => {
         // si se vació la última página (p. ej. al aprobar el único registro de ella), se retrocede
@@ -142,6 +153,7 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
   }, [cargar]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     zona.current?.scrollTo({ top: 0 });
+    setMarcados(new Set());
   }, [seccion, estatus, pagina, limite]);
 
   const cambiarSeccion = (s: typeof seccion) => { setSeccion(s); setPagina(1); };
@@ -159,6 +171,29 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
       setTrabajando(undefined);
     }
   }
+
+  /** Aprobar o rechazar varios precios a la vez (máximo 200 por petición) */
+  async function resolverVarios(nuevo: "validada" | "rechazada") {
+    const ids = [...marcados];
+    if (!ids.length) return;
+    setMasivo(nuevo);
+    try {
+      await api("/admin/capturas", { metodo: "PATCH", json: { ids, estatus: nuevo } });
+      setMarcados(new Set());
+      alCambio();
+      cargar();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setMasivo(undefined);
+    }
+  }
+  const alternar = (id: string) =>
+    setMarcados((m) => {
+      const n = new Set(m);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
 
   async function verCaptura(c: CapturaAdm) {
     setAbriendo(c.id);
@@ -209,7 +244,7 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
                 className={`flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-xl px-2 text-[13px] font-semibold transition sm:text-sm ${on ? "bg-white text-guinda shadow" : "text-stone-500 hover:text-stone-700"}`}
               >
                 <span className={`hidden h-7 w-7 shrink-0 place-items-center rounded-full sm:grid ${on ? "bg-guinda/10" : "bg-stone-300/50"}`}><Icono className="h-4 w-4" aria-hidden /></span>
-                <span className="min-w-0 text-center leading-tight">{s === "tortillerias" ? "Tortillerías nuevas" : "Precios capturados"}</span>
+                <span className="min-w-0 text-center leading-tight">{s === "tortillerias" ? "Tortillerías nuevas" : estatus === "pendiente" ? "Precios atípicos por revisar" : "Precios capturados"}</span>
                 {n !== undefined && (
                   <span className={`grid h-5 min-w-5 shrink-0 place-items-center rounded-full px-1.5 text-[11px] font-bold ${on ? "bg-guinda text-white" : "bg-stone-300/70 text-stone-600"}`}>{n}</span>
                 )}
@@ -227,13 +262,31 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
 
       {error && <Aviso>{error}</Aviso>}
 
+      {seccion === "precios" && estatus === "pendiente" && !!capturas?.filas.length && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-2xl bg-white px-3 py-2 shadow-sm ring-1 ring-stone-200">
+          <label className="flex min-h-9 cursor-pointer items-center gap-2 text-xs font-semibold text-stone-600">
+            <input
+              type="checkbox"
+              className="h-5 w-5 accent-guinda"
+              checked={marcados.size > 0 && marcados.size === capturas.filas.length}
+              onChange={(e) => setMarcados(e.target.checked ? new Set(capturas.filas.map((c) => c.id)) : new Set())}
+            />
+            {marcados.size ? `${marcados.size} seleccionado${marcados.size === 1 ? "" : "s"}` : "Seleccionar todos"}
+          </label>
+          <div className="ml-auto flex gap-2">
+            <Boton variante="peligro" className="!min-h-9 !px-3 !text-xs" disabled={!marcados.size || !!masivo} icono={masivo === "rechazada" ? Loader2 : X} onClick={() => resolverVarios("rechazada")}>Rechazar seleccionados</Boton>
+            <Boton className="!min-h-9 !px-3 !text-xs" disabled={!marcados.size || !!masivo} icono={masivo === "validada" ? Loader2 : Check} onClick={() => resolverVarios("validada")}>Aprobar seleccionados</Boton>
+          </div>
+        </div>
+      )}
+
       {/* El recuadro ocupa lo que queda de la pantalla: la lista se desplaza dentro de él y la paginación queda siempre a la vista */}
-      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200" aria-label={seccion === "tortillerias" ? "Tortillerías nuevas" : "Precios capturados"}>
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200" aria-label={seccion === "tortillerias" ? "Tortillerías nuevas" : estatus === "pendiente" ? "Precios atípicos por revisar" : "Precios capturados"}>
         <div ref={zona} className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-stone-50/70 p-2.5">
           {!actual ? (
             <div className="grid place-items-center py-16 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
           ) : actual.filas.length === 0 ? (
-            vacio(seccion === "tortillerias" ? "No hay tortillerías nuevas por revisar." : "No hay precios capturados por revisar.")
+            vacio(seccion === "tortillerias" ? "No hay tortillerías nuevas por revisar." : "No hay precios atípicos por revisar: los demás se aprueban solos.")
           ) : seccion === "tortillerias" ? (
             <div className="grid content-start gap-2.5 md:grid-cols-2 xl:grid-cols-3">
               {(tortillerias?.filas ?? []).map((t) => (
@@ -261,9 +314,12 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
               {(capturas?.filas ?? []).map((c) => {
                 const P = PRODUCTO[c.producto];
                 return (
-                  <Tarjeta key={c.id} className="space-y-2">
+                  <Tarjeta key={c.id} className={`space-y-2 ${marcados.has(c.id) ? "ring-2 ring-guinda" : ""}`}>
                     <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
+                      {c.estatus === "pendiente" && (
+                        <input type="checkbox" aria-label={`Seleccionar el precio de ${c.nombre}`} className="mt-0.5 h-5 w-5 shrink-0 accent-guinda" checked={marcados.has(c.id)} onChange={() => alternar(c.id)} />
+                      )}
+                      <div className="min-w-0 flex-1">
                         <p className="[display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden break-words font-semibold leading-tight">{c.nombre}</p>
                         <p className="truncate text-xs text-stone-500">{[c.municipio, c.estado].filter(Boolean).join(", ")}</p>
                       </div>
@@ -273,11 +329,7 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
                       <span className="flex items-center gap-1.5 text-sm text-stone-600"><P.i className="h-4 w-4" aria-hidden /> {P.t}</span>
                       <span className="text-xl font-bold">${Number(c.precio_kg).toFixed(2)}<span className="text-xs font-medium text-stone-400"> /kg</span></span>
                     </div>
-                    {c.alerta && (
-                      <div className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
-                        <TriangleAlert className="h-3.5 w-3.5" aria-hidden /> Precio atípico respecto a la mediana del municipio
-                      </div>
-                    )}
+                    {c.alerta && <AvisoAtipico c={c} />}
                     <p className="truncate text-xs text-stone-400">{c.capturista ?? "Sin usuario"} · {dia(c.fecha)}</p>
                     <Boton variante="secundario" className="!min-h-10 !text-sm" disabled={abriendo === c.id} icono={abriendo === c.id ? Loader2 : Eye} onClick={() => verCaptura(c)}>
                       Ver más detalles
@@ -510,9 +562,17 @@ function DetalleTortilleria({
 
 /* ---------------- Usuarios (solo administrador) ---------------- */
 function VistaUsuarios({ miId }: { miId: string }) {
-  const [usuarios, setUsuarios] = useState<UsuarioAdm[]>();
+  const [pag, setPag] = useState<Pagina<UsuarioAdm>>();
+  const [busqueda, setBusqueda] = useState("");
+  const [q, setQ] = useState(""); // la búsqueda se envía un momento después de escribir
+  const [rol, setRol] = useState("");
+  const [activo, setActivo] = useState("");
+  const [pagina, setPagina] = useState(1);
+  const [limite, setLimite] = useState(50);
   const [error, setError] = useState("");
   const [trabajando, setTrabajando] = useState<string>();
+  const zona = useRef<HTMLDivElement>(null);
+  const actualizar = (id: string, cambio: Partial<UsuarioAdm>) => setPag((p) => p && { ...p, filas: p.filas.map((x) => (x.id === id ? { ...x, ...cambio } : x)) });
   // Restablecer contraseña: primero se confirma y luego se muestra la temporal UNA sola vez
   const [confirmando, setConfirmando] = useState<string>();
   const [temporal, setTemporal] = useState<{ correo: string; password: string }>();
@@ -525,7 +585,7 @@ function VistaUsuarios({ miId }: { miId: string }) {
       const r = await api<{ password: string }>(`/admin/usuarios/${u.id}/restablecer-password`, { json: {} });
       setTemporal({ correo: u.correo ?? u.usuario, password: r.password });
       setCopiada(false);
-      setUsuarios((l) => l?.map((x) => (x.id === u.id ? { ...x, debe_cambiar_password: true } : x)));
+      actualizar(u.id, { debe_cambiar_password: true });
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -535,15 +595,40 @@ function VistaUsuarios({ miId }: { miId: string }) {
   }
 
   useEffect(() => {
-    api<UsuarioAdm[]>("/admin/usuarios").then(setUsuarios).catch((e) => setError(e.message));
-  }, []);
+    const t = window.setTimeout(() => {
+      setQ(busqueda.trim());
+      setPagina(1);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [busqueda]);
+  useEffect(() => {
+    let vigente = true;
+    const p = new URLSearchParams({ pagina: String(pagina), limite: String(limite) });
+    if (q) p.set("q", q);
+    if (rol) p.set("rol", rol);
+    if (activo) p.set("activo", activo);
+    api<Pagina<UsuarioAdm>>(`/admin/usuarios?${p}`)
+      .then((r) => {
+        if (!vigente) return;
+        if (!r.filas.length && pagina > 1) return setPagina(Math.max(1, r.paginas));
+        setPag(r);
+        setError("");
+      })
+      .catch((e) => vigente && setError(e.message));
+    return () => {
+      vigente = false;
+    };
+  }, [q, rol, activo, pagina, limite]);
+  useEffect(() => {
+    zona.current?.scrollTo({ top: 0 });
+  }, [q, rol, activo, pagina, limite]);
 
   async function cambiar(u: UsuarioAdm, cambio: Partial<Pick<UsuarioAdm, "rol" | "activo">>) {
     setTrabajando(u.id);
     setError("");
     try {
       await api(`/admin/usuarios/${u.id}`, { metodo: "PATCH", json: cambio });
-      setUsuarios((l) => l?.map((x) => (x.id === u.id ? { ...x, ...cambio } : x)));
+      actualizar(u.id, cambio);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -551,13 +636,46 @@ function VistaUsuarios({ miId }: { miId: string }) {
     }
   }
 
-  if (!usuarios) return <div className="grid place-items-center py-12 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>;
+  const usuarios = pag?.filas;
 
   return (
-    <>
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-[92rem] flex-col gap-2.5 px-3 pb-3 pt-4 lg:px-6 lg:pb-5">
+      <div className="flex shrink-0 flex-col gap-2 md:flex-row md:items-center">
+        <label className="relative block min-w-0 flex-1 md:max-w-md">
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-stone-400" aria-hidden />
+          <input
+            type="search"
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar por correo, usuario o nombre"
+            aria-label="Buscar usuarios"
+            className="h-11 w-full rounded-xl border border-stone-200 bg-white pl-10 pr-3 text-base shadow-sm outline-none focus:border-guinda focus:ring-4 focus:ring-guinda/10"
+          />
+        </label>
+        <div className="grid grid-cols-2 gap-2 md:flex">
+          <select value={rol} onChange={(e) => { setRol(e.target.value); setPagina(1); }} aria-label="Filtrar por rol" className="h-11 rounded-xl border border-stone-200 bg-white px-3 text-sm shadow-sm">
+            <option value="">Todos los roles</option>
+            <option value="capturista">Usuarios</option>
+            <option value="supervisor">Supervisores</option>
+            <option value="admin">Administradores</option>
+          </select>
+          <select value={activo} onChange={(e) => { setActivo(e.target.value); setPagina(1); }} aria-label="Filtrar por estado de la cuenta" className="h-11 rounded-xl border border-stone-200 bg-white px-3 text-sm shadow-sm">
+            <option value="">Activas e inactivas</option>
+            <option value="1">Solo activas</option>
+            <option value="0">Solo inactivas</option>
+          </select>
+        </div>
+      </div>
       {error && <Aviso>{error}</Aviso>}
-      <p className="px-1 text-xs text-stone-500">{usuarios.length} cuenta(s). Puedes cambiar el rol o desactivar el acceso.</p>
-      {usuarios.map((u) => {
+
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200" aria-label="Usuarios">
+        <div ref={zona} className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-stone-50/70 p-2.5">
+          <div className="grid content-start gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+      {!usuarios ? (
+        <div className="col-span-full grid place-items-center py-16 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
+      ) : usuarios.length === 0 ? (
+        <div className="col-span-full"><Vacio icono={Users} titulo="Sin resultados" texto={q ? "Ninguna cuenta coincide con la búsqueda." : undefined} /></div>
+      ) : usuarios.map((u) => {
         const yo = u.id === miId;
         return (
           <Tarjeta key={u.id} className={`space-y-2 ${u.activo ? "" : "opacity-60"}`}>
@@ -568,6 +686,9 @@ function VistaUsuarios({ miId }: { miId: string }) {
               <div className="min-w-0 flex-1">
                 <p className="truncate font-semibold leading-tight">{u.correo ?? u.usuario}</p>
                 <p className="truncate text-xs text-stone-500">{[u.nombre, u.apellidos].filter(Boolean).join(" ") || "Sin nombre"} · {u.capturas} captura(s)</p>
+                <p className="truncate text-[11px] text-stone-400">
+                  {u.ultima_captura ? <>Última captura: {dia(u.ultima_captura)} · <b className={u.capturas_7d ? "text-emerald-700" : "text-stone-500"}>{u.capturas_7d ?? 0} en 7 días</b></> : "Aún sin capturas"}
+                </p>
               </div>
               {yo && <span className="rounded-full bg-verde/10 px-2 py-0.5 text-[11px] font-semibold text-verde">Tú</span>}
               {!yo && u.debe_cambiar_password && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">Cambio pendiente</span>}
@@ -619,6 +740,10 @@ function VistaUsuarios({ miId }: { miId: string }) {
           </Tarjeta>
         );
       })}
+          </div>
+        </div>
+        {pag && <Paginacion total={pag.total} pagina={pag.pagina} paginas={pag.paginas} limite={pag.limite} alPagina={setPagina} alLimite={(n) => { setLimite(n); setPagina(1); }} />}
+      </section>
       {temporal && (
         <HojaModal titulo="Contraseña temporal" alCerrar={() => setTemporal(undefined)}>
           <p className="text-sm text-stone-700">
@@ -639,7 +764,7 @@ function VistaUsuarios({ miId }: { miId: string }) {
           <Boton onClick={() => setTemporal(undefined)}>Listo</Boton>
         </HojaModal>
       )}
-    </>
+    </div>
   );
 }
 
@@ -664,11 +789,7 @@ function TarjetaCaptura({ c, t }: { c: CapturaAdm; t: TortilleriaAdm }) {
         <span className="flex items-center gap-1.5 text-sm text-stone-600"><P.i className="h-4 w-4 text-guinda" aria-hidden /> {P.t}</span>
         <span className="text-2xl font-bold">${Number(c.precio_kg).toFixed(2)}<span className="text-xs font-medium text-stone-400"> /kg</span></span>
       </div>
-      {c.alerta && (
-        <div className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
-          <TriangleAlert className="h-3.5 w-3.5" aria-hidden /> Precio atípico respecto a la mediana del municipio
-        </div>
-      )}
+      {c.alerta && <AvisoAtipico c={c} />}
       <ul className="space-y-1 text-xs text-stone-500">
         <li className="flex items-center gap-1.5"><UserRound className="h-3.5 w-3.5 text-guinda" aria-hidden /> {c.capturista ?? "Sin usuario"}</li>
         <li className="flex items-center gap-1.5">
@@ -681,5 +802,22 @@ function TarjetaCaptura({ c, t }: { c: CapturaAdm; t: TortilleriaAdm }) {
         </li>
       </ul>
     </Tarjeta>
+  );
+}
+
+/** "+42 % sobre la mediana de $25.00 (calculada con 12 precios)": por qué un precio se considera atípico */
+function AvisoAtipico({ c }: { c: CapturaAdm }) {
+  const med = c.mediana_ref != null ? Number(c.mediana_ref) : null;
+  const dif = med ? ((Number(c.precio_kg) - med) / med) * 100 : null;
+  return (
+    <div className="rounded-lg bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-900">
+      <p className="flex items-center gap-1.5"><TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden /> Precio atípico respecto a la mediana del municipio</p>
+      {dif !== null && med !== null && (
+        <p className="mt-0.5 pl-5 font-normal">
+          <b className={dif > 0 ? "text-red-700" : "text-blue-700"}>{dif > 0 ? "+" : ""}{Math.round(dif)} %</b> sobre la mediana de <b>${med.toFixed(2)}</b>
+          {c.n_ref ? ` (calculada con ${c.n_ref} precios)` : ""}
+        </p>
+      )}
+    </div>
   );
 }

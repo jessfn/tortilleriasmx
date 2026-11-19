@@ -20,6 +20,13 @@ export const NOMBRE_REGEX = /^[A-ZÑ]+(?:[ '\-][A-ZÑ]+)*$/;
 
 export const PRECIO_MIN = 5;
 export const PRECIO_MAX = 60;
+/**
+ * Precio atípico: se aleja más de este porcentaje de la mediana del mismo producto en el mismo municipio (últimos N días),
+ * cuando esa mediana se calcula con al menos tantos precios. Los normales se aprueban solos; los atípicos los revisa un supervisor.
+ */
+export const PRECIO_ATIPICO_PORCENTAJE = 30;
+export const PRECIO_ATIPICO_DIAS = 90;
+export const PRECIO_ATIPICO_MIN_CAPTURAS = 3;
 export const PASSWORD_MIN = 6;
 
 /** Mayúsculas y sin acentos (conserva la Ñ, que es una letra y no un acento). */
