@@ -127,8 +127,11 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
   );
 
   return (
-    <>
-      <div className="flex flex-wrap items-center gap-3">
+    // La pantalla ocupa el alto disponible: en computadora la tabla se estira hasta abajo y se desplaza por dentro, y la columna derecha se desplaza aparte;
+    // en tableta y celular todo va en una columna que se desplaza completa.
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-[92rem] flex-col px-3 pb-3 pt-4 lg:px-6 lg:pb-5">
+    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain xl:flex xl:flex-col xl:space-y-0 xl:gap-3 xl:overflow-hidden">
+      <div className="flex flex-wrap items-center gap-3 xl:shrink-0">
         <nav aria-label="Ubicación" className="flex min-w-0 items-center gap-1 text-sm">
           <button onClick={() => { setEstado(undefined); setFilas(undefined); }} className={`font-bold ${estado ? "text-guinda hover:underline" : ""}`}>Todos los estados</button>
           {estado && (
@@ -182,9 +185,9 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
         ))}
       </div>
 
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+      <div className="grid gap-3 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         {/* self-start: la tarjeta mide lo que mide su tabla (sin estirarse hasta el alto de la columna derecha y dejar espacio en blanco) */}
-        <Tarjeta className="self-start overflow-hidden !p-0">
+        <Tarjeta className="flex flex-col overflow-hidden !p-0 xl:min-h-0">
           {!filas ? (
             <div className="grid place-items-center py-16 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
           ) : filas.length === 0 ? (
@@ -192,7 +195,7 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
           ) : (
             <>
               {/* Computadora y tableta */}
-              <div className="hidden max-h-[calc(100dvh-22rem)] overflow-auto md:block">
+              <div className="hidden max-h-[70dvh] overflow-auto md:block xl:min-h-0 xl:max-h-none xl:flex-1">
                 <table className="w-full min-w-[40rem] text-sm">
                   <thead className="sticky top-0 z-10 bg-stone-50 text-xs text-stone-500 shadow-[0_1px_0_#e7e5e4]">
                     <tr>
@@ -263,7 +266,7 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
           )}
         </Tarjeta>
 
-        <div className="space-y-3 self-start">
+        <div className="space-y-3 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
         <Tarjeta className="space-y-2">
           <h2 className="text-sm font-bold">Tendencia {estado ? `· ${estado.nombre}` : "· nacional"}</h2>
           <Tendencia datos={tendencia} alto={220} />
@@ -273,7 +276,8 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
         <SinFiscal estado={estado} />
         </div>
       </div>
-    </>
+    </div>
+    </div>
   );
 }
 
