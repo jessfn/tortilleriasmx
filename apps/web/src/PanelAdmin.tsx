@@ -88,7 +88,7 @@ export default function PanelAdmin({
       pendientes={pendientes}
       alInicio={alInicio}
       alSalir={alSalir}
-      plano={tab === "mapa" || tab === "revision" || tab === "usuarios" || tab === "auditoria" || tab === "estadisticas"}
+      plano={tab === "mapa" || tab === "revision" || tab === "usuarios" || tab === "auditoria"}
       titulo={esAdmin ? "Administración" : "Supervisión"}
       vivo={vivo}
       pestañas={pestañasDisponibles.map((p) => (p.id === "revision" ? { ...p, insignia: pendientes } : p))}
