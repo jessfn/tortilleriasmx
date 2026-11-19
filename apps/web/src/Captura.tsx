@@ -393,8 +393,11 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   const bloqueado = (p: Producto) => hoy?.[p] != null; // ya lo capturó hoy
   const activo = (p: (typeof PRODUCTOS)[number]) => !bloqueado(p.id);
   // los dos precios son obligatorios (el que ya se capturó hoy no se vuelve a pedir)
-  const preciosListos = PRODUCTOS.every((p) => !activo(p) || (d[p.clave] !== "" && precioValido(d[p.clave])));
-  const faltan = PRODUCTOS.filter((p) => activo(p) && !(d[p.clave] !== "" && precioValido(d[p.clave])));
+  const precioOk = (p: (typeof PRODUCTOS)[number]) => d[p.clave] !== "" && precioValido(d[p.clave]);
+  // la tortilla es obligatoria (salvo que ya se capturó hoy); la masa es opcional, pero si se escribe debe ser válida; y debe haber algo nuevo que enviar
+  const preciosListos =
+    (!activo(PRODUCTOS[0]) || precioOk(PRODUCTOS[0])) && (!activo(PRODUCTOS[1]) || d.precioMasa === "" || precioOk(PRODUCTOS[1])) && PRODUCTOS.some((p) => activo(p) && precioOk(p));
+  const falta = !activo(PRODUCTOS[0]) ? (!precioOk(PRODUCTOS[1]) ? "la masa" : "") : !precioOk(PRODUCTOS[0]) ? "la tortilla" : "";
   const todoCapturado = hoy != null && !activo(PRODUCTOS[0]) && !activo(PRODUCTOS[1]);
 
   const puede: Record<string, boolean> = {
@@ -918,7 +921,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                 <div className="grid place-items-center py-8 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
               ) : (
                 <>
-                  <p className="px-1 text-xs text-stone-500">Anota el precio por kilo de la tortilla y de la masa. Los dos son obligatorios.</p>
+                  <p className="px-1 text-xs text-stone-500">Anota el precio por kilo de la tortilla (obligatorio). El de la masa es opcional.</p>
                   {PRODUCTOS.map((p) => {
                     const ya = hoy[p.id];
                     const valor = d[p.clave];
@@ -940,7 +943,11 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                           {ya != null || (valor !== "" && !malo) ? (
                             <span className="grid h-6 w-6 place-items-center rounded-full bg-emerald-500 text-white"><Check className="h-4 w-4" strokeWidth={3} aria-hidden /></span>
                           ) : (
-                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">Obligatorio</span>
+                            p.id === "maiz" ? (
+                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">Obligatorio</span>
+                            ) : (
+                              <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-semibold text-stone-500">Opcional</span>
+                            )
                           )}
                         </div>
                         {ya != null ? (
@@ -975,9 +982,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                       </div>
                     );
                   })}
-                  {!todoCapturado && faltan.length > 0 && (
-                    <p className="px-1 text-center text-xs text-amber-700">Falta el precio de {faltan.map((f) => (f.id === "maiz" ? "la tortilla" : "la masa")).join(" y ")}.</p>
-                  )}
+                  {!todoCapturado && falta && <p className="px-1 text-center text-xs text-amber-700">Falta el precio de {falta}.</p>}
                   {todoCapturado && <Aviso tipo="info">Ya capturaste hoy la tortilla y la masa de esta tortillería. Podrás volver a capturarlos mañana.</Aviso>}
                 </>
               )}
