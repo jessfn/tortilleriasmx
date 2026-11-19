@@ -45,6 +45,18 @@ type Props = {
 const ZOOM_PUNTOS = 10; // desde aquí se dibuja una tortillería por punto; más lejos, zonas agrupadas por el servidor
 const MEXICO = { lat: 23.6, lng: -102.5 };
 
+
+/** Rectángulo [oeste, sur, este, norte]. Se pide al servidor un área más grande que la visible para que, al mover el mapa, los puntos ya estén ahí (sin esperas ni huecos) */
+type Caja = [number, number, number, number];
+const dentroDe = (v: Caja, c: Caja) => v[0] >= c[0] && v[1] >= c[1] && v[2] <= c[2] && v[3] <= c[3];
+const ampliar = ([w, s, e, n]: Caja, f = 0.5): Caja => {
+  const dx = (e - w) * f;
+  const dy = (n - s) * f;
+  return [Math.max(-180, w - dx), Math.max(-85, s - dy), Math.min(180, e + dx), Math.min(85, n + dy)];
+};
+const puntoEn = (x: { lat: number; lng: number }, v: Caja) => x.lng >= v[0] && x.lng <= v[2] && x.lat >= v[1] && x.lat <= v[3];
+const aTexto = (c: Caja) => c.map((n) => n.toFixed(6)).join(",");
+
 /** Mapa de supervisión: puntos coloreados por precio, grupos con su promedio y ventana con el detalle al tocar un punto */
 const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref) {
   const cont = useRef<HTMLDivElement>(null);
@@ -53,6 +65,8 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
   const ctrl = useRef<AbortController | null>(null);
   const temporizador = useRef<number>();
   const datos = useRef<PuntoAdm[]>([]);
+  /** Área (más grande que la visible) ya cargada y con qué filtros: mientras la vista quepa en ella no se vuelve a pedir nada */
+  const cubierto = useRef<{ caja: Caja; clave: string } | null>(null);
   const anillo = useRef<maplibregl.Marker | null>(null);
   const p = useRef(props);
   p.current = props;
@@ -73,12 +87,16 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
   const modo = useRef<"puntos" | "celdas">("celdas");
   const rangoRef = useRef<[number, number]>([20, 32]);
 
-  const emitir = (cargando = false) =>
+  const emitir = (cargando = false) => {
+    // Se pide un área más grande que la visible: el resumen cuenta solo lo que se ve
+    const b = mapa.current?.getBounds();
+    const vista: Caja | null = b ? [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()] : null;
     p.current.onVista({
-      puntos: modo.current === "puntos" ? datos.current : [],
+      puntos: modo.current === "puntos" ? (vista ? datos.current.filter((x) => puntoEn(x, vista)) : datos.current) : [],
       celdas: modo.current === "celdas" ? celdas.current : [],
       modo: modo.current, lejano: false, cargando, rango: rangoRef.current,
     });
+  };
 
   const precioDe = (x: PuntoAdm) => (p.current.producto === "maiz" ? x.ultimo_maiz?.precio : x.ultima_masa?.precio) ?? 0;
   const promedioDe = (c: CeldaAdm) => {
@@ -140,19 +158,26 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
     const z = m.getZoom();
     p.current.onZoom?.(z);
     const b = m.getBounds();
+    const vista: Caja = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+    const filtros = { dias: String(p.current.dias), ...(p.current.soloInseguridad ? { solo: "inseguridad" } : p.current.soloConPrecios ? { solo: "precios" } : {}) };
+    const clave = JSON.stringify([filtros, p.current.producto, p.current.tick]);
+    // Ya se tienen los puntos de esta zona con estos mismos filtros: se mueve el mapa sin pedir nada (fluido, sin parpadeos)
+    if (z >= ZOOM_PUNTOS && modo.current === "puntos" && cubierto.current?.clave === clave && dentroDe(vista, cubierto.current.caja)) {
+      emitir(false);
+      return;
+    }
     ctrl.current?.abort();
     const c = new AbortController();
     ctrl.current = c;
     emitir(true);
-    const q = new URLSearchParams({
-      bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((n) => n.toFixed(6)).join(","),
-      dias: String(p.current.dias),
-      ...(p.current.soloInseguridad ? { solo: "inseguridad" } : p.current.soloConPrecios ? { solo: "precios" } : {}),
-    });
+    const ampliada = ampliar(vista);
+    const q = new URLSearchParams({ bbox: aTexto(vista), ...filtros });
+    const qPuntos = new URLSearchParams({ bbox: aTexto(ampliada), ...filtros });
     // A poco zoom (o si hay demasiadas tortillerías en pantalla) el servidor las agrupa por zonas
     const pedirZonas = () =>
       api<{ celdas: CeldaAdm[] }>(`/admin/mapa/celdas?${q}&zoom=${z.toFixed(2)}`, { signal: c.signal }).then((r) => {
         if (c.signal.aborted) return;
+        cubierto.current = null;
         modo.current = "celdas";
         celdas.current = r.celdas;
         datos.current = [];
@@ -160,9 +185,10 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
       });
     const peticion =
       z >= ZOOM_PUNTOS
-        ? api<{ puntos: PuntoAdm[] } | { demasiadas: true }>(`/admin/mapa?${q}`, { signal: c.signal }).then((r) => {
+        ? api<{ puntos: PuntoAdm[] } | { demasiadas: true }>(`/admin/mapa?${qPuntos}`, { signal: c.signal }).then((r) => {
             if (c.signal.aborted) return;
             if (!("puntos" in r)) return pedirZonas();
+            cubierto.current = { caja: ampliada, clave };
             modo.current = "puntos";
             datos.current = r.puntos;
             celdas.current = [];
@@ -175,7 +201,7 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
   };
   const programar = () => {
     window.clearTimeout(temporizador.current);
-    temporizador.current = window.setTimeout(cargar, 300);
+    temporizador.current = window.setTimeout(cargar, 120);
   };
 
   useEffect(() => {

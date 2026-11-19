@@ -57,6 +57,18 @@ function crearPuntoAzul() {
   return el;
 }
 
+
+/** Rectángulo [oeste, sur, este, norte]. Se pide al servidor un área más grande que la visible para que, al mover el mapa, los puntos ya estén ahí (sin esperas ni huecos) */
+type Caja = [number, number, number, number];
+const dentroDe = (v: Caja, c: Caja) => v[0] >= c[0] && v[1] >= c[1] && v[2] <= c[2] && v[3] <= c[3];
+const ampliar = ([w, s, e, n]: Caja, f = 0.5): Caja => {
+  const dx = (e - w) * f;
+  const dy = (n - s) * f;
+  return [Math.max(-180, w - dx), Math.max(-85, s - dy), Math.min(180, e + dx), Math.min(85, n + dy)];
+};
+const puntoEn = (x: { lat: number; lng: number }, v: Caja) => x.lng >= v[0] && x.lng <= v[2] && x.lat >= v[1] && x.lat <= v[3];
+const aTexto = (c: Caja) => c.map((n) => n.toFixed(6)).join(",");
+
 /** Mapa a todo el alto con las tortillerías como puntos (con grupos al alejarse). Carga solo lo que se ve. */
 const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(props, ref) {
   const cont = useRef<HTMLDivElement>(null);
@@ -67,6 +79,8 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
   const pinM = useRef<maplibregl.Marker | null>(null);
   const azul = useRef<maplibregl.Marker | null>(null);
   const datos = useRef<Punto[]>([]);
+  /** Área (más grande que la visible) de la que ya se tienen los puntos: mientras la vista quepa en ella no se vuelve a pedir nada */
+  const cubierto = useRef<Caja | null>(null);
   const ctrl = useRef<AbortController | null>(null);
   const temporizador = useRef<number>();
   const p = useRef(props);
@@ -121,19 +135,30 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
     // Con el estado descargado se usa el catálogo del teléfono (también a poco zoom: el mapa agrupa los puntos solo). Funciona sin internet.
     if (cubre({ lat: c.lat, lng: c.lng })) {
       const r = enCaja(b.getWest(), b.getSouth(), b.getEast(), b.getNorth(), 60000);
+      cubierto.current = null;
       datos.current = r === "demasiadas" ? [] : r;
       mostrar(false);
       pintar();
       return p.current.onEstado({ lejano: false, cargando: false, total: datos.current.length });
     }
 
+    const vista: Caja = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+    const enVista = () => datos.current.filter((x) => puntoEn(x, vista)).length;
+    // Ya se tienen los puntos de esta zona: se mueve el mapa sin pedir nada (fluido, sin parpadeos)
+    if (z >= ZOOM_MIN_DATOS && cubierto.current && dentroDe(vista, cubierto.current)) {
+      mostrar(false);
+      return p.current.onEstado({ lejano: false, cargando: false, total: enVista() });
+    }
+
     const c1 = new AbortController();
     ctrl.current = c1;
-    p.current.onEstado({ lejano: false, cargando: true, total: datos.current.length });
-    const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((n) => n.toFixed(6)).join(",");
+    p.current.onEstado({ lejano: false, cargando: true, total: enVista() });
+    const bbox = aTexto(vista);
+    const ampliada = ampliar(vista);
     const pedirZonas = () =>
       api<Zona[]>(`/tortillerias/mapa/celdas?bbox=${bbox}&zoom=${z.toFixed(2)}`, { signal: c1.signal }).then((r) => {
         if (c1.signal.aborted) return;
+        cubierto.current = null;
         datos.current = [];
         pintar();
         pintarZonas(r);
@@ -142,13 +167,14 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
     const peticion =
       z < ZOOM_MIN_DATOS
         ? pedirZonas()
-        : api<Punto[] | { demasiadas: true }>(`/tortillerias/mapa?bbox=${bbox}`, { signal: c1.signal }).then((r) => {
+        : api<Punto[] | { demasiadas: true }>(`/tortillerias/mapa?bbox=${aTexto(ampliada)}`, { signal: c1.signal }).then((r) => {
             if (c1.signal.aborted) return;
             if (!Array.isArray(r)) return pedirZonas(); // demasiadas para dibujar una por una: se agrupan por zonas
+            cubierto.current = ampliada;
             datos.current = r;
             mostrar(false);
             pintar();
-            p.current.onEstado({ lejano: false, cargando: false, total: r.length });
+            p.current.onEstado({ lejano: false, cargando: false, total: enVista() });
           });
     peticion.catch(() => {
       if (!c1.signal.aborted) p.current.onEstado({ lejano: false, cargando: false, total: datos.current.length });
@@ -156,7 +182,7 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
   };
   const programar = () => {
     window.clearTimeout(temporizador.current);
-    temporizador.current = window.setTimeout(cargar, 300);
+    temporizador.current = window.setTimeout(cargar, 120);
   };
 
   // Crear el mapa
@@ -303,6 +329,7 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
     window.addEventListener("online", alVolver);
     // Cuando termina una descarga o se agrega una tortillería nueva del teléfono, se redibuja
     const sinCatalogo = alCambiarCatalogo(() => {
+      cubierto.current = null; // cambió lo guardado: se vuelve a pedir
       if (listo.current) programar();
     });
 
