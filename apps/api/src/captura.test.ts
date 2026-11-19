@@ -805,3 +805,54 @@ describe("revisión de precios: detalle de la captura", () => {
     expect((await get(`/admin/capturas?tortilleria=${t}`, ana)).status).toBe(403);
   });
 });
+
+describe("listas de revisión sin límite y con paginación", () => {
+  let t: string;
+  beforeAll(async () => {
+    await q("INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus, creado_por) SELECT 'PAG ' || i, '09','09015', point(-99.4, 19.7), 'nueva','pendiente', $1 FROM generate_series(1, 105) i", [ana]);
+    t = (await q("SELECT id FROM tortillerias WHERE nombre = 'PAG 1'"))[0].id;
+    await q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, capturista_id, fecha, estatus) SELECT $1, 'maiz', 20, NULL, current_date - i, 'pendiente' FROM generate_series(1, 105) i", [t]);
+  });
+
+  it("sin ?pagina devuelve TODAS (más de 100), no un máximo", async () => {
+    const [{ n: nt }] = await q("SELECT count(*)::int AS n FROM tortillerias t WHERE t.estatus = 'pendiente' AND (t.origen <> 'denue' OR EXISTS (SELECT 1 FROM capturas_precio c WHERE c.tortilleria_id = t.id))");
+    const tort = await (await get("/admin/tortillerias?estatus=pendiente", sup, "supervisor")).json();
+    expect(tort.length).toBe(nt);
+    expect(tort.length).toBeGreaterThan(100);
+    const [{ n: nc }] = await q("SELECT count(*)::int AS n FROM capturas_precio WHERE estatus = 'pendiente'");
+    const caps = await (await get("/admin/capturas?estatus=pendiente", sup, "supervisor")).json();
+    expect(caps.length).toBe(nc);
+    expect(caps.length).toBeGreaterThan(100);
+  });
+
+  it("con ?pagina devuelve páginas completas, sin repetir ni perder ninguna", async () => {
+    const [{ n }] = await q("SELECT count(*)::int AS n FROM tortillerias t WHERE t.estatus = 'pendiente' AND (t.origen <> 'denue' OR EXISTS (SELECT 1 FROM capturas_precio c WHERE c.tortilleria_id = t.id))");
+    const p1 = await (await get("/admin/tortillerias?estatus=pendiente&pagina=1&limite=40", sup, "supervisor")).json();
+    expect(p1).toMatchObject({ total: n, pagina: 1, limite: 40, paginas: Math.ceil(n / 40) });
+    expect(p1.filas).toHaveLength(40);
+    const ids = new Set<string>(p1.filas.map((f: any) => f.id));
+    for (let pg = 2; pg <= p1.paginas; pg++) {
+      const r = await (await get(`/admin/tortillerias?estatus=pendiente&pagina=${pg}&limite=40`, sup, "supervisor")).json();
+      r.filas.forEach((f: any) => ids.add(f.id));
+    }
+    expect(ids.size).toBe(n);
+  });
+
+  it("las capturas también se paginan y una página fuera de rango sale vacía con el total correcto", async () => {
+    const [{ n }] = await q("SELECT count(*)::int AS n FROM capturas_precio WHERE estatus = 'pendiente'");
+    const r = await (await get("/admin/capturas?estatus=pendiente&pagina=2&limite=50", sup, "supervisor")).json();
+    expect(r.total).toBe(n);
+    expect(r.filas.length).toBe(Math.min(50, n - 50));
+    const fuera = await (await get("/admin/capturas?estatus=pendiente&pagina=999&limite=50", sup, "supervisor")).json();
+    expect(fuera.filas).toEqual([]);
+    expect(fuera.total).toBe(n);
+    expect((await get("/admin/capturas?estatus=pendiente&pagina=1&limite=50", ana)).status).toBe(403);
+  });
+
+  it("el historial de UNA tortillería sigue acotado (100) y el filtro por estatus se respeta", async () => {
+    const h = await (await get(`/admin/capturas?tortilleria=${t}`, sup, "supervisor")).json();
+    expect(h).toHaveLength(100);
+    const rech = await (await get("/admin/tortillerias?estatus=rechazada&pagina=1", sup, "supervisor")).json();
+    expect(rech.filas.every((f: any) => f.estatus === "rechazada")).toBe(true);
+  });
+});

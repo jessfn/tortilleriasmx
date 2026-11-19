@@ -11,6 +11,19 @@ const staff = (app: FastifyInstance) => app.soloRoles("supervisor", "admin");
 const ALFABETO = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
 export const passwordTemporal = (largo = 10) => Array.from({ length: largo }, () => ALFABETO[randomInt(ALFABETO.length)]).join("");
 
+/** Paginación opcional: sin ?pagina= se devuelve todo (arreglo); con ?pagina= (y ?limite=) se devuelve { filas, total, pagina, paginas, limite } */
+const paginaSchema = z.object({
+  pagina: z.coerce.number().int().min(1).optional(),
+  limite: z.coerce.number().int().min(1).max(200).default(50),
+});
+const paginar = (q: unknown) => {
+  const p = paginaSchema.safeParse(q);
+  return p.success && p.data.pagina ? { pagina: p.data.pagina, limite: p.data.limite } : null;
+};
+const respuestaPaginada = <T>(filas: T[], total: number, pg: { pagina: number; limite: number }) => ({
+  filas, total, pagina: pg.pagina, limite: pg.limite, paginas: Math.max(1, Math.ceil(total / pg.limite)),
+});
+
 export function rutasAdmin(app: FastifyInstance) {
   app.get("/admin/resumen", { preHandler: staff(app) }, async () => {
     const { rows } = await pool.query(
@@ -42,6 +55,10 @@ export function rutasAdmin(app: FastifyInstance) {
 
   app.get("/admin/tortillerias", { preHandler: staff(app) }, async (req) => {
     const estatus = z.enum(["pendiente", "validada", "rechazada"]).optional().safeParse((req.query as any).estatus);
+    const pg = paginar(req.query);
+    const filtro = estatus.success ? estatus.data ?? null : null;
+    const DONDE = `($1::text IS NULL OR t.estatus = $1)
+          AND (t.origen <> 'denue' OR EXISTS (SELECT 1 FROM capturas_precio c WHERE c.tortilleria_id = t.id))`;
     const { rows } = await pool.query(
       `SELECT t.id, t.nombre, t.domicilio, t.estatus, t.origen, t.creado_en,
               ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng,
@@ -55,12 +72,13 @@ export function rutasAdmin(app: FastifyInstance) {
          LEFT JOIN municipios m ON m.clave = t.municipio_clave
          LEFT JOIN estados e ON e.clave = t.estado_clave
          LEFT JOIN usuarios u ON u.id = t.creado_por
-        WHERE ($1::text IS NULL OR t.estatus = $1)
-          AND (t.origen <> 'denue' OR EXISTS (SELECT 1 FROM capturas_precio c WHERE c.tortilleria_id = t.id))
-        ORDER BY t.creado_en DESC LIMIT 100`,
-      [estatus.success ? estatus.data ?? null : null],
+        WHERE ${DONDE}
+        ORDER BY t.creado_en DESC, t.id${pg ? " LIMIT $2 OFFSET $3" : ""}`,
+      pg ? [filtro, pg.limite, (pg.pagina - 1) * pg.limite] : [filtro],
     );
-    return rows;
+    if (!pg) return rows;
+    const { rows: [c] } = await pool.query(`SELECT count(*)::int AS n FROM tortillerias t WHERE ${DONDE}`, [filtro]);
+    return respuestaPaginada(rows, c.n, pg);
   });
 
   app.get<{ Params: { id: string } }>("/admin/tortillerias/:id/fotos", { preHandler: staff(app) }, async (req, reply) => {
@@ -74,6 +92,10 @@ export function rutasAdmin(app: FastifyInstance) {
     const estatus = z.enum(["pendiente", "validada", "rechazada"]).safeParse(q.estatus);
     const tortilleria = q.tortilleria ? uuid.safeParse(q.tortilleria) : null;
     if (tortilleria && !tortilleria.success) return reply.code(400).send({ error: "Id inválido" });
+    const pg = paginar(req.query);
+    const params = [estatus.success ? estatus.data : null, q.alertas === "1", tortilleria?.success ? tortilleria.data : null];
+    const DONDE = `($1::text IS NULL OR c.estatus = $1) AND ($2::boolean IS NOT TRUE OR c.alerta)
+          AND ($3::uuid IS NULL OR c.tortilleria_id = $3)`;
     const { rows } = await pool.query(
       `SELECT c.id, c.producto, c.precio_kg, c.fecha, c.estatus, c.alerta, c.tortilleria_id,
               c.precision_gps, ST_Y(c.geom_captura) AS captura_lat, ST_X(c.geom_captura) AS captura_lng,
@@ -84,12 +106,13 @@ export function rutasAdmin(app: FastifyInstance) {
          LEFT JOIN municipios m ON m.clave = t.municipio_clave
          LEFT JOIN estados e ON e.clave = t.estado_clave
          LEFT JOIN usuarios u ON u.id = c.capturista_id
-        WHERE ($1::text IS NULL OR c.estatus = $1) AND ($2::boolean IS NOT TRUE OR c.alerta)
-          AND ($3::uuid IS NULL OR c.tortilleria_id = $3)
-        ORDER BY ${tortilleria ? "c.creado_en DESC" : "c.alerta DESC, c.creado_en DESC"} LIMIT 100`,
-      [estatus.success ? estatus.data : null, q.alertas === "1", tortilleria?.success ? tortilleria.data : null],
+        WHERE ${DONDE}
+        ORDER BY ${tortilleria ? "c.creado_en DESC" : "c.alerta DESC, c.creado_en DESC"}, c.id${pg ? " LIMIT $4 OFFSET $5" : tortilleria ? " LIMIT 100" : ""}`,
+      pg ? [...params, pg.limite, (pg.pagina - 1) * pg.limite] : params,
     );
-    return rows;
+    if (!pg) return rows;
+    const { rows: [c] } = await pool.query(`SELECT count(*)::int AS n FROM capturas_precio c WHERE ${DONDE}`, params);
+    return respuestaPaginada(rows, c.n, pg);
   });
 
   app.patch<{ Params: { id: string } }>("/admin/capturas/:id", { preHandler: staff(app) }, async (req, reply) => {

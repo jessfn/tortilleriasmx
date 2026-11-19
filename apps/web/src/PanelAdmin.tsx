@@ -1,8 +1,8 @@
 import { formatearTelefono } from "@tortillerias/shared";
 import { NegativasFiscales } from "./NegativasFiscales";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlertTriangle, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, ChevronDown, Clock, Eye, Loader2, Mail, MapPin, Navigation, Phone, Store, TriangleAlert,
+  AlertTriangle, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, ChevronDown, ChevronLeft, ChevronRight, Clock, Eye, Loader2, Mail, MapPin, Navigation, Phone, Store, TriangleAlert,
   UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, KeyRound, Copy, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog,
 } from "lucide-react";
 import { api, type Sesion } from "./api";
@@ -69,7 +69,7 @@ export default function PanelAdmin({
       pendientes={pendientes}
       alInicio={alInicio}
       alSalir={alSalir}
-      plano={tab === "mapa"}
+      plano={tab === "mapa" || tab === "revision"}
       titulo={esAdmin ? "Administración" : "Supervisión"}
       vivo={vivo}
       pestañas={[
@@ -94,33 +94,65 @@ export default function PanelAdmin({
 }
 
 /* ---------------- Revisión ---------------- */
+type Pagina<T> = { filas: T[]; total: number; pagina: number; paginas: number; limite: number };
+const POR_PAGINA = [25, 50, 100];
+
 function VistaRevision({ alCambio }: { alCambio: () => void }) {
   const [seccion, setSeccion] = useState<"tortillerias" | "precios">("tortillerias");
   const [estatus, setEstatus] = useState<"pendiente" | "validada" | "rechazada">("pendiente");
-  const [tortillerias, setTortillerias] = useState<TortilleriaAdm[]>();
-  const [capturas, setCapturas] = useState<CapturaAdm[]>();
+  const [pagina, setPagina] = useState(1);
+  const [limite, setLimite] = useState(50);
+  const [tortillerias, setTortillerias] = useState<Pagina<TortilleriaAdm>>();
+  const [capturas, setCapturas] = useState<Pagina<CapturaAdm>>();
+  /** cuántas hay en la otra sección (para el número de su pestaña) */
+  const [totalOtra, setTotalOtra] = useState<number>();
   const [detalle, setDetalle] = useState<TortilleriaAdm>();
   /** "Ver más detalles" de un precio por revisar: la tortillería completa y la captura que se está revisando */
   const [detalleCaptura, setDetalleCaptura] = useState<{ t: TortilleriaAdm; c: CapturaAdm }>();
   const [abriendo, setAbriendo] = useState<string>();
   const [trabajando, setTrabajando] = useState<string>();
   const [error, setError] = useState("");
+  const zona = useRef<HTMLDivElement>(null);
+
+  const ruta = (s: "tortillerias" | "precios") => (s === "tortillerias" ? "/admin/tortillerias" : "/admin/capturas");
+  const actual = seccion === "tortillerias" ? tortillerias : capturas;
+  const total = actual?.total ?? 0;
+  const paginas = actual?.paginas ?? 1;
 
   const cargar = useCallback(() => {
-    setTortillerias(undefined);
-    setCapturas(undefined);
-    Promise.all([api<TortilleriaAdm[]>(`/admin/tortillerias?estatus=${estatus}`), api<CapturaAdm[]>(`/admin/capturas?estatus=${estatus}`)])
-      .then(([t, c]) => { setTortillerias(t); setCapturas(c); setError(""); })
+    const otra = seccion === "tortillerias" ? "precios" : "tortillerias";
+    Promise.all([
+      api<Pagina<TortilleriaAdm | CapturaAdm>>(`${ruta(seccion)}?estatus=${estatus}&pagina=${pagina}&limite=${limite}`),
+      api<Pagina<unknown>>(`${ruta(otra)}?estatus=${estatus}&pagina=1&limite=1`),
+    ])
+      .then(([a, b]) => {
+        // si se vació la última página (p. ej. al aprobar el único registro de ella), se retrocede
+        if (!a.filas.length && pagina > 1) return setPagina(Math.max(1, a.paginas));
+        if (seccion === "tortillerias") setTortillerias(a as Pagina<TortilleriaAdm>);
+        else setCapturas(a as Pagina<CapturaAdm>);
+        setTotalOtra(b.total);
+        setError("");
+      })
       .catch((e) => setError(e.message));
-  }, [estatus]);
-  useEffect(cargar, [cargar]);
+  }, [seccion, estatus, pagina, limite]);
+  useEffect(() => {
+    if (seccion === "tortillerias") setTortillerias(undefined);
+    else setCapturas(undefined);
+    cargar();
+  }, [cargar]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    zona.current?.scrollTo({ top: 0 });
+  }, [seccion, estatus, pagina, limite]);
+
+  const cambiarSeccion = (s: typeof seccion) => { setSeccion(s); setPagina(1); };
+  const cambiarEstatus = (e: typeof estatus) => { setEstatus(e); setPagina(1); };
 
   async function resolverCaptura(id: string, nuevo: "validada" | "rechazada") {
     setTrabajando(id);
     try {
       await api(`/admin/capturas/${id}`, { metodo: "PATCH", json: { estatus: nuevo } });
-      setCapturas((l) => l?.filter((c) => c.id !== id));
       alCambio();
+      cargar(); // la lista se rellena con el siguiente registro de la página
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -144,9 +176,9 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
     setTrabajando(id);
     try {
       await api(`/tortillerias/${id}/estatus`, { metodo: "PATCH", json: { estatus: nuevo } });
-      setTortillerias((l) => l?.filter((t) => t.id !== id));
       setDetalle(undefined);
       alCambio();
+      cargar();
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -155,91 +187,122 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
   }
 
   const chip = (activo: boolean) => `shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${activo ? "bg-guinda text-white shadow" : "bg-white text-stone-600 ring-1 ring-stone-200"}`;
+  const numTab = (s: "tortillerias" | "precios") => {
+    const n = s === seccion ? actual?.total : totalOtra;
+    return n === undefined ? "" : ` (${n})`;
+  };
+  const desde = total === 0 ? 0 : (pagina - 1) * limite + 1;
+  const hasta = Math.min(pagina * limite, total);
+  const vacio = (txt: string) => <Vacio icono={CheckCheck} titulo={estatus === "pendiente" ? "Todo al día" : "Sin resultados"} texto={estatus === "pendiente" ? txt : undefined} />;
 
   return (
-    <>
-      <div className="grid grid-cols-2 gap-1 rounded-2xl bg-stone-200/70 p-1">
-        {(["tortillerias", "precios"] as const).map((s) => (
-          <button key={s} onClick={() => setSeccion(s)} className={`rounded-xl py-2 text-sm font-semibold transition ${seccion === s ? "bg-white text-guinda shadow" : "text-stone-500"}`}>
-            {s === "tortillerias" ? `Tortillerías${tortillerias ? ` (${tortillerias.length})` : ""}` : `Precios${capturas ? ` (${capturas.length})` : ""}`}
-          </button>
-        ))}
-      </div>
-      <div className="flex gap-2 overflow-x-auto pb-0.5">
-        <button className={chip(estatus === "pendiente")} onClick={() => setEstatus("pendiente")}>Por revisar</button>
-        <button className={chip(estatus === "validada")} onClick={() => setEstatus("validada")}>Aprobadas</button>
-        <button className={chip(estatus === "rechazada")} onClick={() => setEstatus("rechazada")}>Rechazadas</button>
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-[92rem] flex-col gap-2.5 px-3 pb-3 pt-4 lg:px-6 lg:pb-5">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="grid w-full grid-cols-2 gap-1 rounded-2xl bg-stone-200/70 p-1 sm:w-80">
+          {(["tortillerias", "precios"] as const).map((s) => (
+            <button key={s} onClick={() => cambiarSeccion(s)} className={`rounded-xl py-2 text-sm font-semibold transition ${seccion === s ? "bg-white text-guinda shadow" : "text-stone-500"}`}>
+              {s === "tortillerias" ? "Tortillerías" : "Precios"}{numTab(s)}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-0.5">
+          <button className={chip(estatus === "pendiente")} onClick={() => cambiarEstatus("pendiente")}>Por revisar</button>
+          <button className={chip(estatus === "validada")} onClick={() => cambiarEstatus("validada")}>Aprobadas</button>
+          <button className={chip(estatus === "rechazada")} onClick={() => cambiarEstatus("rechazada")}>Rechazadas</button>
+        </div>
       </div>
 
       {error && <Aviso>{error}</Aviso>}
 
-      {seccion === "tortillerias" &&
-        (!tortillerias ? (
-          <div className="grid place-items-center py-10 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
-        ) : tortillerias.length === 0 ? (
-          <Vacio icono={CheckCheck} titulo={estatus === "pendiente" ? "Todo al día" : "Sin resultados"} texto={estatus === "pendiente" ? "No hay tortillerías por revisar." : undefined} />
-        ) : (
-          tortillerias.map((t) => (
-            <button key={t.id} onClick={() => setDetalle(t)} className="block w-full text-left">
-              <Tarjeta className="flex items-start gap-3 transition active:scale-[.98]">
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-guinda/10 text-guinda"><Store className="h-5 w-5" aria-hidden /></span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="truncate font-semibold leading-tight">{t.nombre}</p>
-                    <Insignia estatus={t.estatus} />
-                  </div>
-                  <p className="truncate text-xs text-stone-500">{[t.municipio, t.estado].filter(Boolean).join(", ") || "Sin ubicación"}</p>
-                  <p className="mt-1 flex items-center gap-3 text-xs text-stone-400">
-                    <span className="flex items-center gap-1"><Camera className="h-3 w-3" aria-hidden /> {t.n_fotos}</span>
-                    <span className="truncate">{t.creador ?? "DENUE"}</span>
-                    <span className="ml-auto shrink-0">{fecha(t.creado_en)}</span>
-                  </p>
-                </div>
-              </Tarjeta>
-            </button>
-          ))
-        ))}
+      {/* El recuadro ocupa lo que queda de la pantalla: la lista se desplaza dentro de él y la paginación queda siempre a la vista */}
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200" aria-label={seccion === "tortillerias" ? "Tortillerías" : "Precios"}>
+        <div ref={zona} className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-stone-50/70 p-2.5">
+          {!actual ? (
+            <div className="grid place-items-center py-16 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
+          ) : actual.filas.length === 0 ? (
+            vacio(seccion === "tortillerias" ? "No hay tortillerías por revisar." : "No hay precios por revisar.")
+          ) : seccion === "tortillerias" ? (
+            <div className="grid content-start gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+              {(tortillerias?.filas ?? []).map((t) => (
+                <button key={t.id} onClick={() => setDetalle(t)} className="block w-full text-left">
+                  <Tarjeta className="flex h-full items-start gap-3 transition active:scale-[.98]">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-guinda/10 text-guinda"><Store className="h-5 w-5" aria-hidden /></span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="truncate font-semibold leading-tight">{t.nombre}</p>
+                        <Insignia estatus={t.estatus} />
+                      </div>
+                      <p className="truncate text-xs text-stone-500">{[t.municipio, t.estado].filter(Boolean).join(", ") || "Sin ubicación"}</p>
+                      <p className="mt-1 flex items-center gap-3 text-xs text-stone-400">
+                        <span className="flex items-center gap-1"><Camera className="h-3 w-3" aria-hidden /> {t.n_fotos}</span>
+                        <span className="truncate">{t.creador ?? "DENUE"}</span>
+                        <span className="ml-auto shrink-0">{fecha(t.creado_en)}</span>
+                      </p>
+                    </div>
+                  </Tarjeta>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="grid content-start gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+              {(capturas?.filas ?? []).map((c) => {
+                const P = PRODUCTO[c.producto];
+                return (
+                  <Tarjeta key={c.id} className="space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold leading-tight">{c.nombre}</p>
+                        <p className="truncate text-xs text-stone-500">{[c.municipio, c.estado].filter(Boolean).join(", ")}</p>
+                      </div>
+                      <Insignia estatus={c.estatus} />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-sm text-stone-600"><P.i className="h-4 w-4" aria-hidden /> {P.t}</span>
+                      <span className="text-xl font-bold">${Number(c.precio_kg).toFixed(2)}<span className="text-xs font-medium text-stone-400"> /kg</span></span>
+                    </div>
+                    {c.alerta && (
+                      <div className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
+                        <TriangleAlert className="h-3.5 w-3.5" aria-hidden /> Precio atípico respecto a la mediana del municipio
+                      </div>
+                    )}
+                    <p className="truncate text-xs text-stone-400">{c.capturista ?? "Sin usuario"} · {dia(c.fecha)}</p>
+                    <Boton variante="secundario" className="!min-h-10 !text-sm" disabled={abriendo === c.id} icono={abriendo === c.id ? Loader2 : Eye} onClick={() => verCaptura(c)}>
+                      Ver más detalles
+                    </Boton>
+                    {c.estatus === "pendiente" && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <Boton variante="peligro" className="!min-h-10" disabled={trabajando === c.id} icono={X} onClick={() => resolverCaptura(c.id, "rechazada")}>Rechazar</Boton>
+                        <Boton className="!min-h-10" disabled={trabajando === c.id} icono={trabajando === c.id ? Loader2 : Check} onClick={() => resolverCaptura(c.id, "validada")}>Aprobar</Boton>
+                      </div>
+                    )}
+                  </Tarjeta>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
-      {seccion === "precios" &&
-        (!capturas ? (
-          <div className="grid place-items-center py-10 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
-        ) : capturas.length === 0 ? (
-          <Vacio icono={CheckCheck} titulo={estatus === "pendiente" ? "Todo al día" : "Sin resultados"} texto={estatus === "pendiente" ? "No hay precios por revisar." : undefined} />
-        ) : (
-          capturas.map((c) => {
-            const P = PRODUCTO[c.producto];
-            return (
-              <Tarjeta key={c.id} className="space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold leading-tight">{c.nombre}</p>
-                    <p className="truncate text-xs text-stone-500">{[c.municipio, c.estado].filter(Boolean).join(", ")}</p>
-                  </div>
-                  <Insignia estatus={c.estatus} />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 text-sm text-stone-600"><P.i className="h-4 w-4" aria-hidden /> {P.t}</span>
-                  <span className="text-xl font-bold">${Number(c.precio_kg).toFixed(2)}<span className="text-xs font-medium text-stone-400"> /kg</span></span>
-                </div>
-                {c.alerta && (
-                  <div className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
-                    <TriangleAlert className="h-3.5 w-3.5" aria-hidden /> Precio atípico respecto a la mediana del municipio
-                  </div>
-                )}
-                <p className="truncate text-xs text-stone-400">{c.capturista ?? "Sin usuario"} · {dia(c.fecha)}</p>
-                <Boton variante="secundario" className="!min-h-10 !text-sm" disabled={abriendo === c.id} icono={abriendo === c.id ? Loader2 : Eye} onClick={() => verCaptura(c)}>
-                  Ver más detalles
-                </Boton>
-                {c.estatus === "pendiente" && (
-                  <div className="grid grid-cols-2 gap-2">
-                    <Boton variante="peligro" className="!min-h-10" disabled={trabajando === c.id} icono={X} onClick={() => resolverCaptura(c.id, "rechazada")}>Rechazar</Boton>
-                    <Boton className="!min-h-10" disabled={trabajando === c.id} icono={trabajando === c.id ? Loader2 : Check} onClick={() => resolverCaptura(c.id, "validada")}>Aprobar</Boton>
-                  </div>
-                )}
-              </Tarjeta>
-            );
-          })
-        ))}
+        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-stone-200 bg-white px-3 py-2 text-xs text-stone-500">
+          <span>{total === 0 ? "Sin registros" : <>Mostrando <b className="text-stone-700">{desde}–{hasta}</b> de <b className="text-stone-700">{total}</b></>}</span>
+          <div className="flex items-center gap-3">
+            <label className="hidden items-center gap-1.5 sm:flex">
+              Por página
+              <select value={limite} onChange={(e) => { setLimite(Number(e.target.value)); setPagina(1); }} className="rounded-lg border border-stone-200 bg-white px-1.5 py-1 text-xs text-stone-700">
+                {POR_PAGINA.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+            <div className="flex items-center gap-1">
+              <button onClick={() => setPagina(pagina - 1)} disabled={pagina <= 1} aria-label="Página anterior" className="grid h-8 w-8 place-items-center rounded-lg bg-stone-100 text-stone-700 transition active:scale-95 disabled:opacity-40">
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="min-w-[5.5rem] text-center font-medium text-stone-700">Página {pagina} de {paginas}</span>
+              <button onClick={() => setPagina(pagina + 1)} disabled={pagina >= paginas} aria-label="Página siguiente" className="grid h-8 w-8 place-items-center rounded-lg bg-stone-100 text-stone-700 transition active:scale-95 disabled:opacity-40">
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </footer>
+      </section>
 
       {detalleCaptura && (
         <DetalleTortilleria
@@ -255,7 +318,7 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
         />
       )}
       {detalle && <DetalleTortilleria t={detalle} trabajando={trabajando === detalle.id} alCerrar={() => setDetalle(undefined)} alResolver={resolverTortilleria} />}
-    </>
+    </div>
   );
 }
 
