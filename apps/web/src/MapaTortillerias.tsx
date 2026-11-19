@@ -81,6 +81,17 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
   const datos = useRef<Punto[]>([]);
   /** Área (más grande que la visible) de la que ya se tienen los puntos: mientras la vista quepa en ella no se vuelve a pedir nada */
   const cubierto = useRef<Caja | null>(null);
+  /** Si al abrir el mapa no hay ninguna tortillería a la vista, se aleja solo (hasta 2 veces) para mostrar las más cercanas, salvo que la persona ya haya movido el mapa */
+  const alejadas = useRef(0);
+  const usuarioMovio = useRef(false);
+  const alejarSiVacio = (total: number) => {
+    const m = mapa.current;
+    if (!m || total > 0 || usuarioMovio.current || alejadas.current >= 2 || !p.current.pos) return;
+    const z = m.getZoom();
+    if (z <= 11) return;
+    alejadas.current++;
+    m.easeTo({ zoom: Math.max(z - 3, 11), duration: 700 });
+  };
   const ctrl = useRef<AbortController | null>(null);
   const temporizador = useRef<number>();
   const p = useRef(props);
@@ -139,6 +150,7 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
       datos.current = r === "demasiadas" ? [] : r;
       mostrar(false);
       pintar();
+      alejarSiVacio(datos.current.length);
       return p.current.onEstado({ lejano: false, cargando: false, total: datos.current.length });
     }
 
@@ -175,6 +187,7 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
             mostrar(false);
             pintar();
             p.current.onEstado({ lejano: false, cargando: false, total: enVista() });
+            alejarSiVacio(enVista());
           });
     peticion.catch(() => {
       if (!c1.signal.aborted) p.current.onEstado({ lejano: false, cargando: false, total: datos.current.length });
@@ -279,6 +292,9 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
     if (m.isStyleLoaded()) iniciar();
     else m.once("style.load", iniciar);
 
+    m.on("movestart", (e) => {
+      if ((e as { originalEvent?: unknown }).originalEvent) usuarioMovio.current = true; // la persona movió el mapa: ya no se aleja solo
+    });
     m.on("moveend", programar);
     m.on("click", (e) => {
       if (p.current.modo === "marcar") return p.current.onPin(e.lngLat.lat, e.lngLat.lng);
