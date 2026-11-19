@@ -64,8 +64,8 @@ function Precio({ icono: I, titulo, p }: { icono: typeof Wheat; titulo: string; 
  * Foto, precios, pestañas con datos, fiscales e historial, y las acciones de revisión siempre visibles abajo.
  */
 export default function DetalleLateral({
-  id, resumen, alCerrar, alResuelta,
-}: { id: string; resumen?: PuntoAdm; alCerrar: () => void; alResuelta: () => void }) {
+  id, resumen, alCerrar, alResuelta, puedeValidar = true,
+}: { id: string; resumen?: PuntoAdm; alCerrar: () => void; alResuelta: () => void; puedeValidar?: boolean }) {
   const [t, setT] = useState<TortilleriaAdm | null>();
   const [fotos, setFotos] = useState<{ id: string }[]>();
   const [fiscal, setFiscal] = useState<Fiscal | null>();
@@ -290,10 +290,10 @@ export default function DetalleLateral({
       </div>
 
       {/* Acciones de revisión: siempre a la vista */}
-      {(estatus === "pendiente" || error) && (
+      {((puedeValidar && estatus === "pendiente") || error) && (
         <div className="shrink-0 space-y-2 border-t border-stone-200 bg-white px-4 py-3">
           {error && t !== null && <Aviso>{error}</Aviso>}
-          {estatus === "pendiente" && (
+          {puedeValidar && estatus === "pendiente" && (
             <>
               <div className="grid grid-cols-2 gap-2">
                 <button

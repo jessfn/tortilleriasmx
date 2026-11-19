@@ -3,11 +3,13 @@ import { randomInt } from "node:crypto";
 import { hash } from "@node-rs/argon2";
 import { z } from "zod";
 import { Readable } from "node:stream";
+import { esPermiso, permisosEfectivos, personalNuevoSchema, type Permiso } from "@tortillerias/shared";
 import { auditar, pool } from "../db.js";
 import { ultimosPreciosSql } from "./admin-mapa.js";
 
 const uuid = z.string().uuid();
-const staff = (app: FastifyInstance) => app.soloRoles("supervisor", "admin");
+/** Cada ruta pide al menos uno de estos permisos (un administrador los tiene todos) */
+const con = (app: FastifyInstance, ...permisos: Permiso[]) => app.conPermiso(...permisos);
 
 /** Contraseña temporal legible: sin caracteres que se confunden (0/O, 1/l/I). Ejemplo: Kp7mQx4Tnw */
 const ALFABETO = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
@@ -44,7 +46,7 @@ async function resolverCapturas(ids: string[], estatus: "validada" | "rechazada"
 }
 
 export function rutasAdmin(app: FastifyInstance) {
-  app.get("/admin/resumen", { preHandler: staff(app) }, async () => {
+  app.get("/admin/resumen", { preHandler: con(app, "ver_resumen") }, async () => {
     const HOY = "(now() AT TIME ZONE 'America/Mexico_City')::date";
     // Los promedios usan el último precio que CUENTA de cada tortillería en los últimos 30 días (una tortillería = un valor)
     const { rows } = await pool.query(
@@ -87,7 +89,7 @@ export function rutasAdmin(app: FastifyInstance) {
     };
   });
 
-  app.get("/admin/tortillerias", { preHandler: staff(app) }, async (req) => {
+  app.get("/admin/tortillerias", { preHandler: con(app, "ver_revision") }, async (req) => {
     const estatus = z.enum(["pendiente", "validada", "rechazada"]).optional().safeParse((req.query as any).estatus);
     const pg = paginar(req.query);
     const filtro = estatus.success ? estatus.data ?? null : null;
@@ -119,13 +121,13 @@ export function rutasAdmin(app: FastifyInstance) {
     return respuestaPaginada(rows, c.n, pg);
   });
 
-  app.get<{ Params: { id: string } }>("/admin/tortillerias/:id/fotos", { preHandler: staff(app) }, async (req, reply) => {
+  app.get<{ Params: { id: string } }>("/admin/tortillerias/:id/fotos", { preHandler: con(app, "ver_revision", "ver_mapa") }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const { rows } = await pool.query("SELECT id FROM fotos WHERE tortilleria_id = $1 ORDER BY fecha DESC", [req.params.id]);
     return rows;
   });
 
-  app.get("/admin/capturas", { preHandler: staff(app) }, async (req, reply) => {
+  app.get("/admin/capturas", { preHandler: con(app, "ver_revision", "ver_mapa") }, async (req, reply) => {
     const q = req.query as { estatus?: string; alertas?: string; tortilleria?: string };
     const estatus = z.enum(["pendiente", "validada", "rechazada"]).safeParse(q.estatus);
     const tortilleria = q.tortilleria ? uuid.safeParse(q.tortilleria) : null;
@@ -154,7 +156,7 @@ export function rutasAdmin(app: FastifyInstance) {
     return respuestaPaginada(rows, c.n, pg);
   });
 
-  app.patch<{ Params: { id: string } }>("/admin/capturas/:id", { preHandler: staff(app) }, async (req, reply) => {
+  app.patch<{ Params: { id: string } }>("/admin/capturas/:id", { preHandler: con(app, "revisar_precios") }, async (req, reply) => {
     const p = z.object({ estatus: z.enum(["validada", "rechazada"]) }).safeParse(req.body);
     if (!p.success || !uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Datos inválidos" });
     const hechas = await resolverCapturas([req.params.id], p.data.estatus, req.user.sub);
@@ -163,7 +165,7 @@ export function rutasAdmin(app: FastifyInstance) {
   });
 
   // Aprobar o rechazar varios precios a la vez (máximo 200), con la misma lógica y auditoría que el individual
-  app.patch("/admin/capturas", { preHandler: staff(app) }, async (req, reply) => {
+  app.patch("/admin/capturas", { preHandler: con(app, "revisar_precios") }, async (req, reply) => {
     const p = z.object({ ids: z.array(z.string().uuid()).min(1).max(200), estatus: z.enum(["validada", "rechazada"]) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos (de 1 a 200 precios)" });
     const ids = [...new Set(p.data.ids)];
@@ -193,7 +195,7 @@ export function rutasAdmin(app: FastifyInstance) {
 
   // Descarga de la base de capturas: CSV en UTF-8 con BOM (Excel muestra bien los acentos), por trozos (no se carga todo en memoria).
   // Sin RFC, razón social, celular ni ningún dato personal de la tortillería.
-  app.get("/admin/exportar/capturas", { preHandler: staff(app), config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
+  app.get("/admin/exportar/capturas", { preHandler: con(app, "exportar_capturas"), config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const fechaOk = (v?: string) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
     const estado = q.estado && /^\d{2}$/.test(q.estado) ? q.estado : null;
@@ -265,17 +267,21 @@ export function rutasAdmin(app: FastifyInstance) {
   // Gestión de usuarios: solo administradores
   // Usuarios con buscador (correo, usuario, nombre y apellidos, sin importar acentos ni mayúsculas), filtros y páginas (?pagina=&limite=).
   // Sin ?pagina se devuelven todos. Cada fila trae su última captura y cuántas hizo en los últimos 7 días, para ver quién está trabajando.
-  app.get("/admin/usuarios", { preHandler: app.soloRoles("admin") }, async (req) => {
+  // ?tipo=app → los de la app (capturistas; los ve quien tenga "Usuarios de la app"); ?tipo=personal → las cuentas del administrador (solo un administrador).
+  app.get("/admin/usuarios", { preHandler: con(app, "ver_usuarios_app") }, async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
+    const tipo = q.tipo === "app" || q.tipo === "personal" ? q.tipo : null;
+    if (tipo !== "app" && req.user.rol !== "admin") return reply.code(403).send({ error: "Sin permiso" });
     const pg = paginar(req.query);
     const rol = z.enum(["capturista", "supervisor", "admin"]).safeParse(q.rol);
     const activo = q.activo === "1" || q.activo === "true" ? true : q.activo === "0" || q.activo === "false" ? false : null;
     const texto = sinAcentos((q.q ?? "").trim().slice(0, 80));
     const DONDE = `($1::text IS NULL OR u.rol = $1) AND ($2::boolean IS NULL OR u.activo = $2)
+          AND (${tipo === "app" ? "u.rol = 'capturista'" : tipo === "personal" ? "u.rol IN ('supervisor','admin')" : "true"})
           AND ($3::text = '' OR ${SIN_ACENTOS_SQL("coalesce(u.correo,'') || ' ' || coalesce(u.usuario,'') || ' ' || coalesce(u.nombre,'') || ' ' || coalesce(u.apellidos,'')")} LIKE '%' || $3 || '%')`;
     const params = [rol.success ? rol.data : null, activo, texto];
     const { rows } = await pool.query(
-      `SELECT u.id, u.correo, u.usuario, u.nombre, u.apellidos, u.rol, u.activo, u.creado_en, u.debe_cambiar_password,
+      `SELECT u.id, u.correo, u.usuario, u.nombre, u.apellidos, u.rol, u.activo, u.creado_en, u.debe_cambiar_password, u.permisos,
               (SELECT count(*)::int FROM capturas_precio c WHERE c.capturista_id = u.id) AS capturas,
               (SELECT to_char(max(coalesce(c.capturado_en, c.creado_en)) AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD') FROM capturas_precio c WHERE c.capturista_id = u.id) AS ultima_captura,
               (SELECT count(*)::int FROM capturas_precio c WHERE c.capturista_id = u.id AND c.fecha >= (now() AT TIME ZONE 'America/Mexico_City')::date - 6) AS capturas_7d
@@ -283,29 +289,93 @@ export function rutasAdmin(app: FastifyInstance) {
         ORDER BY u.creado_en DESC, u.id${pg ? " LIMIT $4 OFFSET $5" : ""}`,
       pg ? [...params, pg.limite, (pg.pagina - 1) * pg.limite] : params,
     );
-    if (!pg) return rows;
+    // permisos = los marcados (NULL = los de por omisión); permisos_efectivos = con los que de verdad cuenta la cuenta
+    const filas = rows.map((r: any) => ({ ...r, permisos_efectivos: permisosEfectivos(r.rol, r.permisos) }));
+    if (!pg) return filas;
     const { rows: [c] } = await pool.query(`SELECT count(*)::int AS n FROM usuarios u WHERE ${DONDE}`, params);
-    return respuestaPaginada(rows, c.n, pg);
+    return respuestaPaginada(filas, c.n, pg);
   });
 
-  app.patch<{ Params: { id: string } }>("/admin/usuarios/:id", { preHandler: app.soloRoles("admin") }, async (req, reply) => {
-    const p = z.object({ rol: z.enum(["capturista", "supervisor", "admin"]).optional(), activo: z.boolean().optional() }).safeParse(req.body);
-    if (!p.success || !uuid.safeParse(req.params.id).success || (p.data.rol === undefined && p.data.activo === undefined))
-      return reply.code(400).send({ error: "Datos inválidos" });
-    if (req.params.id === req.user.sub) return reply.code(400).send({ error: "No puedes cambiar tu propio rol ni desactivarte" });
-    const r = await pool.query(
-      "UPDATE usuarios SET rol = COALESCE($1, rol), activo = COALESCE($2, activo) WHERE id = $3",
-      [p.data.rol ?? null, p.data.activo ?? null, req.params.id],
+  // Editar una cuenta. Los usuarios de la app (capturistas) solo se activan o desactivan; sus cuentas NO pasan al administrador.
+  // Las cuentas del administrador (personal) las edita solo un administrador: rol, permisos y activo.
+  app.patch<{ Params: { id: string } }>("/admin/usuarios/:id", { preHandler: con(app, "gestionar_usuarios_app") }, async (req, reply) => {
+    if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+    const p = z
+      .object({ rol: z.enum(["supervisor", "admin"]).optional(), activo: z.boolean().optional(), permisos: z.array(z.string()).max(40).nullable().optional() })
+      .strict()
+      .safeParse(req.body);
+    if (!p.success || (p.data.rol === undefined && p.data.activo === undefined && p.data.permisos === undefined)) return reply.code(400).send({ error: "Datos inválidos" });
+    const { rows: [u] } = await pool.query("SELECT id, rol, activo FROM usuarios WHERE id = $1", [req.params.id]);
+    if (!u) return reply.code(404).send({ error: "No existe" });
+
+    if (u.rol === "capturista") {
+      if (p.data.rol !== undefined || p.data.permisos !== undefined)
+        return reply.code(400).send({ error: "Los usuarios de la app no cambian de rol ni de permisos. Para dar acceso al administrador crea una cuenta del administrador." });
+      await pool.query("UPDATE usuarios SET activo = $1 WHERE id = $2", [p.data.activo, req.params.id]);
+      await auditar(req.user.sub, p.data.activo ? "activar_usuario_app" : "desactivar_usuario_app", "usuarios", req.params.id);
+      return { ok: true };
+    }
+
+    // cuenta del administrador: solo un administrador, y nunca la propia
+    if (req.user.rol !== "admin") return reply.code(403).send({ error: "Solo un administrador edita las cuentas del administrador" });
+    if (req.params.id === req.user.sub) return reply.code(400).send({ error: "No puedes cambiar tu propio rol, tus permisos ni desactivarte" });
+    const nuevoRol: "supervisor" | "admin" = p.data.rol ?? u.rol;
+    let permisos: string[] | null | undefined = p.data.permisos;
+    if (permisos) {
+      const invalidos = permisos.filter((c) => !esPermiso(c));
+      if (invalidos.length) return reply.code(400).send({ error: `Permiso desconocido: ${invalidos[0]}` });
+      permisos = [...new Set(permisos)];
+      if (nuevoRol === "supervisor" && !permisos.some((c) => c.startsWith("ver_"))) return reply.code(400).send({ error: "Elige al menos una vista para que pueda entrar" });
+    }
+    // siempre debe quedar al menos un administrador activo
+    const quitaAdmin = u.rol === "admin" && u.activo && (nuevoRol !== "admin" || p.data.activo === false);
+    if (quitaAdmin) {
+      const { rows: [{ n }] } = await pool.query("SELECT count(*)::int AS n FROM usuarios WHERE rol = 'admin' AND activo AND id <> $1", [req.params.id]);
+      if (!n) return reply.code(400).send({ error: "Debe quedar al menos un administrador activo" });
+    }
+    await pool.query(
+      `UPDATE usuarios SET rol = $1, activo = COALESCE($2, activo),
+              permisos = CASE WHEN $1 = 'admin' THEN NULL WHEN $4::boolean THEN $3::text[] ELSE permisos END
+        WHERE id = $5`,
+      [nuevoRol, p.data.activo ?? null, permisos ?? null, permisos !== undefined, req.params.id],
     );
-    if (!r.rowCount) return reply.code(404).send({ error: "No existe" });
-    await auditar(req.user.sub, "editar_usuario", "usuarios", req.params.id);
+    await auditar(req.user.sub, "editar_personal", "usuarios", req.params.id);
     return { ok: true };
   });
 
+  // Alta de una cuenta del administrador (supervisor con permisos, o administrador). Solo un administrador.
+  // La contraseña temporal la genera el sistema y se muestra UNA vez; la persona debe cambiarla al entrar.
+  app.post("/admin/personal", { preHandler: app.soloRoles("admin"), config: { rateLimit: { max: 30, timeWindow: "1 hour" } } }, async (req, reply) => {
+    const p = personalNuevoSchema.safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: p.error.issues[0].message, detalle: p.error.flatten() });
+    const d = p.data;
+    const invalidos = d.permisos.filter((c) => !esPermiso(c));
+    if (invalidos.length) return reply.code(400).send({ error: `Permiso desconocido: ${invalidos[0]}` });
+    const permisos = d.rol === "admin" ? null : [...new Set(d.permisos)];
+    if (permisos && !permisos.some((c) => c.startsWith("ver_"))) return reply.code(400).send({ error: "Elige al menos una vista para que pueda entrar" });
+    const existe = await pool.query("SELECT 1 FROM usuarios WHERE lower(correo) = $1 OR lower(usuario) = $1", [d.correo]);
+    if (existe.rowCount) return reply.code(409).send({ error: "Ya existe una cuenta con ese correo" });
+    const temporal = passwordTemporal();
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO usuarios(usuario, correo, nombre, apellidos, password_hash, rol, debe_cambiar_password, permisos, creado_por)
+         VALUES ($1,$1,$2,$3,$4,$5,true,$6::text[],$7) RETURNING id`,
+        [d.correo, d.nombre, d.apellidos, await hash(temporal), d.rol, permisos, req.user.sub],
+      );
+      await auditar(req.user.sub, "crear_personal", "usuarios", rows[0].id);
+      return reply.code(201).send({ id: rows[0].id, correo: d.correo, password: temporal, permisos_efectivos: permisosEfectivos(d.rol, permisos) });
+    } catch (e: any) {
+      if (e.code === "23505") return reply.code(409).send({ error: "Ya existe una cuenta con ese correo" });
+      throw e;
+    }
+  });
+
   // Recuperar contraseña (sin correo): la administración genera una temporal que se muestra UNA vez; la persona debe cambiarla al entrar
-  app.post<{ Params: { id: string } }>("/admin/usuarios/:id/restablecer-password", { preHandler: app.soloRoles("admin"), config: { rateLimit: { max: 30, timeWindow: "1 hour" } } }, async (req, reply) => {
+  app.post<{ Params: { id: string } }>("/admin/usuarios/:id/restablecer-password", { preHandler: con(app, "gestionar_usuarios_app"), config: { rateLimit: { max: 30, timeWindow: "1 hour" } } }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     if (req.params.id === req.user.sub) return reply.code(400).send({ error: "Para cambiar tu contraseña usa tu perfil" });
+    const { rows: [objetivo] } = await pool.query("SELECT rol FROM usuarios WHERE id = $1", [req.params.id]);
+    if (objetivo && objetivo.rol !== "capturista" && req.user.rol !== "admin") return reply.code(403).send({ error: "Solo un administrador restablece la contraseña del personal" });
     const temporal = passwordTemporal();
     const r = await pool.query("UPDATE usuarios SET password_hash = $1, debe_cambiar_password = true WHERE id = $2", [await hash(temporal), req.params.id]);
     if (!r.rowCount) return reply.code(404).send({ error: "No existe" });

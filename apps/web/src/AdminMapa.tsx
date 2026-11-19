@@ -21,7 +21,7 @@ export type FocoMapa = { bbox: [number, number, number, number]; estado?: string
 const PERIODOS: [number, string][] = [[7, "7 días"], [30, "30 días"], [90, "90 días"], [0, "Todo"]];
 
 /** Mapa de precios con filtros, zona (estado/municipio) y estadísticas al momento */
-export default function AdminMapa({ foco, alCambio }: { foco?: FocoMapa; alCambio: () => void }) {
+export default function AdminMapa({ foco, alCambio, puedeValidar = true }: { foco?: FocoMapa; alCambio: () => void; puedeValidar?: boolean }) {
   const ref = useRef<MapaAdminRef>(null);
   const [producto, setProducto] = useState<"maiz" | "masa">("maiz");
   const [dias, setDias] = useState(30);
@@ -73,6 +73,7 @@ export default function AdminMapa({ foco, alCambio }: { foco?: FocoMapa; alCambi
     <DetalleLazy
       id={sel.id}
       resumen={sel}
+      puedeValidar={puedeValidar}
       alCerrar={() => setSel(null)}
       alResuelta={() => {
         setTick((t) => t + 1); // el mapa se actualiza con el nuevo estatus

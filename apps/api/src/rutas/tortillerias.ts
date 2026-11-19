@@ -232,7 +232,7 @@ export function rutasTortillerias(app: FastifyInstance) {
   // Lectura: capturista enmascarado; supervisor y admin completos (con auditoría)
   app.get<{ Params: { id: string } }>("/tortillerias/:id/fiscal", { preHandler: app.autenticar }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
-    const completo = req.user.rol !== "capturista";
+    const completo = req.user.permisos.includes("ver_datos_fiscales"); // sin el permiso (o un usuario de la app) se ve enmascarado
     const r = await leerFiscal(req.params.id, completo);
     if (!r) return reply.code(404).send({ error: "Sin datos fiscales" });
     if (completo) await auditar(req.user.sub, "ver_datos_fiscales", "tortilleria_fiscal", req.params.id);
@@ -245,7 +245,7 @@ export function rutasTortillerias(app: FastifyInstance) {
     const { rows } = await pool.query("SELECT * FROM responsables WHERE tortilleria_id = $1 LIMIT 1", [req.params.id]);
     const r = rows[0];
     if (!r) return reply.code(404).send({ error: "Sin responsable" });
-    const completo = req.user.rol !== "capturista";
+    const completo = req.user.permisos.includes("ver_datos_fiscales");
     const [curp, tel, rfc] = [descifrar(r.curp_cifrado), descifrar(r.telefono_cifrado), descifrar(r.rfc_cifrado)];
     if (completo) await auditar(req.user.sub, "ver_datos_personales", "responsables", r.id);
     return {
@@ -255,7 +255,7 @@ export function rutasTortillerias(app: FastifyInstance) {
   });
 
   // Validación por supervisor. Una tortillería nueva no se valida sin foto.
-  app.patch<{ Params: { id: string } }>("/tortillerias/:id/estatus", { preHandler: app.soloRoles("supervisor", "admin") }, async (req, reply) => {
+  app.patch<{ Params: { id: string } }>("/tortillerias/:id/estatus", { preHandler: app.conPermiso("validar_tortillerias") }, async (req, reply) => {
     const p = z.object({ estatus: z.enum(["validada", "rechazada"]) }).safeParse(req.body);
     if (!p.success || !uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Datos inválidos" });
     if (p.data.estatus === "validada") {

@@ -11,7 +11,7 @@ const PERIODOS: [number, string][] = [[7, "7 días"], [30, "30 días"], [90, "90
 type Orden = "nombre" | "tortillerias" | "nuevas" | "denue_visitadas" | "con_precios" | "capturas" | "promedio" | "minimo" | "maximo";
 
 /** Estadísticas por estado y municipio, con tendencia, exportación y salto al mapa */
-export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) => void }) {
+export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { alMapa: (f: FocoMapa) => void; puedeExportar?: boolean }) {
   const [dias, setDias] = useState(30);
   const [producto, setProducto] = useState<"maiz" | "masa">("maiz");
   const [estado, setEstado] = useState<FilaZona>();
@@ -148,9 +148,9 @@ export default function AdminEstadisticas({ alMapa }: { alMapa: (f: FocoMapa) =>
           <button onClick={exportar} disabled={!filas?.length} className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-white px-3 text-xs font-semibold text-stone-700 ring-1 ring-stone-200 hover:ring-guinda/40 disabled:opacity-40">
             <Download className="h-4 w-4" aria-hidden /> Descargar CSV
           </button>
-          <button onClick={descargarCapturas} disabled={descargando} className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-guinda px-3 text-xs font-semibold text-white shadow-sm active:scale-95 disabled:opacity-60">
+          {puedeExportar && <button onClick={descargarCapturas} disabled={descargando} className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-guinda px-3 text-xs font-semibold text-white shadow-sm active:scale-95 disabled:opacity-60">
             {descargando ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FileSpreadsheet className="h-4 w-4" aria-hidden />} Descargar capturas (CSV)
-          </button>
+          </button>}
         </div>
       </div>
 

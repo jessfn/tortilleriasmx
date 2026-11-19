@@ -28,8 +28,12 @@ const hace = (s: string) => {
 
 /** Resumen general en vivo: precios promedio, actividad de hoy, tendencia y últimas capturas */
 export default function AdminResumen({
-  r, ultima, fallo, alRevisar, alEstadisticas, alMapa,
-}: { r?: Resumen; ultima?: number; fallo?: boolean; alRevisar: () => void; alEstadisticas: () => void; alMapa: (f?: FocoMapa) => void }) {
+  r, ultima, fallo, alRevisar, alEstadisticas, alMapa, puedeEstadisticas = true, puedeMapa = true, puedeRevision = true,
+}: {
+  r?: Resumen; ultima?: number; fallo?: boolean; alRevisar: () => void; alEstadisticas: () => void; alMapa: (f?: FocoMapa) => void;
+  /** a qué otras pantallas tiene acceso esta cuenta: lo que no, no se ofrece */
+  puedeEstadisticas?: boolean; puedeMapa?: boolean; puedeRevision?: boolean;
+}) {
   const [tendencia, setTendencia] = useState<DiaPrecio[]>([]);
   const [actividad, setActividad] = useState<Actividad[]>();
   const [estados, setEstados] = useState<FilaZona[]>([]);
@@ -82,7 +86,7 @@ export default function AdminResumen({
             <p className="text-[11px] text-stone-400">{entero(r.censadores_hoy)} {r.censadores_hoy === 1 ? "censador activo" : "censadores activos"}</p>
           </div>
         </Tarjeta>
-        <button onClick={alRevisar} className={`flex items-center gap-3 rounded-2xl p-3 text-left shadow-sm ring-1 transition active:scale-[.98] ${porRevisar ? "bg-amber-50 ring-amber-200" : "bg-white ring-stone-200"}`}>
+        <button onClick={alRevisar} disabled={!puedeRevision} className={`flex items-center gap-3 rounded-2xl p-3 text-left shadow-sm ring-1 transition enabled:active:scale-[.98] disabled:cursor-default ${porRevisar ? "bg-amber-50 ring-amber-200" : "bg-white ring-stone-200"}`}>
           <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${porRevisar ? "bg-amber-100 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{porRevisar ? <AlertTriangle className="h-6 w-6" aria-hidden /> : <Clock className="h-6 w-6" aria-hidden />}</span>
           <div>
             <p className="text-xs text-stone-500">Precios atípicos por revisar</p>
@@ -96,7 +100,7 @@ export default function AdminResumen({
         <Tarjeta className="space-y-2">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold">Tendencia del precio · 30 días</h3>
-            <button onClick={alEstadisticas} className="text-xs font-semibold text-guinda hover:underline">Ver estadísticas</button>
+            {puedeEstadisticas && <button onClick={alEstadisticas} className="text-xs font-semibold text-guinda hover:underline">Ver estadísticas</button>}
           </div>
           <Tendencia datos={tendencia} alto={230} />
         </Tarjeta>
@@ -134,7 +138,7 @@ export default function AdminResumen({
         <Tarjeta className="space-y-2.5">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold">Estados por precio promedio de tortilla</h3>
-            <button onClick={() => alMapa()} className="inline-flex items-center gap-1 text-xs font-semibold text-guinda hover:underline"><MapaIcono className="h-3.5 w-3.5" aria-hidden /> Abrir mapa</button>
+            {puedeMapa && <button onClick={() => alMapa()} className="inline-flex items-center gap-1 text-xs font-semibold text-guinda hover:underline"><MapaIcono className="h-3.5 w-3.5" aria-hidden /> Abrir mapa</button>}
           </div>
           {top.length === 0 ? (
             <p className="text-sm text-stone-500">Todavía no hay precios capturados.</p>

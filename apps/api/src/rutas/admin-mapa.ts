@@ -1,9 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import type { Permiso } from "@tortillerias/shared";
 import { pool } from "../db.js";
 import { MAX_CELDAS, tamanoCelda, zoomSchema } from "../celdas.js";
 
-const staff = (app: FastifyInstance) => app.soloRoles("supervisor", "admin");
+/** Cada ruta pide al menos uno de estos permisos (un administrador los tiene todos) */
+const con = (app: FastifyInstance, ...permisos: Permiso[]) => app.conPermiso(...permisos);
 const uuid = z.string().uuid();
 
 /** El día cuenta en hora de México, igual que el límite de captura */
@@ -48,7 +50,7 @@ const precio = (p: unknown, f: unknown): Precio => (p == null ? null : { precio:
  */
 export function rutasAdminMapa(app: FastifyInstance) {
   // Tortillerías del área visible, con su último precio de cada producto (de cualquier censador)
-  app.get("/admin/mapa", { preHandler: staff(app) }, async (req, reply) => {
+  app.get("/admin/mapa", { preHandler: con(app, "ver_mapa") }, async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const b = bboxSchema.safeParse(q.bbox);
     if (!b.success) return reply.code(400).send({ error: "bbox inválido: minLng,minLat,maxLng,maxLat" });
@@ -88,7 +90,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
   });
 
   // Mapa a poco zoom: tortillerías agrupadas en celdas, con cuántas hay y el precio promedio de cada producto en la celda
-  app.get("/admin/mapa/celdas", { preHandler: staff(app) }, async (req, reply) => {
+  app.get("/admin/mapa/celdas", { preHandler: con(app, "ver_mapa") }, async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const b = bboxSchema.safeParse(q.bbox);
     if (!b.success) return reply.code(400).send({ error: "bbox inválido: minLng,minLat,maxLng,maxLat" });
@@ -133,7 +135,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
   });
 
   // Estadísticas por estado o, con ?estado=, por municipio de ese estado
-  app.get("/admin/estadisticas", { preHandler: staff(app) }, async (req, reply) => {
+  app.get("/admin/estadisticas", { preHandler: con(app, "ver_estadisticas", "ver_resumen", "ver_mapa") }, async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const dias = periodo.safeParse(q.dias);
     const estado = q.estado && /^\d{2}$/.test(q.estado) ? q.estado : null;
@@ -216,7 +218,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
   });
 
   // Promedio diario de cada producto (para la gráfica de tendencia), nacional o por estado/municipio
-  app.get("/admin/tendencia", { preHandler: staff(app) }, async (req, reply) => {
+  app.get("/admin/tendencia", { preHandler: con(app, "ver_estadisticas", "ver_resumen", "ver_mapa") }, async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const dias = periodo.safeParse(q.dias);
     const estado = q.estado && /^\d{2}$/.test(q.estado) ? q.estado : null;
@@ -246,7 +248,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
   });
 
   // Últimas capturas (todas las personas), para la actividad en vivo
-  app.get("/admin/actividad", { preHandler: staff(app) }, async (req) => {
+  app.get("/admin/actividad", { preHandler: con(app, "ver_resumen") }, async (req) => {
     const limite = z.coerce.number().int().min(1).max(50).default(15).safeParse((req.query as any).limite);
     const { rows } = await pool.query(
       `SELECT c.id, c.producto, c.precio_kg::float8 AS precio_kg, c.estatus, c.alerta, c.creado_en, c.tortilleria_id,
@@ -264,7 +266,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
   });
 
   // Historial de "no se obtuvieron los datos fiscales" de una tortillería (con el motivo escrito y quién lo registró)
-  app.get<{ Params: { id: string } }>("/admin/tortillerias/:id/negativas", { preHandler: staff(app) }, async (req, reply) => {
+  app.get<{ Params: { id: string } }>("/admin/tortillerias/:id/negativas", { preHandler: con(app, "ver_revision", "ver_mapa") }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const { rows } = await pool.query(
       `SELECT n.id, n.motivo, n.motivo_otro, to_char(coalesce(n.capturado_en, n.creado_en) AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD') AS fecha, u.correo AS censador
@@ -276,7 +278,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
   });
 
   // Tortillerías sin datos fiscales: total, porcentaje, por motivo (el último intento) y por estado o, con ?estado=, por municipio
-  app.get("/admin/sin-fiscal", { preHandler: staff(app) }, async (req, reply) => {
+  app.get("/admin/sin-fiscal", { preHandler: con(app, "ver_estadisticas") }, async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const estado = q.estado && /^\d{2}$/.test(q.estado) ? q.estado : null;
     if (q.estado && !estado) return reply.code(400).send({ error: "estado inválido" });
@@ -329,7 +331,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
   });
 
   // Una tortillería (para abrir su detalle desde el mapa)
-  app.get<{ Params: { id: string } }>("/admin/tortillerias/:id", { preHandler: staff(app) }, async (req, reply) => {
+  app.get<{ Params: { id: string } }>("/admin/tortillerias/:id", { preHandler: con(app, "ver_revision", "ver_mapa") }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const { rows } = await pool.query(
       `SELECT t.id, t.nombre, t.domicilio, t.estatus, t.origen, t.creado_en, ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng,

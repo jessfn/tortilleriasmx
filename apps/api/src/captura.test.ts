@@ -33,6 +33,7 @@ const migracion7 = readFileSync(path.join(aqui, "../../../db/migrations/007_sin_
 const migracion8 = readFileSync(path.join(aqui, "../../../db/migrations/008_restablecer_password.sql"), "utf8");
 const migracion9 = readFileSync(path.join(aqui, "../../../db/migrations/009_sin_datos_fiscales.sql"), "utf8");
 const migracion10 = readFileSync(path.join(aqui, "../../../db/migrations/010_aprobacion_automatica.sql"), "utf8");
+const migracion11 = readFileSync(path.join(aqui, "../../../db/migrations/011_personal_y_permisos.sql"), "utf8");
 
 const PRE = `
 CREATE DOMAIN geometry AS point;
@@ -103,6 +104,7 @@ beforeAll(async () => {
   await h.db.exec(migracion8);
   await h.db.exec(migracion9);
   await h.db.exec(migracion10);
+  await h.db.exec(migracion11);
   process.env.UPLOADS_DIR = mkdtempSync(path.join(tmpdir(), "fotos-"));
   const u = async (nombre: string, rol: string) => (await q("INSERT INTO usuarios(usuario, rol, correo) VALUES ($1,$2,$1) RETURNING id", [nombre, rol]))[0].id;
   ana = await u("ana@correo.com", "capturista");
@@ -1145,5 +1147,156 @@ describe("C15: usuarios, exportación y auditoría", () => {
     const f = await (await get("/admin/auditoria?accion=ver_datos&usuario=SUP", adm, "admin")).json();
     expect(f.filas.every((x: any) => x.accion.includes("ver_datos") && x.usuario === "sup@correo.com")).toBe(true);
     expect(f.total).toBeGreaterThanOrEqual(1);
+  });
+});
+
+/* ===================== C16: usuarios de la app y personal del administrador, con permisos ===================== */
+describe("C16: usuarios de la app y personal del administrador (aparte, con permisos)", () => {
+  const patch = (url: string, usuario: string, body: unknown, rol = "admin") => fetch(base + url, { method: "PATCH", headers: auth(usuario, rol), body: JSON.stringify(body) });
+  const usuarioSql = async (correo: string, rol: string, permisos: string[] | null = null) =>
+    (await q("INSERT INTO usuarios(usuario, correo, rol, nombre, apellidos, permisos) VALUES ($1,$1,$2,'Prueba','Permisos',$3::text[]) RETURNING id", [correo, rol, permisos]))[0].id as string;
+  let soloResumen: string, revisor: string, gestor: string, capt: string;
+
+  beforeAll(async () => {
+    soloResumen = await usuarioSql("solo.resumen@sader.gob.mx", "supervisor", ["ver_resumen"]);
+    revisor = await usuarioSql("revisor@sader.gob.mx", "supervisor", ["ver_revision", "ver_mapa", "revisar_precios"]);
+    gestor = await usuarioSql("gestor@sader.gob.mx", "supervisor", ["ver_usuarios_app", "gestionar_usuarios_app"]);
+    capt = await usuarioSql("persona.app@correo.com", "capturista");
+  });
+
+  it("las dos listas van separadas: ?tipo=app solo trae capturistas y ?tipo=personal solo supervisores y administradores", async () => {
+    const app_ = await (await get("/admin/usuarios?tipo=app&pagina=1&limite=200", adm, "admin")).json();
+    expect(app_.filas.length).toBeGreaterThan(0);
+    expect(app_.filas.every((u: any) => u.rol === "capturista")).toBe(true);
+    const personal = await (await get("/admin/usuarios?tipo=personal&pagina=1&limite=200", adm, "admin")).json();
+    expect(personal.filas.length).toBeGreaterThan(0);
+    expect(personal.filas.every((u: any) => u.rol === "supervisor" || u.rol === "admin")).toBe(true);
+    const s = personal.filas.find((u: any) => u.id === soloResumen);
+    expect(s.permisos).toEqual(["ver_resumen"]);
+    expect(s.permisos_efectivos).toEqual(["ver_resumen"]);
+    // un administrador tiene todo; un supervisor sin editar, lo de por omisión (sin gestionar usuarios de la app)
+    expect(personal.filas.find((u: any) => u.id === adm).permisos_efectivos).toHaveLength(10);
+    const sup0 = personal.filas.find((u: any) => u.id === sup);
+    expect(sup0.permisos).toBeNull();
+    expect(sup0.permisos_efectivos).not.toContain("gestionar_usuarios_app");
+    expect(sup0.permisos_efectivos).toContain("revisar_precios");
+  });
+
+  it("un supervisor sin el permiso no ve usuarios; con 'Usuarios de la app' ve solo los de la app, nunca el personal", async () => {
+    expect((await get("/admin/usuarios?tipo=app&pagina=1", sup, "supervisor")).status).toBe(403);
+    expect((await get("/admin/usuarios?tipo=app&pagina=1", gestor, "supervisor")).status).toBe(200);
+    expect((await get("/admin/usuarios?tipo=personal&pagina=1", gestor, "supervisor")).status).toBe(403);
+    expect((await get("/admin/usuarios", gestor, "supervisor")).status).toBe(403);
+    expect((await get("/admin/usuarios?tipo=app&pagina=1", capt, "capturista")).status).toBe(403); // un usuario de la app no entra al administrador
+  });
+
+  it("el administrador crea una cuenta del administrador con permisos: contraseña temporal una vez, cambio obligatorio y permisos en la sesión", async () => {
+    const r = await post("/admin/personal", adm, { correo: "Nueva.Persona@SADER.gob.mx", nombre: "Nueva", apellidos: "Persona", rol: "supervisor", permisos: ["ver_resumen", "ver_estadisticas", "exportar_capturas"] }, "admin");
+    expect(r.status).toBe(201);
+    const c = await r.json();
+    expect(c.correo).toBe("nueva.persona@sader.gob.mx");
+    expect(c.password).toMatch(/^[A-Za-z0-9]{10}$/);
+    expect(c.permisos_efectivos).toEqual(["ver_resumen", "ver_estadisticas", "exportar_capturas"]);
+    const [fila] = await q("SELECT rol, debe_cambiar_password, permisos, creado_por, password_hash FROM usuarios WHERE id = $1", [c.id]);
+    expect(fila).toMatchObject({ rol: "supervisor", debe_cambiar_password: true, creado_por: adm });
+    expect(fila.permisos).toEqual(["ver_resumen", "ver_estadisticas", "exportar_capturas"]);
+    expect(fila.password_hash).not.toContain(c.password); // se guarda cifrada
+    const login = await fetch(`${base}/auth/login`, { method: "POST", headers: json, body: JSON.stringify({ usuario: "nueva.persona@sader.gob.mx", password: c.password }) });
+    expect(login.status).toBe(200);
+    const ses = await login.json();
+    expect(ses.usuario.debeCambiarPassword).toBe(true);
+    expect(ses.usuario.rol).toBe("supervisor");
+    expect(ses.usuario.permisos).toEqual(["ver_resumen", "ver_estadisticas", "exportar_capturas"]);
+    // el mismo correo no se puede repetir (ni en la app ni en el administrador)
+    expect((await post("/admin/personal", adm, { correo: "nueva.persona@sader.gob.mx", nombre: "Otra", apellidos: "Vez", rol: "admin" }, "admin")).status).toBe(409);
+    expect((await post("/admin/personal", adm, { correo: "persona.app@correo.com", nombre: "Otra", apellidos: "Vez", rol: "admin" }, "admin")).status).toBe(409);
+  });
+
+  it("validaciones del alta: solo un administrador, permisos válidos y al menos una vista", async () => {
+    const base_ = { correo: "val@sader.gob.mx", nombre: "Val", apellidos: "Idacion", rol: "supervisor" };
+    expect((await post("/admin/personal", sup, { ...base_, permisos: ["ver_resumen"] }, "supervisor")).status).toBe(403);
+    expect((await post("/admin/personal", capt, { ...base_, permisos: ["ver_resumen"] }, "capturista")).status).toBe(403);
+    expect((await post("/admin/personal", adm, { ...base_, permisos: ["borrar_todo"] }, "admin")).status).toBe(400);
+    expect((await post("/admin/personal", adm, { ...base_, permisos: ["revisar_precios"] }, "admin")).status).toBe(400); // sin ninguna vista no podría entrar
+    expect((await post("/admin/personal", adm, { ...base_, correo: "no-es-correo", permisos: ["ver_resumen"] }, "admin")).status).toBe(400);
+    expect((await post("/admin/personal", adm, { ...base_, rol: "capturista", permisos: ["ver_resumen"] }, "admin")).status).toBe(400); // los de la app no se crean aquí
+    const adm2 = await post("/admin/personal", adm, { ...base_, correo: "otro.admin@sader.gob.mx", rol: "admin", permisos: ["ver_resumen"] }, "admin");
+    expect(adm2.status).toBe(201);
+    expect((await adm2.json()).permisos_efectivos).toHaveLength(10); // un administrador siempre puede todo
+    expect((await q("SELECT permisos FROM usuarios WHERE correo = 'otro.admin@sader.gob.mx'"))[0].permisos).toBeNull();
+  });
+
+  it("cada ruta del administrador exige su permiso (y un cambio de permisos surte efecto en la siguiente petición)", async () => {
+    // solo "Resumen"
+    expect((await get("/admin/resumen", soloResumen, "supervisor")).status).toBe(200);
+    expect((await get("/admin/actividad", soloResumen, "supervisor")).status).toBe(200);
+    expect((await get("/admin/estadisticas", soloResumen, "supervisor")).status).toBe(200); // el resumen usa las estadísticas por estado
+    for (const ruta of ["/admin/mapa?bbox=-99,19,-98,20", "/admin/mapa/celdas?bbox=-99,19,-98,20&zoom=5", "/admin/capturas", "/admin/tortillerias", "/admin/sin-fiscal", "/admin/exportar/capturas", "/admin/auditoria", "/admin/usuarios?tipo=app"])
+      expect((await get(ruta, soloResumen, "supervisor")).status, ruta).toBe(403);
+    expect((await patch(`/admin/capturas/${crypto.randomUUID()}`, soloResumen, { estatus: "validada" }, "supervisor")).status).toBe(403);
+    expect((await patch("/admin/capturas", soloResumen, { ids: [crypto.randomUUID()], estatus: "validada" }, "supervisor")).status).toBe(403);
+    expect((await patch(`/tortillerias/${tA}/estatus`, soloResumen, { estatus: "validada" }, "supervisor")).status).toBe(403);
+    // revisor: ve la revisión y el mapa y puede aprobar precios, pero no validar tortillerías ni descargar
+    expect((await get("/admin/capturas?estatus=pendiente", revisor, "supervisor")).status).toBe(200);
+    expect((await get("/admin/mapa?bbox=-99,19,-98,20", revisor, "supervisor")).status).toBe(200);
+    expect((await patch("/admin/capturas", revisor, { ids: [crypto.randomUUID()], estatus: "validada" }, "supervisor")).status).toBe(200);
+    expect((await patch(`/tortillerias/${tA}/estatus`, revisor, { estatus: "validada" }, "supervisor")).status).toBe(403);
+    expect((await get("/admin/exportar/capturas", revisor, "supervisor")).status).toBe(403);
+    expect((await get("/admin/resumen", revisor, "supervisor")).status).toBe(403);
+    // el administrador le agrega permisos: surte efecto de inmediato (sin volver a entrar)
+    expect((await patch(`/admin/usuarios/${revisor}`, adm, { permisos: ["ver_revision", "ver_mapa", "revisar_precios", "validar_tortillerias", "exportar_capturas"] })).status).toBe(200);
+    expect((await get("/admin/exportar/capturas", revisor, "supervisor")).status).toBe(200);
+    expect((await patch(`/tortillerias/${tA}/estatus`, revisor, { estatus: "validada" }, "supervisor")).status).toBe(200);
+    expect((await patch(`/admin/usuarios/${revisor}`, adm, { permisos: ["ver_revision"] })).status).toBe(200); // y se los quita
+    expect((await get("/admin/exportar/capturas", revisor, "supervisor")).status).toBe(403);
+    expect((await patch("/admin/capturas", revisor, { ids: [crypto.randomUUID()], estatus: "validada" }, "supervisor")).status).toBe(403);
+  });
+
+  it("los datos fiscales completos solo los ve quien tiene ese permiso (los demás los ven enmascarados)", async () => {
+    const t = (await q("INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus) VALUES ('FISCAL PERMISO','09','09015', point(-99.5, 19.9),'denue','validada') RETURNING id"))[0].id as string;
+    expect((await post(`/tortillerias/${t}/fiscal`, ana, { tipoPersona: "moral", rfc: "tgu100101ab1", razonSocial: "Empresa Permiso SA", celular: "5512345678", aceptoAviso: true })).status).toBe(201);
+    const conPermiso = await usuarioSql("fiscal.si@sader.gob.mx", "supervisor", ["ver_revision", "ver_datos_fiscales"]);
+    const sinPermiso = await usuarioSql("fiscal.no@sader.gob.mx", "supervisor", ["ver_revision"]);
+    expect((await (await get(`/tortillerias/${t}/fiscal`, conPermiso, "supervisor")).json()).rfc).toBe("TGU100101AB1");
+    expect((await (await get(`/tortillerias/${t}/fiscal`, sinPermiso, "supervisor")).json()).rfc).toMatch(/^\*+1AB1$/);
+    expect((await (await get(`/tortillerias/${t}/fiscal`, adm, "admin")).json()).rfc).toBe("TGU100101AB1");
+  });
+
+  it("editar cuentas: la app solo se activa o desactiva; el personal (rol, permisos, activo) lo edita solo un administrador", async () => {
+    // usuarios de la app: no cambian de rol ni reciben permisos
+    expect((await patch(`/admin/usuarios/${capt}`, adm, { rol: "supervisor" })).status).toBe(400);
+    expect((await patch(`/admin/usuarios/${capt}`, adm, { permisos: ["ver_resumen"] })).status).toBe(400);
+    expect((await patch(`/admin/usuarios/${capt}`, adm, { activo: false })).status).toBe(200);
+    expect((await q("SELECT activo, rol FROM usuarios WHERE id = $1", [capt]))[0]).toEqual({ activo: false, rol: "capturista" });
+    expect((await patch(`/admin/usuarios/${capt}`, adm, { activo: true })).status).toBe(200);
+    // quien gestiona usuarios de la app puede desactivar y restablecer a un capturista, pero no toca al personal
+    expect((await patch(`/admin/usuarios/${capt}`, gestor, { activo: false }, "supervisor")).status).toBe(200);
+    expect((await patch(`/admin/usuarios/${capt}`, gestor, { activo: true }, "supervisor")).status).toBe(200);
+    expect((await post(`/admin/usuarios/${capt}/restablecer-password`, gestor, {}, "supervisor")).status).toBe(200);
+    expect((await patch(`/admin/usuarios/${soloResumen}`, gestor, { activo: false }, "supervisor")).status).toBe(403);
+    expect((await post(`/admin/usuarios/${soloResumen}/restablecer-password`, gestor, {}, "supervisor")).status).toBe(403);
+    // el administrador edita al personal
+    expect((await patch(`/admin/usuarios/${soloResumen}`, adm, { permisos: ["ver_resumen", "ver_mapa"] })).status).toBe(200);
+    expect((await q("SELECT permisos FROM usuarios WHERE id = $1", [soloResumen]))[0].permisos).toEqual(["ver_resumen", "ver_mapa"]);
+    expect((await patch(`/admin/usuarios/${soloResumen}`, adm, { permisos: ["ver_resumen", "inventado"] })).status).toBe(400);
+    expect((await patch(`/admin/usuarios/${soloResumen}`, adm, { permisos: ["revisar_precios"] })).status).toBe(400); // sin vistas
+    expect((await patch(`/admin/usuarios/${soloResumen}`, adm, { activo: false })).status).toBe(200);
+    expect((await get("/admin/resumen", soloResumen, "supervisor")).status).toBe(401); // cuenta desactivada: sale de inmediato
+    expect((await patch(`/admin/usuarios/${soloResumen}`, adm, { activo: true })).status).toBe(200);
+    expect((await patch(`/admin/usuarios/${soloResumen}`, adm, { rol: "admin" })).status).toBe(200); // como administrador pasa a poder todo y sus permisos marcados se limpian
+    expect((await q("SELECT rol, permisos FROM usuarios WHERE id = $1", [soloResumen]))[0]).toEqual({ rol: "admin", permisos: null });
+    expect((await patch(`/admin/usuarios/${soloResumen}`, adm, { rol: "supervisor", permisos: ["ver_resumen"] })).status).toBe(200);
+    // reglas de seguridad
+    expect((await patch(`/admin/usuarios/${adm}`, adm, { activo: false })).status).toBe(400); // no a sí mismo
+    expect((await patch(`/admin/usuarios/${soloResumen}`, adm, { sorpresa: true })).status).toBe(400);
+    expect((await patch(`/admin/usuarios/${crypto.randomUUID()}`, adm, { activo: false })).status).toBe(404);
+  });
+
+  it("un administrador puede bajar de rol a otro, pero nunca a sí mismo (así siempre queda al menos un administrador activo)", async () => {
+    const otro = await usuarioSql("otro.admin.rol@sader.gob.mx", "admin");
+    expect((await patch(`/admin/usuarios/${otro}`, adm, { rol: "supervisor", permisos: ["ver_resumen"] })).status).toBe(200);
+    expect((await q("SELECT rol, permisos FROM usuarios WHERE id = $1", [otro]))[0]).toEqual({ rol: "supervisor", permisos: ["ver_resumen"] });
+    expect((await patch(`/admin/usuarios/${adm}`, adm, { rol: "supervisor", permisos: ["ver_resumen"] })).status).toBe(400);
+    expect((await q("SELECT count(*)::int AS n FROM usuarios WHERE rol = 'admin' AND activo"))[0].n).toBeGreaterThanOrEqual(1);
   });
 });

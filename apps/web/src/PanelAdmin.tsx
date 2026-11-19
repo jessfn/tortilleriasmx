@@ -1,4 +1,4 @@
-import { formatearTelefono } from "@tortillerias/shared";
+import { formatearTelefono, permisosEfectivos, type Permiso } from "@tortillerias/shared";
 import { NegativasFiscales } from "./NegativasFiscales";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -13,6 +13,7 @@ import { Aviso, Boton, HojaModal, Insignia, Tarjeta, Vacio } from "./ui";
 import MiniMapa from "./MiniMapa";
 import { Paginacion, POR_PAGINA, type Pagina } from "./Paginacion";
 import AdminAuditoria from "./AdminAuditoria";
+import AdminUsuarios from "./AdminUsuarios";
 import { distanciaM } from "./catalogo";
 import AdminBarra from "./AdminBarra";
 import AdminResumen, { type Resumen } from "./AdminResumen";
@@ -35,11 +36,6 @@ export type CapturaAdm = {
   /** mediana del municipio al capturar, con cuántos precios se calculó, y cómo se aprobó */
   mediana_ref?: number | null; n_ref?: number | null; aprobacion?: string | null;
 };
-type UsuarioAdm = {
-  id: string; correo: string | null; usuario: string; nombre: string; apellidos: string; rol: string; activo: boolean; creado_en: string; capturas: number; debe_cambiar_password?: boolean;
-  /** AAAA-MM-DD de su última captura y cuántas hizo en los últimos 7 días: para ver quién está trabajando */
-  ultima_captura?: string | null; capturas_7d?: number;
-};
 /** Datos fiscales de la tortillería; si solo hay un registro viejo de responsable, llega con legado = true */
 export type Fiscal = { tipoPersona: string; razonSocial: string; rfc: string; celular: string | null; legado?: boolean; responsable?: { nombre: string; apellidos: string } };
 
@@ -56,13 +52,28 @@ export default function PanelAdmin({
 }: { sesion: Sesion; alActualizarSesion: (s: Sesion) => void; alSalir: () => void; alInicio?: () => void }) {
   const esAdmin = sesion.usuario.rol === "admin";
   const [tabGuardada, setTab] = usePersistente(CLAVES.tabAdmin, "resumen");
-  const tab = (tabGuardada === "usuarios" || tabGuardada === "auditoria") && !esAdmin ? "resumen" : tabGuardada; // por si cambió su rol
   const [resumen, setResumen] = useState<Resumen>();
   const [foco, setFoco] = useState<FocoMapa>();
 
+  // Qué pantallas y acciones tiene esta cuenta (un administrador, todas). Es lo que muestra la pantalla; el servidor lo exige en cada petición.
+  const permisos = new Set<string>(sesion.usuario.permisos ?? permisosEfectivos(sesion.usuario.rol, null));
+  const puede = (c: Permiso) => permisos.has(c);
+  const pestañasDisponibles = [
+    ...(puede("ver_resumen") ? [{ id: "resumen", texto: "Resumen", icono: BarChart3 }] : []),
+    ...(puede("ver_mapa") ? [{ id: "mapa", texto: "Mapa", icono: MapaIcono }] : []),
+    ...(puede("ver_estadisticas") ? [{ id: "estadisticas", texto: "Estadísticas", icono: LineChart }] : []),
+    ...(puede("ver_revision") ? [{ id: "revision", texto: "Revisión", icono: ClipboardCheck, insignia: undefined as number | undefined }] : []),
+    ...(puede("ver_usuarios_app") || esAdmin ? [{ id: "usuarios", texto: "Usuarios", icono: Users }] : []),
+    ...(esAdmin ? [{ id: "auditoria", texto: "Auditoría", icono: History }] : []),
+    { id: "perfil", texto: "Perfil", icono: UserRound },
+  ];
+  const tab = pestañasDisponibles.some((p) => p.id === tabGuardada) ? tabGuardada : pestañasDisponibles[0].id; // por si cambiaron sus permisos
+
   // El resumen y el contador de pendientes se actualizan solos
-  const vivo = useVivo(async () => setResumen(await api<Resumen>("/admin/resumen")), 20_000);
-  const cargarResumen = useCallback(() => api<Resumen>("/admin/resumen").then(setResumen).catch(() => {}), []);
+  const vivo = useVivo(async () => {
+    if (puede("ver_resumen")) setResumen(await api<Resumen>("/admin/resumen"));
+  }, 20_000);
+  const cargarResumen = useCallback(() => (permisos.has("ver_resumen") ? api<Resumen>("/admin/resumen").then(setResumen).catch(() => {}) : Promise.resolve()), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const alMapa = useCallback((f?: FocoMapa) => {
     if (f) setFoco({ ...f }); // objeto nuevo: vuelve a acercar aunque sea la misma zona
@@ -80,22 +91,29 @@ export default function PanelAdmin({
       plano={tab === "mapa" || tab === "revision" || tab === "usuarios" || tab === "auditoria"}
       titulo={esAdmin ? "Administración" : "Supervisión"}
       vivo={vivo}
-      pestañas={[
-        { id: "resumen", texto: "Resumen", icono: BarChart3 },
-        { id: "mapa", texto: "Mapa", icono: MapaIcono },
-        { id: "estadisticas", texto: "Estadísticas", icono: LineChart },
-        { id: "revision", texto: "Revisión", icono: ClipboardCheck, insignia: pendientes },
-        ...(esAdmin ? [{ id: "usuarios", texto: "Usuarios", icono: Users }, { id: "auditoria", texto: "Auditoría", icono: History }] : []),
-        { id: "perfil", texto: "Perfil", icono: UserRound },
-      ]}
+      pestañas={pestañasDisponibles.map((p) => (p.id === "revision" ? { ...p, insignia: pendientes } : p))}
       activa={tab}
       alCambiar={setTab}
     >
-      {tab === "resumen" && <AdminResumen r={resumen} ultima={vivo.ultima} fallo={vivo.fallo} alRevisar={() => setTab("revision")} alEstadisticas={() => setTab("estadisticas")} alMapa={alMapa} />}
-      {tab === "mapa" && <AdminMapa foco={foco} alCambio={cargarResumen} />}
-      {tab === "estadisticas" && <AdminEstadisticas alMapa={alMapa} />}
-      {tab === "revision" && <VistaRevision alCambio={cargarResumen} />}
-      {tab === "usuarios" && esAdmin && <VistaUsuarios miId={sesion.usuario.id} />}
+      {tab === "resumen" && (
+        <AdminResumen
+          r={resumen}
+          ultima={vivo.ultima}
+          fallo={vivo.fallo}
+          alRevisar={() => puede("ver_revision") && setTab("revision")}
+          alEstadisticas={() => puede("ver_estadisticas") && setTab("estadisticas")}
+          alMapa={(f) => puede("ver_mapa") && alMapa(f)}
+          puedeEstadisticas={puede("ver_estadisticas")}
+          puedeMapa={puede("ver_mapa")}
+          puedeRevision={puede("ver_revision")}
+        />
+      )}
+      {tab === "mapa" && <AdminMapa foco={foco} alCambio={cargarResumen} puedeValidar={puede("validar_tortillerias")} />}
+      {tab === "estadisticas" && <AdminEstadisticas alMapa={(f) => puede("ver_mapa") && alMapa(f)} puedeExportar={puede("exportar_capturas")} />}
+      {tab === "revision" && <VistaRevision alCambio={cargarResumen} puedeRevisar={puede("revisar_precios")} puedeValidar={puede("validar_tortillerias")} />}
+      {tab === "usuarios" && (puede("ver_usuarios_app") || esAdmin) && (
+        <AdminUsuarios miId={sesion.usuario.id} esAdmin={esAdmin} puedeVerApp={puede("ver_usuarios_app")} puedeGestionarApp={puede("gestionar_usuarios_app")} />
+      )}
       {tab === "auditoria" && esAdmin && <AdminAuditoria />}
       {tab === "perfil" && <Perfil sesion={sesion} alActualizar={alActualizarSesion} alSalir={alSalir} />}
     </AdminBarra>
@@ -104,7 +122,7 @@ export default function PanelAdmin({
 
 /* ---------------- Revisión ---------------- */
 
-function VistaRevision({ alCambio }: { alCambio: () => void }) {
+function VistaRevision({ alCambio, puedeRevisar, puedeValidar }: { alCambio: () => void; puedeRevisar: boolean; puedeValidar: boolean }) {
   const [seccion, setSeccion] = useState<"tortillerias" | "precios">("tortillerias");
   const [estatus, setEstatus] = useState<"pendiente" | "validada" | "rechazada">("pendiente");
   const [pagina, setPagina] = useState(1);
@@ -262,7 +280,7 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
 
       {error && <Aviso>{error}</Aviso>}
 
-      {seccion === "precios" && estatus === "pendiente" && !!capturas?.filas.length && (
+      {puedeRevisar && seccion === "precios" && estatus === "pendiente" && !!capturas?.filas.length && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-2xl bg-white px-3 py-2 shadow-sm ring-1 ring-stone-200">
           <label className="flex min-h-9 cursor-pointer items-center gap-2 text-xs font-semibold text-stone-600">
             <input
@@ -316,7 +334,7 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
                 return (
                   <Tarjeta key={c.id} className={`space-y-2 ${marcados.has(c.id) ? "ring-2 ring-guinda" : ""}`}>
                     <div className="flex items-start justify-between gap-2">
-                      {c.estatus === "pendiente" && (
+                      {puedeRevisar && c.estatus === "pendiente" && (
                         <input type="checkbox" aria-label={`Seleccionar el precio de ${c.nombre}`} className="mt-0.5 h-5 w-5 shrink-0 accent-guinda" checked={marcados.has(c.id)} onChange={() => alternar(c.id)} />
                       )}
                       <div className="min-w-0 flex-1">
@@ -334,7 +352,7 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
                     <Boton variante="secundario" className="!min-h-10 !text-sm" disabled={abriendo === c.id} icono={abriendo === c.id ? Loader2 : Eye} onClick={() => verCaptura(c)}>
                       Ver más detalles
                     </Boton>
-                    {c.estatus === "pendiente" && (
+                    {puedeRevisar && c.estatus === "pendiente" && (
                       <div className="grid grid-cols-2 gap-2">
                         <Boton variante="peligro" className="!min-h-10" disabled={trabajando === c.id} icono={X} onClick={() => resolverCaptura(c.id, "rechazada")}>Rechazar</Boton>
                         <Boton className="!min-h-10" disabled={trabajando === c.id} icono={trabajando === c.id ? Loader2 : Check} onClick={() => resolverCaptura(c.id, "validada")}>Aprobar</Boton>
@@ -373,6 +391,8 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
         <DetalleTortilleria
           t={detalleCaptura.t}
           captura={detalleCaptura.c}
+          puedeRevisar={puedeRevisar}
+          puedeValidar={puedeValidar}
           trabajando={trabajando === detalleCaptura.c.id}
           alCerrar={() => setDetalleCaptura(undefined)}
           alResolver={resolverTortilleria}
@@ -382,14 +402,16 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
           }}
         />
       )}
-      {detalle && <DetalleTortilleria t={detalle} trabajando={trabajando === detalle.id} alCerrar={() => setDetalle(undefined)} alResolver={resolverTortilleria} />}
+      {detalle && <DetalleTortilleria t={detalle} puedeRevisar={puedeRevisar} puedeValidar={puedeValidar} trabajando={trabajando === detalle.id} alCerrar={() => setDetalle(undefined)} alResolver={resolverTortilleria} />}
     </div>
   );
 }
 
 function DetalleTortilleria({
-  t, captura, trabajando, alCerrar, alResolver, alResolverCaptura,
+  t, captura, trabajando, alCerrar, alResolver, alResolverCaptura, puedeRevisar, puedeValidar,
 }: {
+  /** qué acciones tiene permitidas esta cuenta */
+  puedeRevisar: boolean; puedeValidar: boolean;
   t: TortilleriaAdm; trabajando: boolean; alCerrar: () => void; alResolver: (id: string, e: "validada" | "rechazada") => void;
   /** Si viene, es la revisión de un precio: se muestra la captura arriba y los botones aprueban o rechazan ese precio */
   captura?: CapturaAdm; alResolverCaptura?: (id: string, e: "validada" | "rechazada") => void;
@@ -539,232 +561,24 @@ function DetalleTortilleria({
         <p className="pt-1 text-[11px] text-stone-400">La consulta de datos fiscales queda registrada en la auditoría.</p>
       </Tarjeta>
 
-      {captura && alResolverCaptura && captura.estatus === "pendiente" && (
+      {puedeRevisar && captura && alResolverCaptura && captura.estatus === "pendiente" && (
         <div className="sticky -bottom-4 -mx-4 -mb-4 grid grid-cols-2 gap-2 border-t border-stone-200 bg-stone-50/95 px-4 pb-[max(1rem,calc(var(--sb)*.35))] pt-3 backdrop-blur">
           <Boton variante="peligro" disabled={trabajando} icono={X} onClick={() => alResolverCaptura(captura.id, "rechazada")}>Rechazar precio</Boton>
           <Boton disabled={trabajando} icono={trabajando ? Loader2 : Check} onClick={() => alResolverCaptura(captura.id, "validada")}>Aprobar precio</Boton>
         </div>
       )}
-      {!captura && t.estatus === "pendiente" && (
+      {puedeValidar && !captura && t.estatus === "pendiente" && (
         <div className="grid grid-cols-2 gap-2">
           <Boton variante="peligro" disabled={trabajando} icono={X} onClick={() => alResolver(t.id, "rechazada")}>Rechazar</Boton>
           <Boton disabled={trabajando || sinFoto} icono={trabajando ? Loader2 : Check} onClick={() => alResolver(t.id, "validada")}>Validar</Boton>
         </div>
       )}
-      {!captura && t.estatus === "pendiente" && sinFoto && (
+      {puedeValidar && !captura && t.estatus === "pendiente" && sinFoto && (
         <p className="flex items-center gap-1.5 text-xs text-amber-700">
           <Camera className="h-3.5 w-3.5 shrink-0" aria-hidden /> Una tortillería nueva no se puede validar sin foto.
         </p>
       )}
     </HojaModal>
-  );
-}
-
-/* ---------------- Usuarios (solo administrador) ---------------- */
-function VistaUsuarios({ miId }: { miId: string }) {
-  const [pag, setPag] = useState<Pagina<UsuarioAdm>>();
-  const [busqueda, setBusqueda] = useState("");
-  const [q, setQ] = useState(""); // la búsqueda se envía un momento después de escribir
-  const [rol, setRol] = useState("");
-  const [activo, setActivo] = useState("");
-  const [pagina, setPagina] = useState(1);
-  const [limite, setLimite] = useState(50);
-  const [error, setError] = useState("");
-  const [trabajando, setTrabajando] = useState<string>();
-  const zona = useRef<HTMLDivElement>(null);
-  const actualizar = (id: string, cambio: Partial<UsuarioAdm>) => setPag((p) => p && { ...p, filas: p.filas.map((x) => (x.id === id ? { ...x, ...cambio } : x)) });
-  // Restablecer contraseña: primero se confirma y luego se muestra la temporal UNA sola vez
-  const [confirmando, setConfirmando] = useState<string>();
-  const [temporal, setTemporal] = useState<{ correo: string; password: string }>();
-  const [copiada, setCopiada] = useState(false);
-
-  async function restablecer(u: UsuarioAdm) {
-    setTrabajando(u.id);
-    setError("");
-    try {
-      const r = await api<{ password: string }>(`/admin/usuarios/${u.id}/restablecer-password`, { json: {} });
-      setTemporal({ correo: u.correo ?? u.usuario, password: r.password });
-      setCopiada(false);
-      actualizar(u.id, { debe_cambiar_password: true });
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setTrabajando(undefined);
-      setConfirmando(undefined);
-    }
-  }
-
-  useEffect(() => {
-    const t = window.setTimeout(() => {
-      setQ(busqueda.trim());
-      setPagina(1);
-    }, 300);
-    return () => window.clearTimeout(t);
-  }, [busqueda]);
-  useEffect(() => {
-    let vigente = true;
-    const p = new URLSearchParams({ pagina: String(pagina), limite: String(limite) });
-    if (q) p.set("q", q);
-    if (rol) p.set("rol", rol);
-    if (activo) p.set("activo", activo);
-    api<Pagina<UsuarioAdm>>(`/admin/usuarios?${p}`)
-      .then((r) => {
-        if (!vigente) return;
-        if (!r.filas.length && pagina > 1) return setPagina(Math.max(1, r.paginas));
-        setPag(r);
-        setError("");
-      })
-      .catch((e) => vigente && setError(e.message));
-    return () => {
-      vigente = false;
-    };
-  }, [q, rol, activo, pagina, limite]);
-  useEffect(() => {
-    zona.current?.scrollTo({ top: 0 });
-  }, [q, rol, activo, pagina, limite]);
-
-  async function cambiar(u: UsuarioAdm, cambio: Partial<Pick<UsuarioAdm, "rol" | "activo">>) {
-    setTrabajando(u.id);
-    setError("");
-    try {
-      await api(`/admin/usuarios/${u.id}`, { metodo: "PATCH", json: cambio });
-      actualizar(u.id, cambio);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setTrabajando(undefined);
-    }
-  }
-
-  const usuarios = pag?.filas;
-
-  return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-[92rem] flex-col gap-2.5 px-3 pb-3 pt-4 lg:px-6 lg:pb-5">
-      <div className="flex shrink-0 flex-col gap-2 md:flex-row md:items-center">
-        <label className="relative block min-w-0 flex-1 md:max-w-md">
-          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-stone-400" aria-hidden />
-          <input
-            type="search"
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-            placeholder="Buscar por correo, usuario o nombre"
-            aria-label="Buscar usuarios"
-            className="h-11 w-full rounded-xl border border-stone-200 bg-white pl-10 pr-3 text-base shadow-sm outline-none focus:border-guinda focus:ring-4 focus:ring-guinda/10"
-          />
-        </label>
-        <div className="grid grid-cols-2 gap-2 md:flex">
-          <select value={rol} onChange={(e) => { setRol(e.target.value); setPagina(1); }} aria-label="Filtrar por rol" className="h-11 rounded-xl border border-stone-200 bg-white px-3 text-sm shadow-sm">
-            <option value="">Todos los roles</option>
-            <option value="capturista">Usuarios</option>
-            <option value="supervisor">Supervisores</option>
-            <option value="admin">Administradores</option>
-          </select>
-          <select value={activo} onChange={(e) => { setActivo(e.target.value); setPagina(1); }} aria-label="Filtrar por estado de la cuenta" className="h-11 rounded-xl border border-stone-200 bg-white px-3 text-sm shadow-sm">
-            <option value="">Activas e inactivas</option>
-            <option value="1">Solo activas</option>
-            <option value="0">Solo inactivas</option>
-          </select>
-        </div>
-      </div>
-      {error && <Aviso>{error}</Aviso>}
-
-      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200" aria-label="Usuarios">
-        <div ref={zona} className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-stone-50/70 p-2.5">
-          <div className="grid content-start gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-      {!usuarios ? (
-        <div className="col-span-full grid place-items-center py-16 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
-      ) : usuarios.length === 0 ? (
-        <div className="col-span-full"><Vacio icono={Users} titulo="Sin resultados" texto={q ? "Ninguna cuenta coincide con la búsqueda." : undefined} /></div>
-      ) : usuarios.map((u) => {
-        const yo = u.id === miId;
-        return (
-          <Tarjeta key={u.id} className={`space-y-2 ${u.activo ? "" : "opacity-60"}`}>
-            <div className="flex items-center gap-3">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-guinda/10 font-bold text-guinda">
-                {(u.nombre || u.correo || u.usuario).charAt(0).toUpperCase()}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-semibold leading-tight">{u.correo ?? u.usuario}</p>
-                <p className="truncate text-xs text-stone-500">{[u.nombre, u.apellidos].filter(Boolean).join(" ") || "Sin nombre"} · {u.capturas} captura(s)</p>
-                <p className="truncate text-[11px] text-stone-400">
-                  {u.ultima_captura ? <>Última captura: {dia(u.ultima_captura)} · <b className={u.capturas_7d ? "text-emerald-700" : "text-stone-500"}>{u.capturas_7d ?? 0} en 7 días</b></> : "Aún sin capturas"}
-                </p>
-              </div>
-              {yo && <span className="rounded-full bg-verde/10 px-2 py-0.5 text-[11px] font-semibold text-verde">Tú</span>}
-              {!yo && u.debe_cambiar_password && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">Cambio pendiente</span>}
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="flex min-w-0 flex-1 items-center gap-2">
-                <UserCog className="h-4 w-4 shrink-0 text-stone-400" aria-hidden />
-                <select
-                  value={u.rol}
-                  disabled={yo || trabajando === u.id}
-                  onChange={(e) => cambiar(u, { rol: e.target.value })}
-                  aria-label={`Rol de ${u.correo ?? u.usuario}`}
-                  className="h-10 min-w-0 flex-1 rounded-lg border border-stone-200 bg-white px-2 text-base disabled:opacity-60"
-                >
-                  <option value="capturista">Usuario</option>
-                  <option value="supervisor">Supervisor</option>
-                  <option value="admin">Administrador</option>
-                </select>
-              </label>
-              <button
-                role="switch"
-                aria-checked={u.activo}
-                aria-label={u.activo ? "Desactivar cuenta" : "Activar cuenta"}
-                disabled={yo || trabajando === u.id}
-                onClick={() => cambiar(u, { activo: !u.activo })}
-                className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:opacity-50 ${u.activo ? "bg-verde" : "bg-stone-300"}`}
-              >
-                <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-all ${u.activo ? "left-[1.4rem]" : "left-0.5"}`} />
-              </button>
-            </div>
-            {!yo &&
-              (confirmando === u.id ? (
-                <div className="space-y-2 rounded-xl bg-amber-50 p-2.5 ring-1 ring-amber-200">
-                  <p className="text-xs font-semibold text-amber-900">¿Restablecer la contraseña de {u.correo ?? u.usuario}? La actual dejará de servir y se generará una temporal.</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Boton variante="secundario" className="!min-h-10 !text-sm" onClick={() => setConfirmando(undefined)}>
-                      Cancelar
-                    </Boton>
-                    <Boton className="!min-h-10 !text-sm" onClick={() => restablecer(u)} disabled={trabajando === u.id} icono={trabajando === u.id ? Loader2 : KeyRound}>
-                      Sí, restablecer
-                    </Boton>
-                  </div>
-                </div>
-              ) : (
-                <button onClick={() => setConfirmando(u.id)} disabled={trabajando === u.id} className="flex items-center gap-1.5 text-xs font-semibold text-guinda disabled:opacity-50">
-                  <KeyRound className="h-3.5 w-3.5" aria-hidden /> Restablecer contraseña
-                </button>
-              ))}
-          </Tarjeta>
-        );
-      })}
-          </div>
-        </div>
-        {pag && <Paginacion total={pag.total} pagina={pag.pagina} paginas={pag.paginas} limite={pag.limite} alPagina={setPagina} alLimite={(n) => { setLimite(n); setPagina(1); }} />}
-      </section>
-      {temporal && (
-        <HojaModal titulo="Contraseña temporal" alCerrar={() => setTemporal(undefined)}>
-          <p className="text-sm text-stone-700">
-            Entrégale esta contraseña a <b>{temporal.correo}</b>. Al entrar, la aplicación le pedirá crear una nueva.
-          </p>
-          <div className="flex items-center justify-between gap-2 rounded-2xl bg-white p-4 ring-1 ring-stone-200">
-            <code className="select-all text-2xl font-bold tracking-wider text-guinda">{temporal.password}</code>
-            <button
-              onClick={() => {
-                navigator.clipboard?.writeText(temporal.password).then(() => setCopiada(true)).catch(() => {});
-              }}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold text-guinda ring-1 ring-guinda/30 hover:bg-guinda/5"
-            >
-              {copiada ? <Check className="h-4 w-4" aria-hidden /> : <Copy className="h-4 w-4" aria-hidden />} {copiada ? "Copiada" : "Copiar"}
-            </button>
-          </div>
-          <Aviso tipo="info">Se muestra una sola vez: si la pierdes, vuelve a restablecerla.</Aviso>
-          <Boton onClick={() => setTemporal(undefined)}>Listo</Boton>
-        </HojaModal>
-      )}
-    </div>
   );
 }
 

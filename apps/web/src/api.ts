@@ -9,7 +9,11 @@ const KEY = ES_ADMIN ? "tmx_sesion_admin" : "tmx_sesion";
 export const cuentaDeEsteAcceso = (rol: Rol) => (ES_ADMIN ? rol !== "capturista" : rol === "capturista");
 
 export type Rol = "capturista" | "supervisor" | "admin";
-export type Sesion = { token: string; usuario: { id: string; nombre: string; apellidos: string; rol: Rol; correo: string; debeCambiarPassword?: boolean } };
+export type Sesion = {
+  token: string;
+  /** permisos: qué pantallas y acciones tiene el personal del administrador (una sesión anterior puede no traerlos) */
+  usuario: { id: string; nombre: string; apellidos: string; rol: Rol; correo: string; debeCambiarPassword?: boolean; permisos?: string[] };
+};
 
 export function leerSesion(): Sesion | null {
   try {
