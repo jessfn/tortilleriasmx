@@ -1300,3 +1300,93 @@ describe("C16: usuarios de la app y personal del administrador (aparte, con perm
     expect((await q("SELECT count(*)::int AS n FROM usuarios WHERE rol = 'admin' AND activo"))[0].n).toBeGreaterThanOrEqual(1);
   });
 });
+
+/* ===================== Orden y filtros de Revisión y Usuarios ===================== */
+describe("orden y filtros en Revisión y Usuarios", () => {
+  const nuevaOrd = async (nombre: string, dias: number, estatus = "pendiente") =>
+    (await q("INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus, creado_en, creado_por) VALUES ($1,'09','09015', point(-99.6, 19.95),'nueva',$2, now() - ($3::int || ' days')::interval, $4) RETURNING id", [nombre, estatus, dias, ana]))[0].id as string;
+  const lista = async (url: string, rol = "supervisor") => (await (await get(url, sup, rol)).json()) as any;
+  const nombres = (r: any) => r.filas.map((f: any) => f.nombre);
+  let ta: string, tb: string, tc: string;
+
+  beforeAll(async () => {
+    ta = await nuevaOrd("ORD Zeta", 1); //  la más reciente, con 2 fotos
+    tb = await nuevaOrd("ORD Álamo", 5); // intermedia, sin foto
+    tc = await nuevaOrd("ORD Ñandú", 9); //  la más antigua, con 1 foto
+    await q("INSERT INTO fotos(tortilleria_id, archivo) VALUES ($1,'a.jpg'),($1,'b.jpg'),($2,'c.jpg')", [ta, tc]);
+  });
+
+  it("tortillerías nuevas: más recientes por omisión, más antiguas, por nombre y con más fotos", async () => {
+    const base = "/admin/tortillerias?origen=nueva&estatus=pendiente&q=ORD&pagina=1&limite=50";
+    expect(nombres(await lista(base))).toEqual(["ORD Zeta", "ORD Álamo", "ORD Ñandú"]); // recientes (como antes)
+    expect(nombres(await lista(`${base}&orden=recientes`))).toEqual(["ORD Zeta", "ORD Álamo", "ORD Ñandú"]);
+    expect(nombres(await lista(`${base}&orden=antiguas`))).toEqual(["ORD Ñandú", "ORD Álamo", "ORD Zeta"]);
+    expect(nombres(await lista(`${base}&orden=nombre`))).toEqual(["ORD Álamo", "ORD Ñandú", "ORD Zeta"]);
+    expect(nombres(await lista(`${base}&orden=fotos`))).toEqual(["ORD Zeta", "ORD Ñandú", "ORD Álamo"]);
+    expect(nombres(await lista(`${base}&orden=inventado`))).toEqual(["ORD Zeta", "ORD Álamo", "ORD Ñandú"]); // un orden desconocido no rompe nada
+  });
+
+  it("tortillerías nuevas: con foto, sin foto y buscador sin acentos ni mayúsculas (el total coincide con las páginas)", async () => {
+    const base = "/admin/tortillerias?origen=nueva&estatus=pendiente&q=ord&pagina=1&limite=50";
+    expect(nombres(await lista(`${base}&foto=sin`))).toEqual(["ORD Álamo"]);
+    expect(nombres(await lista(`${base}&foto=con`))).toEqual(["ORD Zeta", "ORD Ñandú"]);
+    expect(nombres(await lista("/admin/tortillerias?origen=nueva&estatus=pendiente&q=alamo&pagina=1"))).toEqual(["ORD Álamo"]); // "alamo" encuentra "Álamo"
+    expect(nombres(await lista("/admin/tortillerias?origen=nueva&estatus=pendiente&q=NANDU&pagina=1"))).toEqual(["ORD Ñandú"]); // y "NANDU" a "Ñandú"
+    const pag1 = await lista("/admin/tortillerias?origen=nueva&estatus=pendiente&q=ord&pagina=1&limite=2&orden=nombre");
+    expect(pag1.total).toBe(3);
+    expect(pag1.filas).toHaveLength(2);
+    const pag2 = await lista("/admin/tortillerias?origen=nueva&estatus=pendiente&q=ord&pagina=2&limite=2&orden=nombre");
+    expect(nombres(pag2)).toEqual(["ORD Zeta"]);
+    expect((await lista("/admin/tortillerias?origen=nueva&q=ana@correo.com&pagina=1")).total).toBeGreaterThanOrEqual(3); // sí busca por quien la dio de alta
+  });
+
+  it("precios atípicos: más recientes, más antiguos, mayor diferencia, precio más alto y más bajo; por producto y buscador", async () => {
+    const t = await nuevaOrd("ORD Precios", 2, "validada");
+    const ins = (precio: number, mediana: number, producto: string, dias: number) =>
+      q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, fecha, estatus, alerta, mediana_ref, n_ref, creado_en) VALUES ($1,$2,$3,current_date - $4::int,'pendiente',true,$5,4, now() - ($4::int || ' days')::interval)", [t, producto, precio, dias, mediana]);
+    await ins(30, 25, "maiz", 1); //  +20 %, la más reciente
+    await ins(50, 25, "maiz", 3); //  +100 %
+    await ins(12, 25, "masa", 5); //  -52 %, la más antigua
+    const caps = async (extra: string) => (await lista(`/admin/capturas?estatus=pendiente&q=ord%20precios&pagina=1&limite=50${extra}`)).filas.map((f: any) => Number(f.precio_kg));
+    expect(await caps("&orden=recientes")).toEqual([30, 50, 12]);
+    expect(await caps("&orden=antiguas")).toEqual([12, 50, 30]);
+    expect(await caps("&orden=diferencia")).toEqual([50, 12, 30]); // |+100|, |-52|, |+20|
+    expect(await caps("&orden=precio_alto")).toEqual([50, 30, 12]);
+    expect(await caps("&orden=precio_bajo")).toEqual([12, 30, 50]);
+    expect(await caps("&producto=masa")).toEqual([12]);
+    expect(await caps("&producto=maiz&orden=precio_bajo")).toEqual([30, 50]);
+    expect(await caps("&orden=inventado")).toHaveLength(3);
+    expect((await lista("/admin/capturas?estatus=pendiente&q=persona%20inexistente&pagina=1")).total).toBe(0);
+    expect((await lista(`/admin/capturas?estatus=pendiente&q=ORD%20PRECIOS&producto=masa&pagina=1`)).total).toBe(1);
+  });
+
+  it("usuarios de la app: orden (más recientes, más capturas, última captura, nombre) y actividad de 7 días", async () => {
+    const u = async (correo: string, nombre: string, dias: number) => (await q("INSERT INTO usuarios(usuario, correo, rol, nombre, apellidos, creado_en) VALUES ($1,$1,'capturista',$2,'Orden', now() - ($3::int || ' days')::interval) RETURNING id", [correo, nombre, dias]))[0].id as string;
+    const cap = (usuarioId: string, n: number, dias: number) =>
+      q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, fecha, estatus, aprobacion, capturista_id) SELECT (SELECT id FROM tortillerias LIMIT 1), 'maiz', 20, current_date - $3::int - i, 'validada','automatica', $1 FROM generate_series(1, $2::int) i", [usuarioId, n, dias]);
+    const u1 = await u("orden.uno@correo.com", "Bruno", 10); //  muchas capturas, la última hace 20 días
+    const u2 = await u("orden.dos@correo.com", "Álvaro", 5); //  pocas, de ayer
+    const u3 = await u("orden.tres@correo.com", "Zoe", 1); //    sin capturas, la más nueva
+    await cap(u1, 6, 20);
+    await cap(u2, 2, 1);
+    const l = async (extra: string) => (await (await get(`/admin/usuarios?tipo=app&q=orden.&pagina=1&limite=50${extra}`, adm, "admin")).json()).filas.map((f: any) => f.correo);
+    expect(await l("&orden=recientes")).toEqual(["orden.tres@correo.com", "orden.dos@correo.com", "orden.uno@correo.com"]);
+    expect(await l("")).toEqual(["orden.tres@correo.com", "orden.dos@correo.com", "orden.uno@correo.com"]); // por omisión, como antes
+    expect(await l("&orden=antiguos")).toEqual(["orden.uno@correo.com", "orden.dos@correo.com", "orden.tres@correo.com"]);
+    expect(await l("&orden=capturas")).toEqual(["orden.uno@correo.com", "orden.dos@correo.com", "orden.tres@correo.com"]);
+    expect(await l("&orden=ultima")).toEqual(["orden.dos@correo.com", "orden.uno@correo.com", "orden.tres@correo.com"]); // sin capturas al final
+    expect(await l("&orden=nombre")).toEqual(["orden.dos@correo.com", "orden.uno@correo.com", "orden.tres@correo.com"]); // Álvaro, Bruno, Zoe
+    expect(await l("&actividad=activos7")).toEqual(["orden.dos@correo.com"]);
+    expect(await l("&actividad=sin7")).toEqual(["orden.uno@correo.com"]);
+    expect(await l("&actividad=nunca")).toEqual(["orden.tres@correo.com"]);
+    expect(await l("&orden=inventado&actividad=inventada")).toHaveLength(3);
+    // el personal también se ordena
+    const per = await (await get("/admin/usuarios?tipo=personal&pagina=1&limite=50&orden=nombre", adm, "admin")).json();
+    expect(per.filas.length).toBeGreaterThan(0);
+    expect((await get("/admin/usuarios?tipo=app&pagina=1&orden=nombre", capt0(), "capturista")).status).toBe(403);
+    void u3;
+  });
+});
+function capt0() {
+  return ana; // un usuario de la app no entra al administrador, ordene como ordene
+}

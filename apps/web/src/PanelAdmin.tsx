@@ -2,7 +2,7 @@ import { formatearTelefono, permisosEfectivos, type Permiso } from "@tortilleria
 import { NegativasFiscales } from "./NegativasFiscales";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlertTriangle, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, ChevronDown, ChevronLeft, ChevronRight, Clock, Eye, History, Loader2, Search, Mail, MapPin, Navigation, Phone, Store, TriangleAlert,
+  AlertTriangle, ArrowUpDown, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, ChevronDown, ChevronLeft, ChevronRight, Clock, Eye, History, Loader2, Search, Mail, MapPin, Navigation, Phone, Store, TriangleAlert,
   UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, KeyRound, Copy, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog,
 } from "lucide-react";
 import { api, type Sesion } from "./api";
@@ -12,6 +12,7 @@ import { CLAVES, usePersistente } from "./persist";
 import { Aviso, Boton, HojaModal, Insignia, Tarjeta, Vacio } from "./ui";
 import MiniMapa from "./MiniMapa";
 import { Paginacion, POR_PAGINA, type Pagina } from "./Paginacion";
+import { Buscador, SelectorFiltro } from "./Filtros";
 import AdminAuditoria from "./AdminAuditoria";
 import AdminUsuarios from "./AdminUsuarios";
 import { distanciaM } from "./catalogo";
@@ -129,8 +130,14 @@ function VistaRevision({ alCambio, puedeRevisar, puedeValidar }: { alCambio: () 
   const [limite, setLimite] = useState(50);
   const [tortillerias, setTortillerias] = useState<Pagina<TortilleriaAdm>>();
   const [capturas, setCapturas] = useState<Pagina<CapturaAdm>>();
-  /** cuántas hay en la otra sección (para el número de su pestaña) */
-  const [totalOtra, setTotalOtra] = useState<number>();
+  /** cuántas hay de cada una (sin filtros de búsqueda): es el número de cada pestaña */
+  const [totales, setTotales] = useState<{ tortillerias?: number; precios?: number }>({});
+  /** buscar, ordenar y filtrar: se aplican en el servidor, sobre TODA la lista y no solo la página que se ve */
+  const [busqueda, setBusqueda] = useState("");
+  const [q, setQ] = useState("");
+  const [orden, setOrden] = useState("recientes");
+  const [foto, setFoto] = useState(""); //      tortillerías nuevas: con o sin foto
+  const [producto, setProducto] = useState(""); // precios: tortilla o masa
   const [detalle, setDetalle] = useState<TortilleriaAdm>();
   /** "Ver más detalles" de un precio por revisar: la tortillería completa y la captura que se está revisando */
   const [detalleCaptura, setDetalleCaptura] = useState<{ t: TortilleriaAdm; c: CapturaAdm }>();
@@ -149,21 +156,26 @@ function VistaRevision({ alCambio, puedeRevisar, puedeValidar }: { alCambio: () 
   const paginas = actual?.paginas ?? 1;
 
   const cargar = useCallback(() => {
-    const otra = seccion === "tortillerias" ? "precios" : "tortillerias";
+    const filtros = new URLSearchParams();
+    if (q) filtros.set("q", q);
+    if (orden !== "recientes") filtros.set("orden", orden);
+    if (seccion === "tortillerias" && foto) filtros.set("foto", foto);
+    if (seccion === "precios" && producto) filtros.set("producto", producto);
     Promise.all([
-      api<Pagina<TortilleriaAdm | CapturaAdm>>(`${ruta(seccion)}&estatus=${estatus}&pagina=${pagina}&limite=${limite}`),
-      api<Pagina<unknown>>(`${ruta(otra)}&estatus=${estatus}&pagina=1&limite=1`),
+      api<Pagina<TortilleriaAdm | CapturaAdm>>(`${ruta(seccion)}&estatus=${estatus}&pagina=${pagina}&limite=${limite}&${filtros}`),
+      api<Pagina<unknown>>(`${ruta("tortillerias")}&estatus=${estatus}&pagina=1&limite=1`),
+      api<Pagina<unknown>>(`${ruta("precios")}&estatus=${estatus}&pagina=1&limite=1`),
     ])
-      .then(([a, b]) => {
+      .then(([a, t, c]) => {
         // si se vació la última página (p. ej. al aprobar el único registro de ella), se retrocede
         if (!a.filas.length && pagina > 1) return setPagina(Math.max(1, a.paginas));
         if (seccion === "tortillerias") setTortillerias(a as Pagina<TortilleriaAdm>);
         else setCapturas(a as Pagina<CapturaAdm>);
-        setTotalOtra(b.total);
+        setTotales({ tortillerias: t.total, precios: c.total });
         setError("");
       })
       .catch((e) => setError(e.message));
-  }, [seccion, estatus, pagina, limite]);
+  }, [seccion, estatus, pagina, limite, q, orden, foto, producto]);
   useEffect(() => {
     if (seccion === "tortillerias") setTortillerias(undefined);
     else setCapturas(undefined);
@@ -172,9 +184,26 @@ function VistaRevision({ alCambio, puedeRevisar, puedeValidar }: { alCambio: () 
   useEffect(() => {
     zona.current?.scrollTo({ top: 0 });
     setMarcados(new Set());
-  }, [seccion, estatus, pagina, limite]);
+  }, [seccion, estatus, pagina, limite, q, orden, foto, producto]);
+  // el texto de búsqueda se envía un momento después de escribir
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setQ(busqueda.trim());
+      setPagina(1);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [busqueda]);
 
-  const cambiarSeccion = (s: typeof seccion) => { setSeccion(s); setPagina(1); };
+  // cada sección tiene sus propios órdenes y filtros: al cambiar de sección se empieza de cero
+  const cambiarSeccion = (s: typeof seccion) => {
+    setSeccion(s);
+    setPagina(1);
+    setOrden("recientes");
+    setFoto("");
+    setProducto("");
+    setBusqueda("");
+    setQ("");
+  };
   const cambiarEstatus = (e: typeof estatus) => { setEstatus(e); setPagina(1); };
 
   async function resolverCaptura(id: string, nuevo: "validada" | "rechazada") {
@@ -252,7 +281,7 @@ function VistaRevision({ alCambio, puedeRevisar, puedeValidar }: { alCambio: () 
           {(["tortillerias", "precios"] as const).map((s) => {
             const on = seccion === s;
             const Icono = s === "tortillerias" ? Store : Banknote;
-            const n = s === seccion ? actual?.total : totalOtra;
+            const n = totales[s];
             return (
               <button
                 key={s}
@@ -275,6 +304,59 @@ function VistaRevision({ alCambio, puedeRevisar, puedeValidar }: { alCambio: () 
           {([["pendiente", "Por revisar"], ["validada", "Aprobadas"], ["rechazada", "Rechazadas"]] as const).map(([k, t]) => (
             <button key={k} role="tab" aria-selected={estatus === k} className={`${chip(estatus === k)} min-h-9 text-center`} onClick={() => cambiarEstatus(k)}>{t}</button>
           ))}
+        </div>
+      </div>
+
+      {/* Buscar, ordenar y filtrar la lista según lo que se esté revisando */}
+      <div className="flex shrink-0 flex-col gap-2 md:flex-row md:items-center">
+        <Buscador
+          valor={busqueda}
+          alCambiar={setBusqueda}
+          etiqueta="Buscar"
+          placeholder={seccion === "tortillerias" ? "Buscar nombre, municipio o quién la registró" : "Buscar tortillería, municipio o censador"}
+        />
+        <div className="grid grid-cols-2 gap-2 md:flex md:shrink-0">
+          <div className="md:w-56">
+            <SelectorFiltro
+              icono={ArrowUpDown}
+              etiqueta="Ordenar por"
+              valor={orden}
+              activo={orden !== "recientes"}
+              alCambiar={(v) => { setOrden(v); setPagina(1); }}
+              opciones={
+                seccion === "tortillerias"
+                  ? [{ valor: "recientes", texto: "Más recientes" }, { valor: "antiguas", texto: "Más antiguas" }, { valor: "nombre", texto: "Nombre (A–Z)" }, { valor: "fotos", texto: "Con más fotos" }]
+                  : [
+                      { valor: "recientes", texto: "Más recientes" },
+                      { valor: "antiguas", texto: "Más antiguos" },
+                      { valor: "diferencia", texto: "Mayor diferencia" },
+                      { valor: "precio_alto", texto: "Precio más alto" },
+                      { valor: "precio_bajo", texto: "Precio más bajo" },
+                    ]
+              }
+            />
+          </div>
+          <div className="md:w-52">
+            {seccion === "tortillerias" ? (
+              <SelectorFiltro
+                icono={Camera}
+                etiqueta="Filtrar por foto"
+                valor={foto}
+                activo={!!foto}
+                alCambiar={(v) => { setFoto(v); setPagina(1); }}
+                opciones={[{ valor: "", texto: "Con y sin foto" }, { valor: "con", texto: "Solo con foto" }, { valor: "sin", texto: "Solo sin foto" }]}
+              />
+            ) : (
+              <SelectorFiltro
+                icono={Wheat}
+                etiqueta="Filtrar por producto"
+                valor={producto}
+                activo={!!producto}
+                alCambiar={(v) => { setProducto(v); setPagina(1); }}
+                opciones={[{ valor: "", texto: "Tortilla y masa" }, { valor: "maiz", texto: "Solo tortilla" }, { valor: "masa", texto: "Solo masa" }]}
+              />
+            )}
+          </div>
         </div>
       </div>
 

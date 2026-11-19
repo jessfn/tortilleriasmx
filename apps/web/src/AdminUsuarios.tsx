@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, KeyRound, Loader2, Pencil, Search, ShieldCheck, Smartphone, UserPlus, Users } from "lucide-react";
+import { Activity, ArrowUpDown, Check, Copy, KeyRound, Loader2, Pencil, ShieldCheck, Smartphone, UserPlus, Users } from "lucide-react";
 import { CLAVES_PERMISOS, PERMISOS, personalNuevoSchema, type Permiso } from "@tortillerias/shared";
 import { api } from "./api";
 import { Aviso, Boton, Campo, HojaModal, Tarjeta, Vacio } from "./ui";
 import { Paginacion, type Pagina } from "./Paginacion";
+import { Buscador, SelectorFiltro } from "./Filtros";
 
 export type UsuarioAdm = {
   id: string; correo: string | null; usuario: string; nombre: string; apellidos: string; rol: string; activo: boolean; creado_en: string; capturas: number;
@@ -66,6 +67,8 @@ function ListaUsuarios({ tipo, miId, esAdmin, puedeGestionarApp }: { tipo: "app"
   const [q, setQ] = useState("");
   const [rol, setRol] = useState("");
   const [activo, setActivo] = useState("");
+  const [orden, setOrden] = useState("recientes");
+  const [actividad, setActividad] = useState(""); // usuarios de la app: quién capturó estos días
   const [pagina, setPagina] = useState(1);
   const [limite, setLimite] = useState(50);
   const [recarga, setRecarga] = useState(0);
@@ -92,6 +95,8 @@ function ListaUsuarios({ tipo, miId, esAdmin, puedeGestionarApp }: { tipo: "app"
     if (q) p.set("q", q);
     if (rol) p.set("rol", rol);
     if (activo) p.set("activo", activo);
+    if (orden !== "recientes") p.set("orden", orden);
+    if (actividad && !esPersonal) p.set("actividad", actividad);
     api<Pagina<UsuarioAdm>>(`/admin/usuarios?${p}`)
       .then((r) => {
         if (!vigente) return;
@@ -103,10 +108,10 @@ function ListaUsuarios({ tipo, miId, esAdmin, puedeGestionarApp }: { tipo: "app"
     return () => {
       vigente = false;
     };
-  }, [tipo, q, rol, activo, pagina, limite, recarga]);
+  }, [tipo, q, rol, activo, orden, actividad, pagina, limite, recarga]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     zona.current?.scrollTo({ top: 0 });
-  }, [q, rol, activo, pagina, limite]);
+  }, [q, rol, activo, orden, actividad, pagina, limite]);
 
   async function cambiarActivo(u: UsuarioAdm) {
     setTrabajando(u.id);
@@ -140,34 +145,73 @@ function ListaUsuarios({ tipo, miId, esAdmin, puedeGestionarApp }: { tipo: "app"
   const usuarios = pag?.filas;
   return (
     <>
-      <div className="flex shrink-0 flex-col gap-2 md:flex-row md:items-center">
-        <label className="relative block min-w-0 flex-1 md:max-w-md">
-          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-stone-400" aria-hidden />
-          <input
-            type="search"
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-            placeholder="Buscar por correo, usuario o nombre"
-            aria-label="Buscar usuarios"
-            className="h-11 w-full rounded-xl border border-stone-200 bg-white pl-10 pr-3 text-base shadow-sm outline-none focus:border-guinda focus:ring-4 focus:ring-guinda/10"
-          />
-        </label>
-        <div className="grid grid-cols-2 gap-2 md:flex">
-          {esPersonal && (
-            <select value={rol} onChange={(e) => { setRol(e.target.value); setPagina(1); }} aria-label="Filtrar por rol" className="h-11 rounded-xl border border-stone-200 bg-white px-3 text-sm shadow-sm">
-              <option value="">Todos los roles</option>
-              <option value="supervisor">Supervisores</option>
-              <option value="admin">Administradores</option>
-            </select>
+      <div className="flex shrink-0 flex-col gap-2 lg:flex-row lg:items-center">
+        <div className="lg:max-w-md lg:flex-1">
+          <Buscador valor={busqueda} alCambiar={setBusqueda} etiqueta="Buscar usuarios" placeholder="Buscar por correo, usuario o nombre" />
+        </div>
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4 lg:flex lg:flex-1">
+          <div className="col-span-2 md:col-span-1 lg:w-52">
+            <SelectorFiltro
+              icono={ArrowUpDown}
+              etiqueta="Ordenar por"
+              valor={orden}
+              activo={orden !== "recientes"}
+              alCambiar={(v) => { setOrden(v); setPagina(1); }}
+              opciones={
+                esPersonal
+                  ? [{ valor: "recientes", texto: "Más recientes" }, { valor: "antiguos", texto: "Más antiguos" }, { valor: "nombre", texto: "Nombre (A–Z)" }]
+                  : [
+                      { valor: "recientes", texto: "Más recientes" },
+                      { valor: "antiguos", texto: "Más antiguos" },
+                      { valor: "ultima", texto: "Capturó hace poco" },
+                      { valor: "capturas", texto: "Más capturas" },
+                      { valor: "nombre", texto: "Nombre (A–Z)" },
+                    ]
+              }
+            />
+          </div>
+          {!esPersonal && (
+            <div className="lg:w-56">
+              <SelectorFiltro
+                icono={Activity}
+                etiqueta="Filtrar por actividad"
+                valor={actividad}
+                activo={!!actividad}
+                alCambiar={(v) => { setActividad(v); setPagina(1); }}
+                opciones={[
+                  { valor: "", texto: "Toda la actividad" },
+                  { valor: "activos7", texto: "Capturaron esta semana" },
+                  { valor: "sin7", texto: "Sin capturar esta semana" },
+                  { valor: "nunca", texto: "Nunca han capturado" },
+                ]}
+              />
+            </div>
           )}
-          <select value={activo} onChange={(e) => { setActivo(e.target.value); setPagina(1); }} aria-label="Filtrar por estado de la cuenta" className="h-11 rounded-xl border border-stone-200 bg-white px-3 text-sm shadow-sm">
-            <option value="">Activas e inactivas</option>
-            <option value="1">Solo activas</option>
-            <option value="0">Solo inactivas</option>
-          </select>
+          {esPersonal && (
+            <div className="lg:w-48">
+              <SelectorFiltro
+                icono={ShieldCheck}
+                etiqueta="Filtrar por rol"
+                valor={rol}
+                activo={!!rol}
+                alCambiar={(v) => { setRol(v); setPagina(1); }}
+                opciones={[{ valor: "", texto: "Todos los roles" }, { valor: "supervisor", texto: "Supervisores" }, { valor: "admin", texto: "Administradores" }]}
+              />
+            </div>
+          )}
+          <div className="lg:w-48">
+            <SelectorFiltro
+              icono={Users}
+              etiqueta="Filtrar por estado de la cuenta"
+              valor={activo}
+              activo={!!activo}
+              alCambiar={(v) => { setActivo(v); setPagina(1); }}
+              opciones={[{ valor: "", texto: "Todas las cuentas" }, { valor: "1", texto: "Solo activas" }, { valor: "0", texto: "Solo inactivas" }]}
+            />
+          </div>
         </div>
         {esPersonal && esAdmin && (
-          <Boton className="!min-h-11 md:ml-auto md:!w-auto md:px-5" icono={UserPlus} onClick={() => setFormulario("nuevo")}>
+          <Boton className="!min-h-11 lg:ml-auto lg:!w-auto lg:px-5" icono={UserPlus} onClick={() => setFormulario("nuevo")}>
             Nuevo usuario del administrador
           </Boton>
         )}

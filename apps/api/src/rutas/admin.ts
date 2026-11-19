@@ -96,9 +96,23 @@ export function rutasAdmin(app: FastifyInstance) {
     // ?origen=nueva → solo las que dieron de alta los censadores; ?origen=denue → las del catálogo que ya tienen precio. Sin él, las dos (como antes).
     const origenQ = z.enum(["denue", "nueva"]).safeParse((req.query as any).origen);
     const origen = origenQ.success ? origenQ.data : null;
+    // Buscar (nombre, municipio, estado o quien la dio de alta), con/sin foto y orden. Todo se valida contra una lista: nada del texto va al SQL.
+    const qt = req.query as Record<string, string | undefined>;
+    const texto = sinAcentos((typeof qt.q === "string" ? qt.q : "").trim().slice(0, 80));
+    const foto = qt.foto === "con" || qt.foto === "sin" ? qt.foto : null;
+    const ORDEN_T: Record<string, string> = {
+      recientes: "t.creado_en DESC",
+      antiguas: "t.creado_en ASC",
+      nombre: `${SIN_ACENTOS_SQL("t.nombre")} ASC`, // sin acentos: "Álamo" va con la A y "Ñandú" con la N, no al final
+      fotos: "(SELECT count(*) FROM fotos f WHERE f.tortilleria_id = t.id) DESC, t.creado_en DESC",
+    };
+    const orden = ORDEN_T[qt.orden ?? ""] ?? ORDEN_T.recientes;
+    const UNIONES_T = `LEFT JOIN municipios m ON m.clave = t.municipio_clave LEFT JOIN estados e ON e.clave = t.estado_clave LEFT JOIN usuarios u ON u.id = t.creado_por`;
     const DONDE = `($1::text IS NULL OR t.estatus = $1)
           AND ($2::text IS NULL OR t.origen = $2)
-          AND (t.origen <> 'denue' OR EXISTS (SELECT 1 FROM capturas_precio c WHERE c.tortilleria_id = t.id))`;
+          AND (t.origen <> 'denue' OR EXISTS (SELECT 1 FROM capturas_precio c WHERE c.tortilleria_id = t.id))
+          AND ($3::text = '' OR ${SIN_ACENTOS_SQL("coalesce(t.nombre,'') || ' ' || coalesce(m.nombre,'') || ' ' || coalesce(e.nombre,'') || ' ' || coalesce(u.correo,'')")} LIKE '%' || $3 || '%')
+          AND ($4::text IS NULL OR ($4 = 'con' AND EXISTS (SELECT 1 FROM fotos f WHERE f.tortilleria_id = t.id)) OR ($4 = 'sin' AND NOT EXISTS (SELECT 1 FROM fotos f WHERE f.tortilleria_id = t.id)))`;
     const { rows } = await pool.query(
       `SELECT t.id, t.nombre, t.domicilio, t.estatus, t.origen, t.creado_en,
               ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng,
@@ -109,15 +123,13 @@ export function rutasAdmin(app: FastifyInstance) {
               (EXISTS (SELECT 1 FROM tortilleria_fiscal x WHERE x.tortilleria_id = t.id)
                OR EXISTS (SELECT 1 FROM responsables r WHERE r.tortilleria_id = t.id)) AS tiene_fiscal
          FROM tortillerias t
-         LEFT JOIN municipios m ON m.clave = t.municipio_clave
-         LEFT JOIN estados e ON e.clave = t.estado_clave
-         LEFT JOIN usuarios u ON u.id = t.creado_por
+         ${UNIONES_T}
         WHERE ${DONDE}
-        ORDER BY t.creado_en DESC, t.id${pg ? " LIMIT $3 OFFSET $4" : ""}`,
-      pg ? [filtro, origen, pg.limite, (pg.pagina - 1) * pg.limite] : [filtro, origen],
+        ORDER BY ${orden}, t.id${pg ? " LIMIT $5 OFFSET $6" : ""}`,
+      pg ? [filtro, origen, texto, foto, pg.limite, (pg.pagina - 1) * pg.limite] : [filtro, origen, texto, foto],
     );
     if (!pg) return rows;
-    const { rows: [c] } = await pool.query(`SELECT count(*)::int AS n FROM tortillerias t WHERE ${DONDE}`, [filtro, origen]);
+    const { rows: [c] } = await pool.query(`SELECT count(*)::int AS n FROM tortillerias t ${UNIONES_T} WHERE ${DONDE}`, [filtro, origen, texto, foto]);
     return respuestaPaginada(rows, c.n, pg);
   });
 
@@ -128,14 +140,30 @@ export function rutasAdmin(app: FastifyInstance) {
   });
 
   app.get("/admin/capturas", { preHandler: con(app, "ver_revision", "ver_mapa") }, async (req, reply) => {
-    const q = req.query as { estatus?: string; alertas?: string; tortilleria?: string };
+    const q = req.query as { estatus?: string; alertas?: string; tortilleria?: string; producto?: string; q?: string; orden?: string };
     const estatus = z.enum(["pendiente", "validada", "rechazada"]).safeParse(q.estatus);
     const tortilleria = q.tortilleria ? uuid.safeParse(q.tortilleria) : null;
     if (tortilleria && !tortilleria.success) return reply.code(400).send({ error: "Id inválido" });
     const pg = paginar(req.query);
-    const params = [estatus.success ? estatus.data : null, q.alertas === "1", tortilleria?.success ? tortilleria.data : null];
+    const producto = q.producto === "maiz" || q.producto === "masa" ? q.producto : null;
+    const texto = sinAcentos((typeof q.q === "string" ? q.q : "").trim().slice(0, 80));
+    const params = [estatus.success ? estatus.data : null, q.alertas === "1", tortilleria?.success ? tortilleria.data : null, producto, texto];
+    const ORDEN_C: Record<string, string> = {
+      recientes: "c.creado_en DESC",
+      antiguas: "c.creado_en ASC",
+      // qué tan lejos de la mediana del municipio (en %): primero los más raros
+      diferencia: "abs(c.precio_kg - c.mediana_ref) / nullif(c.mediana_ref, 0) DESC NULLS LAST, c.creado_en DESC",
+      precio_alto: "c.precio_kg DESC, c.creado_en DESC",
+      precio_bajo: "c.precio_kg ASC, c.creado_en DESC",
+    };
+    const orden = tortilleria ? "c.creado_en DESC" : ORDEN_C[q.orden ?? ""] ?? "c.alerta DESC, c.creado_en DESC";
+    const UNIONES_C = `JOIN tortillerias t ON t.id = c.tortilleria_id
+         LEFT JOIN municipios m ON m.clave = t.municipio_clave
+         LEFT JOIN estados e ON e.clave = t.estado_clave
+         LEFT JOIN usuarios u ON u.id = c.capturista_id`;
     const DONDE = `($1::text IS NULL OR c.estatus = $1) AND ($2::boolean IS NOT TRUE OR c.alerta)
-          AND ($3::uuid IS NULL OR c.tortilleria_id = $3)`;
+          AND ($3::uuid IS NULL OR c.tortilleria_id = $3) AND ($4::text IS NULL OR c.producto = $4)
+          AND ($5::text = '' OR ${SIN_ACENTOS_SQL("coalesce(t.nombre,'') || ' ' || coalesce(m.nombre,'') || ' ' || coalesce(e.nombre,'') || ' ' || coalesce(u.correo,'')")} LIKE '%' || $5 || '%')`;
     const { rows } = await pool.query(
       `SELECT c.id, c.producto, c.precio_kg, c.fecha, c.estatus, c.alerta, c.tortilleria_id,
               c.mediana_ref::float8 AS mediana_ref, c.n_ref, c.aprobacion,
@@ -143,16 +171,13 @@ export function rutasAdmin(app: FastifyInstance) {
               coalesce(c.capturado_en, c.creado_en) AS capturado_en,
               t.nombre, m.nombre AS municipio, e.nombre AS estado, u.correo AS capturista
          FROM capturas_precio c
-         JOIN tortillerias t ON t.id = c.tortilleria_id
-         LEFT JOIN municipios m ON m.clave = t.municipio_clave
-         LEFT JOIN estados e ON e.clave = t.estado_clave
-         LEFT JOIN usuarios u ON u.id = c.capturista_id
+         ${UNIONES_C}
         WHERE ${DONDE}
-        ORDER BY ${tortilleria ? "c.creado_en DESC" : "c.alerta DESC, c.creado_en DESC"}, c.id${pg ? " LIMIT $4 OFFSET $5" : tortilleria ? " LIMIT 100" : ""}`,
+        ORDER BY ${orden}, c.id${pg ? " LIMIT $6 OFFSET $7" : tortilleria ? " LIMIT 100" : ""}`,
       pg ? [...params, pg.limite, (pg.pagina - 1) * pg.limite] : params,
     );
     if (!pg) return rows;
-    const { rows: [c] } = await pool.query(`SELECT count(*)::int AS n FROM capturas_precio c WHERE ${DONDE}`, params);
+    const { rows: [c] } = await pool.query(`SELECT count(*)::int AS n FROM capturas_precio c ${UNIONES_C} WHERE ${DONDE}`, params);
     return respuestaPaginada(rows, c.n, pg);
   });
 
@@ -275,8 +300,25 @@ export function rutasAdmin(app: FastifyInstance) {
     const pg = paginar(req.query);
     const rol = z.enum(["capturista", "supervisor", "admin"]).safeParse(q.rol);
     const activo = q.activo === "1" || q.activo === "true" ? true : q.activo === "0" || q.activo === "false" ? false : null;
-    const texto = sinAcentos((q.q ?? "").trim().slice(0, 80));
-    const DONDE = `($1::text IS NULL OR u.rol = $1) AND ($2::boolean IS NULL OR u.activo = $2)
+    const texto = sinAcentos((typeof q.q === "string" ? q.q : "").trim().slice(0, 80));
+    // Orden y actividad (de la app): solo valores de una lista, nada del texto va al SQL
+    const ULTIMA = "(SELECT max(coalesce(c.capturado_en, c.creado_en)) FROM capturas_precio c WHERE c.capturista_id = u.id)";
+    const ORDEN_U: Record<string, string> = {
+      recientes: "u.creado_en DESC",
+      antiguos: "u.creado_en ASC",
+      nombre: `${SIN_ACENTOS_SQL("coalesce(nullif(u.nombre,''), u.correo, u.usuario)")} ASC, ${SIN_ACENTOS_SQL("u.apellidos")} ASC`,
+      capturas: "(SELECT count(*) FROM capturas_precio c WHERE c.capturista_id = u.id) DESC, u.creado_en DESC",
+      ultima: `${ULTIMA} DESC NULLS LAST, u.creado_en DESC`,
+    };
+    const orden = ORDEN_U[q.orden ?? ""] ?? ORDEN_U.recientes;
+    const HOY7 = "(now() AT TIME ZONE 'America/Mexico_City')::date - 6";
+    const ACTIVIDAD: Record<string, string> = {
+      activos7: `EXISTS (SELECT 1 FROM capturas_precio c WHERE c.capturista_id = u.id AND c.fecha >= ${HOY7})`,
+      sin7: `EXISTS (SELECT 1 FROM capturas_precio c WHERE c.capturista_id = u.id) AND NOT EXISTS (SELECT 1 FROM capturas_precio c WHERE c.capturista_id = u.id AND c.fecha >= ${HOY7})`,
+      nunca: "NOT EXISTS (SELECT 1 FROM capturas_precio c WHERE c.capturista_id = u.id)",
+    };
+    const actividad = ACTIVIDAD[q.actividad ?? ""] ?? "true";
+    const DONDE = `($1::text IS NULL OR u.rol = $1) AND ($2::boolean IS NULL OR u.activo = $2) AND (${actividad})
           AND (${tipo === "app" ? "u.rol = 'capturista'" : tipo === "personal" ? "u.rol IN ('supervisor','admin')" : "true"})
           AND ($3::text = '' OR ${SIN_ACENTOS_SQL("coalesce(u.correo,'') || ' ' || coalesce(u.usuario,'') || ' ' || coalesce(u.nombre,'') || ' ' || coalesce(u.apellidos,'')")} LIKE '%' || $3 || '%')`;
     const params = [rol.success ? rol.data : null, activo, texto];
@@ -286,7 +328,7 @@ export function rutasAdmin(app: FastifyInstance) {
               (SELECT to_char(max(coalesce(c.capturado_en, c.creado_en)) AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD') FROM capturas_precio c WHERE c.capturista_id = u.id) AS ultima_captura,
               (SELECT count(*)::int FROM capturas_precio c WHERE c.capturista_id = u.id AND c.fecha >= (now() AT TIME ZONE 'America/Mexico_City')::date - 6) AS capturas_7d
          FROM usuarios u WHERE ${DONDE}
-        ORDER BY u.creado_en DESC, u.id${pg ? " LIMIT $4 OFFSET $5" : ""}`,
+        ORDER BY ${orden}, u.id${pg ? " LIMIT $4 OFFSET $5" : ""}`,
       pg ? [...params, pg.limite, (pg.pagina - 1) * pg.limite] : params,
     );
     // permisos = los marcados (NULL = los de por omisión); permisos_efectivos = con los que de verdad cuenta la cuenta
