@@ -201,7 +201,7 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
         <div className="grid w-full grid-cols-2 gap-1 rounded-2xl bg-stone-200/70 p-1 sm:w-80">
           {(["tortillerias", "precios"] as const).map((s) => (
             <button key={s} onClick={() => cambiarSeccion(s)} className={`rounded-xl py-2 text-sm font-semibold transition ${seccion === s ? "bg-white text-guinda shadow" : "text-stone-500"}`}>
-              {s === "tortillerias" ? "Tortillerías" : "Precios"}{numTab(s)}
+              {s === "tortillerias" ? "Tortillerías nuevas" : "Precios capturados"}{numTab(s)}
             </button>
           ))}
         </div>
@@ -215,12 +215,12 @@ function VistaRevision({ alCambio }: { alCambio: () => void }) {
       {error && <Aviso>{error}</Aviso>}
 
       {/* El recuadro ocupa lo que queda de la pantalla: la lista se desplaza dentro de él y la paginación queda siempre a la vista */}
-      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200" aria-label={seccion === "tortillerias" ? "Tortillerías" : "Precios"}>
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200" aria-label={seccion === "tortillerias" ? "Tortillerías nuevas" : "Precios capturados"}>
         <div ref={zona} className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-stone-50/70 p-2.5">
           {!actual ? (
             <div className="grid place-items-center py-16 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
           ) : actual.filas.length === 0 ? (
-            vacio(seccion === "tortillerias" ? "No hay tortillerías por revisar." : "No hay precios por revisar.")
+            vacio(seccion === "tortillerias" ? "No hay tortillerías nuevas por revisar." : "No hay precios capturados por revisar.")
           ) : seccion === "tortillerias" ? (
             <div className="grid content-start gap-2.5 md:grid-cols-2 xl:grid-cols-3">
               {(tortillerias?.filas ?? []).map((t) => (
