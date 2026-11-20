@@ -28,7 +28,7 @@ import {
   borrarBandejaDe, borrarTodoLocal, capturadoHoyLocal, contarPendientes, descartar, enviarDeTodosModos, estadoSync, guardarPaquete, idTemporal, listarPaquetes,
   sincronizar, usarExistente,
 } from "./bandeja";
-import { cercanas, descargarEstado, delMunicipio, distanciaM, masCercana, parecidas, buscar, cubre, quitarEstado, enCaja, porId } from "./catalogo";
+import { cercanas, descargarEstado, delMunicipio, distanciaM, masCercana, parecidas, buscar, cubre, quitarEstado, enCaja, porId, quitarLocal } from "./catalogo";
 
 const REAL = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 let reloj = 0;
@@ -411,5 +411,73 @@ describe("catálogo local", () => {
     expect(h.llamadas.at(-1)!.ruta).toContain("?version=v1");
     await quitarEstado("09");
     expect(cubre({ lat: 19.43, lng: -99.13 })).toBe(false);
+  });
+});
+
+describe("C19: 'ya no funciona' y tipo de elaboración", () => {
+  const columnas = ["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal", "ultima_negativa", "elaboracion"];
+  const filas = [
+    ["i1", "LA GUERA", "CALLE 5 10", 19.43, -99.13, 0, "09015", null, 1, null, "mano"],
+    ["i2", "EL MAIZ", "AV JUAREZ 3", 19.44, -99.14, 0, "09015", null, 1, null, null],
+  ];
+  const de = (id: string, nombre: string) => ({ id, nombre, domicilio: null, lat: 19.43, lng: -99.13 });
+
+  beforeEach(async () => {
+    h.respuesta = () => ({ version: "v1", columnas, filas });
+    await descargarEstado("09", "CIUDAD DE MEXICO");
+    h.llamadas = []; // lo que cuenta es lo que se envíe en cada prueba, no la descarga del catálogo
+  });
+
+  it("el catálogo local trae el tipo de elaboración (para preseleccionarlo sin conexión); la que no lo tiene queda sin dato", () => {
+    expect(porId("i1")?.elaboracion).toBe("mano");
+    expect(porId("i2")?.elaboracion).toBeNull();
+  });
+
+  it("el paquete de baja se envía sin foto ni precios, quita la tortillería del catálogo local y queda enviado", async () => {
+    expect(porId("i2")).toBeDefined();
+    h.respuesta = () => ({});
+    await guardarPaquete(paquete({ tortilleria: de("i2", "EL MAIZ"), precios: [], baja: { motivo: "cerro", idCliente: nuevoId() }, gps: { lat: 19.44, lng: -99.14, precision: 9 } }));
+    await sincronizar();
+    expect(rutas()).toEqual(["/tortillerias/i2/baja"]); // sin foto, sin precios
+    expect(h.llamadas[0].cuerpo).toMatchObject({ motivo: "cerro", lat: 19.44, lng: -99.14, precisionGps: 9 });
+    expect(h.llamadas[0].cuerpo.idCliente).toBeTruthy(); // un reintento no duplica la baja
+    expect(porId("i2")).toBeUndefined(); // ya no aparece en este teléfono
+    expect(porId("i1")).toBeDefined();
+    const [p] = await listarPaquetes("u1");
+    expect(p.estado).toBe("enviado");
+  });
+
+  it("guardar la baja la quita del catálogo local al instante (aunque no haya señal) y un reintento no la envía dos veces", async () => {
+    await quitarLocal("i1");
+    expect(porId("i1")).toBeUndefined();
+    h.respuesta = () => new ApiError(0, "sin red");
+    await guardarPaquete(paquete({ tortilleria: de("i2", "EL MAIZ"), precios: [], baja: { motivo: "otro", motivoOtro: "Ahora es una papelería", idCliente: nuevoId() } }));
+    await sincronizar();
+    expect((await listarPaquetes("u1"))[0].estado).toBe("por_enviar"); // se conserva para cuando haya señal
+    h.respuesta = () => ({});
+    await sincronizar({ forzar: true });
+    await sincronizar({ forzar: true });
+    expect(rutas().filter((r) => r.endsWith("/baja"))).toHaveLength(2); // el primero falló por la red; luego una sola vez
+    expect(h.llamadas.at(-1)?.cuerpo.motivoOtro).toBe("Ahora es una papelería");
+  });
+
+  it("la elaboración se envía antes que los precios y el catálogo local la recuerda para la próxima visita", async () => {
+    h.respuesta = () => ({});
+    await guardarPaquete(paquete({ tortilleria: de("i2", "EL MAIZ"), elaboracion: { valor: "ambas", idCliente: nuevoId() } }));
+    await sincronizar();
+    expect(rutas()).toEqual(["/tortillerias/i2/elaboracion", "/precios"]);
+    expect(h.llamadas[0].cuerpo).toMatchObject({ elaboracion: "ambas" });
+    expect(h.llamadas[0].cuerpo.capturadoEn).toBeTruthy(); // un paquete enviado tarde no pisa algo más nuevo
+    expect(porId("i2")?.elaboracion).toBe("ambas");
+  });
+
+  it("si otro censador ya dio de baja la tortillería, el precio queda en conflicto con ese aviso y sale del catálogo", async () => {
+    h.respuesta = (ruta) => (ruta === "/precios" ? new ApiError(409, "Esta tortillería se dio de baja", { baja: { motivo: "cerro", fecha: "2026-11-10" } }) : {});
+    await guardarPaquete(paquete({ tortilleria: de("i2", "EL MAIZ") }));
+    await sincronizar();
+    const [p] = await listarPaquetes("u1");
+    expect(p.estado).toBe("conflicto");
+    expect(p.precios[0].mensaje).toMatch(/dado de baja/);
+    expect(porId("i2")).toBeUndefined();
   });
 });

@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { Check, List, Loader2, LocateFixed, Map as MapaIcono, MapPin, Navigation, Plus, ShieldAlert, Store, WifiOff, X } from "lucide-react";
+import { Ban, Check, List, Loader2, LocateFixed, Map as MapaIcono, MapPin, Navigation, Plus, ShieldAlert, Store, WifiOff, X } from "lucide-react";
 import { api } from "./api";
 import { alCambiarCatalogo, cercanas, cubre, delMunicipio } from "./catalogo";
 import { Aviso, Boton, Buscador, Cabecera, Hoja, Opcion } from "./ui";
 import BuscadorLugar from "./BuscadorLugar";
+import HojaBaja from "./HojaBaja";
 import type { EstadoMapa, MapaRef, Punto } from "./MapaTortillerias";
 
 const Mapa = lazy(() => import("./MapaTortillerias"));
@@ -20,6 +21,8 @@ type Props = {
   alOtraZona: () => void;
   /** Elegir una tortillería existente: la pantalla espera a que el paso siguiente esté listo */
   alElegir: (p: Punto) => Promise<void>;
+  /** "Ya no funciona": reporta que la tortillería cerró definitivamente (queda inactiva de inmediato) */
+  alBaja: (p: Punto, motivo: string, motivoOtro: string) => Promise<void>;
   modo: "elegir" | "marcar";
   setModo: (m: "elegir" | "marcar") => void;
   pin?: Pos;
@@ -48,6 +51,7 @@ export default function PasoTortilleria(p: Props) {
   const [estadoMapa, setEstadoMapa] = useState<EstadoMapa>({ lejano: false, cargando: false, total: 0 });
   const [sel, setSel] = useState<Punto | null>(null);
   const [eligiendo, setEligiendo] = useState(false);
+  const [hojaBaja, setHojaBaja] = useState(false);
   const [error, setError] = useState("");
   const [centroMapa, setCentroMapa] = useState<{ lat: number; lng: number }>();
   const [sinMapaBase, setSinMapaBase] = useState(false);
@@ -408,12 +412,16 @@ export default function PasoTortilleria(p: Props) {
                   <Boton onClick={elegir} disabled={eligiendo} icono={eligiendo ? Loader2 : Check} className="mt-2.5">
                     {eligiendo ? "Un momento…" : "Elegir esta tortillería"}
                   </Boton>
+                  <Boton variante="fantasma" onClick={() => setHojaBaja(true)} disabled={eligiendo} icono={Ban} className="mt-1 !min-h-10 !text-sm !text-red-700 hover:!bg-red-50">
+                    Ya no funciona
+                  </Boton>
                 </div>
               )
             )}
           </div>
         </div>
       </Hoja>
+      {hojaBaja && sel && <HojaBaja nombre={sel.nombre} alCerrar={() => setHojaBaja(false)} alConfirmar={(motivo, otro) => p.alBaja(sel, motivo, otro)} />}
     </>
   );
 }

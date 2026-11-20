@@ -229,15 +229,16 @@ function pPortada(doc: Doc, r: Reporte, nTabla: number) {
     [3, "Precio promedio por estado"],
     [4, `Detalle de los ${r.estados.length} estados`],
     [4 + nTabla, "Avance del censo y calidad"],
-    [5 + nTabla, "Evolución del precio"],
+    [5 + nTabla, "Bajas y tipo de elaboración"],
+    [6 + nTabla, "Evolución del precio"],
   ];
-  const ly = PY + PH - 40 - items.length * 34;
+  const ly = PY + PH - 40 - items.length * 30;
   tx(doc, "EN ESTE REPORTE", PX + 36, ly - 26, { font: "Cuerpo-Bold", size: 9, color: O, spacing: 1.6 });
   items.forEach(([n, texto], i) => {
-    const yy = ly + i * 34;
+    const yy = ly + i * 30;
     doc.save().rect(PX + 36, yy - 4, PW - 72, 0.6).fillOpacity(0.2).fill("#ffffff").restore();
-    tx(doc, String(n).padStart(2, "0"), PX + 36, yy + 8, { font: "Titulo", size: 15, color: O });
-    tx(doc, texto, PX + 76, yy + 10, { size: 11, color: "#ffffff", width: PW - 130 });
+    tx(doc, String(n).padStart(2, "0"), PX + 36, yy + 6, { font: "Titulo", size: 15, color: O });
+    tx(doc, texto, PX + 76, yy + 8, { size: 11, color: "#ffffff", width: PW - 130 });
   });
 
   // ---- cifras del periodo (a la derecha)
@@ -509,6 +510,57 @@ function pAvance(doc: Doc, r: Reporte) {
   parrafo(doc, nota, xs[2] + 34, y + h - hn - 38, cw - 68, { size: 10.5, gap: 3 });
 }
 
+function pCatalogo(doc: Doc, r: Reporte) {
+  nuevaPagina(doc);
+  titulo(doc, "Actualización del catálogo", "Bajas y tipo de elaboración");
+  const cw = (W - MX * 2 - 18) / 2, y = 182, h = 478, x2 = MX + cw + 18;
+
+  // ---- izquierda: tortillerías dadas de baja
+  tarjeta(doc, MX, y, cw, h);
+  tx(doc, "Tortillerías que ya no funcionan", MX + 20, y + 18, { font: "Cuerpo-Bold", size: 13, color: G, width: cw - 40 });
+  tx(doc, "Las que los censadores reportaron como dadas de baja en el periodo", MX + 20, y + 37, { size: 9.5, color: GRIS, width: cw - 40 });
+  tx(doc, fmtN(r.bajas.total), MX + 20, y + 62, { font: "Titulo", size: 54, color: G, width: 200 });
+  tx(doc, r.bajas.total === 1 ? "tortillería dada de baja" : "tortillerías dadas de baja", MX + 30 + ancho(doc, fmtN(r.bajas.total), "Titulo", 54), y + 96, { size: 11, color: GRIS });
+  if (r.bajas.total === 0) {
+    tx(doc, "Ninguna baja en el periodo", MX + 20, y + h / 2 + 20, { size: 13, color: GRIS, width: cw - 40, align: "center" });
+  } else {
+    tx(doc, "POR MOTIVO", MX + 20, y + 140, { font: "Cuerpo-Bold", size: 8.5, color: GRIS, spacing: 0.7 });
+    const maxM = Math.max(1, ...r.bajas.porMotivo.map((m) => m.n));
+    r.bajas.porMotivo.slice(0, 5).forEach((m, i) => {
+      const yy = y + 160 + i * 38;
+      tx(doc, m.texto, MX + 20, yy, { size: 10, color: TX, width: cw - 90 });
+      doc.roundedRect(MX + 20, yy + 17, cw - 90, 9, 4.5).fill("#f1e8da");
+      degradado(doc, MX + 20, yy + 17, Math.max(9, ((cw - 90) * m.n) / maxM), 9, 4.5, [G, G2, O, V, "#d1a85f"][i % 5], [G, G2, O, V, "#d1a85f"][i % 5]);
+      tx(doc, fmtN(m.n), MX + cw - 62, yy + 12, { font: "Cuerpo-Bold", size: 12, color: G, width: 42, align: "right" });
+    });
+    tx(doc, "POR ESTADO", MX + 20, y + 362, { font: "Cuerpo-Bold", size: 8.5, color: GRIS, spacing: 0.7 });
+    r.bajas.porEstado.slice(0, 3).forEach((e, i) => {
+      const yy = y + 382 + i * 26;
+      doc.save().rect(MX + 20, yy - 4, cw - 40, 0.6).fillOpacity(0.12).fill(G).restore();
+      tx(doc, e.nombre, MX + 20, yy + 4, { font: "Cuerpo-Bold", size: 10.5, color: G, width: cw - 110 });
+      tx(doc, fmtN(e.n), MX + cw - 80, yy + 3, { font: "Titulo", size: 15, color: G, width: 60, align: "right" });
+    });
+  }
+
+  // ---- derecha: tipo de elaboración
+  tarjeta(doc, x2, y, cw, h);
+  tx(doc, "Tipo de elaboración", x2 + 20, y + 18, { font: "Cuerpo-Bold", size: 13, color: G, width: cw - 40 });
+  tx(doc, "Tortillerías con precio en el periodo y precio promedio de la tortilla por tipo", x2 + 20, y + 37, { size: 9.5, color: GRIS, width: cw - 40 });
+  const totalE = Math.max(1, r.elaboracion.reduce((a, e) => a + e.tortillerias, 0));
+  const colores = [G2, O, V, "#c9bdb0"];
+  r.elaboracion.forEach((e, i) => {
+    const yy = y + 72 + i * 98;
+    doc.save().roundedRect(x2 + 20, yy, 5, 76, 2.5).fill(colores[i]).restore();
+    tx(doc, e.texto.toUpperCase(), x2 + 38, yy + 2, { font: "Cuerpo-Bold", size: 9, color: GRIS, spacing: 0.7, width: cw - 200 });
+    tx(doc, fmtN(e.tortillerias), x2 + 38, yy + 18, { font: "Titulo", size: 28, color: G, width: 150 });
+    tx(doc, e.tortillerias === 1 ? "tortillería" : "tortillerías", x2 + 44 + ancho(doc, fmtN(e.tortillerias), "Titulo", 28), yy + 33, { size: 10, color: GRIS });
+    doc.roundedRect(x2 + 38, yy + 56, cw - 78, 9, 4.5).fill("#f1e8da");
+    if (e.tortillerias > 0) degradado(doc, x2 + 38, yy + 56, Math.max(9, ((cw - 78) * e.tortillerias) / totalE), 9, 4.5, colores[i], colores[i]);
+    tx(doc, e.promedio == null ? "Sin precios" : money(e.promedio), x2 + cw - 190, yy + 14, { font: "Titulo", size: 26, color: G, width: 170, align: "right" });
+    tx(doc, e.promedio == null ? "" : "tortilla por kilo", x2 + cw - 190, yy + 42, { size: 9.5, color: GRIS, width: 170, align: "right" });
+  });
+}
+
 function pEvolucion(doc: Doc, r: Reporte) {
   const a = r.totales, t = textosRango(r.rango);
   nuevaPagina(doc);
@@ -596,6 +648,7 @@ export async function reportePdf(r: Reporte): Promise<Buffer> {
   pEstados(doc, r);
   pTabla(doc, r);
   pAvance(doc, r);
+  pCatalogo(doc, r);
   pEvolucion(doc, r);
   // pie de página con el número (ya se sabe cuántas hay)
   const rango = doc.bufferedPageRange();

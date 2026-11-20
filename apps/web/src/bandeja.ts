@@ -1,12 +1,12 @@
 import { api, ApiError, leerSesion } from "./api";
 import { abrir, diaMexico, kvBorrar, kvGuardar, kvLeer, type Paquete, type Precio } from "./bd";
-import { marcarFiscalLocal, marcarFotoLocal, ponerTemporales } from "./catalogo";
+import { marcarElaboracionLocal, marcarFiscalLocal, marcarFotoLocal, ponerTemporales, quitarLocal } from "./catalogo";
 import type { Local } from "./bd";
 
 /**
  * Bandeja de pendientes: todo lo que se captura pasa por aquí, con o sin conexión (un solo camino).
  * Funciona como la bandeja de salida del correo: se guarda en el teléfono y sale solo cuando hay señal.
- * Orden de envío por paquete: tortillería nueva → foto (o la de una que ya existía, o el motivo de por qué no se pudo) → datos fiscales (o la negativa) → precios. Un paquete a la vez, en el orden en que se capturaron.
+ * Orden de envío por paquete: tortillería nueva → foto (o la de una que ya existía, o el motivo de por qué no se pudo) → datos fiscales (o la negativa) → elaboración → precios. Un paquete de "baja" solo lleva el reporte de baja. Un paquete a la vez, en el orden en que se capturaron.
  */
 
 export const DIAS_ENVIADOS = 7; // un paquete ya enviado se borra de la bandeja después de este tiempo
@@ -161,6 +161,7 @@ export async function refrescarTemporales() {
       estado_clave: d.estadoClave ?? "",
       tiene_fiscal: !!p.fiscal,
       tiene_foto: true, // una tortillería nueva siempre lleva su foto
+      elaboracion: (p.nueva.datos as { elaboracion?: string }).elaboracion ?? null,
     });
   }
   ponerTemporales(lista);
@@ -249,6 +250,29 @@ async function enviarPaquete(p: Paquete): Promise<Resultado> {
       await poner(p);
     }
 
+    // 3c) tipo de elaboración (antes que los precios: la comparación del precio atípico ya usa el tipo correcto)
+    if (p.elaboracion && !p.hecho.elaboracion) {
+      etapa = "elaboracion";
+      await api(`/tortillerias/${real}/elaboracion`, { json: { elaboracion: p.elaboracion.valor, idCliente: p.elaboracion.idCliente, capturadoEn: p.capturadoEn } });
+      await marcarElaboracionLocal(real, p.elaboracion.valor);
+      p = { ...p, hecho: { ...p.hecho, elaboracion: true } };
+      await poner(p);
+    }
+
+    // 3d) "ya no funciona": la tortillería queda inactiva en cuanto llega el reporte (no lleva precios ni foto)
+    if (p.baja && !p.hecho.baja) {
+      etapa = "baja";
+      await api(`/tortillerias/${real}/baja`, {
+        json: {
+          motivo: p.baja.motivo, motivoOtro: p.baja.motivoOtro || undefined, idCliente: p.baja.idCliente, capturadoEn: p.capturadoEn,
+          ...(p.gps ? { lat: p.gps.lat, lng: p.gps.lng, precisionGps: p.gps.precision } : {}),
+        },
+      });
+      await quitarLocal(real);
+      p = { ...p, hecho: { ...p.hecho, baja: true } };
+      await poner(p);
+    }
+
     // 4) precios, uno por producto
     etapa = "precio";
     const precios: Precio[] = [...p.precios];
@@ -265,7 +289,13 @@ async function enviarPaquete(p: Paquete): Promise<Resultado> {
         precios[i] = { ...pr, estado: "enviado" };
       } catch (e) {
         if (!(e instanceof ApiError && e.status === 409)) throw e;
-        precios[i] = { ...pr, estado: "conflicto", mensaje: `Ya habías capturado ${NOMBRE_PRODUCTO[pr.producto]} ese día en esta tortillería.` };
+        // 409 puede ser "ya lo capturaste hoy" o "esta tortillería se dio de baja" (otro censador la reportó antes de que este se enterara)
+        const dadaDeBaja = !!e.cuerpo?.baja || /dio de baja/i.test(e.message);
+        if (dadaDeBaja) await quitarLocal(real);
+        precios[i] = {
+          ...pr, estado: "conflicto",
+          mensaje: dadaDeBaja ? "Esta tortillería ya se había dado de baja." : `Ya habías capturado ${NOMBRE_PRODUCTO[pr.producto]} ese día en esta tortillería.`,
+        };
       }
       p = { ...p, precios };
       await poner(p);

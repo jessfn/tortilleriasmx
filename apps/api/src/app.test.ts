@@ -56,7 +56,7 @@ describe("acceso", () => {
   it("saber si una tortillería ya tiene datos fiscales no exige sesión (quien aún no tiene cuenta también lo necesita)", async () => {
     const r = await fetch(`${base}/tortillerias/${ID}/fiscal/existe`);
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ tiene: false, ultimaNegativa: null, tieneFoto: false });
+    expect(await r.json()).toEqual({ tiene: false, ultimaNegativa: null, tieneFoto: false, elaboracion: null, inactiva: false });
     expect((await fetch(`${base}/tortillerias/no-es-uuid/fiscal/existe`)).status).toBe(400);
   });
 

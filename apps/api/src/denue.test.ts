@@ -21,7 +21,8 @@ CREATE TABLE denue_catalogo (
 CREATE TABLE tortillerias (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), id_denue text UNIQUE, nombre text NOT NULL, domicilio text,
   estado_clave text, municipio_clave text, geom geometry, origen text NOT NULL, estatus text NOT NULL DEFAULT 'pendiente',
-  foto_principal text, creado_por text, denue_sincronizado_en timestamptz
+  foto_principal text, creado_por text, denue_sincronizado_en timestamptz,
+  operacion text NOT NULL DEFAULT 'activa', elaboracion text
 );
 CREATE TABLE capturas_precio (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tortilleria_id uuid NOT NULL REFERENCES tortillerias(id),
@@ -99,6 +100,15 @@ describe("importación del catálogo", () => {
     expect(await uno(`SELECT count(*)::int AS n FROM capturas_precio WHERE tortilleria_id = '${t.id}'`)).toEqual({ n: 1 });
     expect(await uno(`SELECT count(*)::int AS n FROM responsables WHERE tortilleria_id = '${t.id}'`)).toEqual({ n: 1 });
     expect(await uno("SELECT nombre, estatus FROM tortillerias WHERE origen = 'nueva'")).toEqual({ nombre: "NUEVA DE ANA", estatus: "pendiente" });
+  });
+
+  it("C19: volver a cargar el DENUE NO reactiva una tortillería dada de baja ni cambia su tipo de elaboración", async () => {
+    await importarLote(db, [A, B]);
+    await db.query("UPDATE tortillerias SET operacion = 'inactiva', elaboracion = 'mano' WHERE id_denue = '100'");
+    const A2 = fila({ ...A, nombre: "TORTILLERIA LA GUERA (NUEVO NOMBRE)" });
+    await importarLote(db, [A2, B]);
+    expect(await uno("SELECT nombre, operacion, elaboracion FROM tortillerias WHERE id_denue = '100'")).toEqual({ nombre: "TORTILLERIA LA GUERA (NUEVO NOMBRE)", operacion: "inactiva", elaboracion: "mano" });
+    expect(await uno("SELECT operacion, elaboracion FROM tortillerias WHERE id_denue = '101'")).toEqual({ operacion: "activa", elaboracion: null });
   });
 
   it("un DENUE nuevo agrega solo lo que no existía", async () => {

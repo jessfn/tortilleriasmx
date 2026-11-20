@@ -9,6 +9,8 @@ export type Precio = { precio: number; fecha: string } | null;
 export type PuntoAdm = {
   id: string; nombre: string; domicilio: string | null; estatus: string; origen: string; lat: number; lng: number;
   n_capturas: number; ultimo_maiz: Precio; ultima_masa: Precio; alerta: boolean;
+  /** inactiva = dada de baja ("ya no funciona"); solo llega si se pide mostrarlas */
+  operacion?: string; elaboracion?: string | null;
 };
 /** Zona a poco zoom: tortillerías agrupadas en una celda, con la suma de precios para sacar el promedio */
 export type CeldaAdm = {
@@ -32,6 +34,10 @@ type Props = {
   soloConPrecios: boolean;
   /** Solo tortillerías sin datos fiscales cuyo último intento fue por inseguridad (zonas de riesgo) */
   soloInseguridad?: boolean;
+  /** Mostrar también las tortillerías dadas de baja (en gris) */
+  mostrarBajas?: boolean;
+  /** maquina | mano | ambas | sin (sin dato) */
+  elaboracion?: string;
   /** Se incrementa para volver a pedir los datos (actualización en vivo) */
   tick: number;
   onVista: (v: VistaMapa) => void;
@@ -128,7 +134,7 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
             features: datos.current.map((x) => ({
               type: "Feature" as const,
               geometry: { type: "Point" as const, coordinates: [x.lng, x.lat] },
-              properties: { id: x.id, p: precioDe(x), n: x.n_capturas, estatus: x.estatus, alerta: x.alerta ? 1 : 0, nueva: x.origen === "nueva" ? 1 : 0 },
+              properties: { id: x.id, p: x.operacion === "inactiva" ? 0 : precioDe(x), baja: x.operacion === "inactiva" ? 1 : 0, n: x.n_capturas, estatus: x.estatus, alerta: x.alerta ? 1 : 0, nueva: x.origen === "nueva" ? 1 : 0 },
             })),
           },
     );
@@ -159,7 +165,12 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
     p.current.onZoom?.(z);
     const b = m.getBounds();
     const vista: Caja = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
-    const filtros = { dias: String(p.current.dias), ...(p.current.soloInseguridad ? { solo: "inseguridad" } : p.current.soloConPrecios ? { solo: "precios" } : {}) };
+    const filtros = {
+      dias: String(p.current.dias),
+      ...(p.current.soloInseguridad ? { solo: "inseguridad" } : p.current.soloConPrecios ? { solo: "precios" } : {}),
+      ...(p.current.mostrarBajas ? { bajas: "1" } : {}),
+      ...(p.current.elaboracion ? { elaboracion: p.current.elaboracion } : {}),
+    };
     const clave = JSON.stringify([filtros, p.current.producto, p.current.tick]);
     // Ya se tienen los puntos de esta zona con estos mismos filtros: se mueve el mapa sin pedir nada (fluido, sin parpadeos)
     if (z >= ZOOM_PUNTOS && modo.current === "puntos" && cubierto.current?.clave === clave && dentroDe(vista, cubierto.current.caja)) {
@@ -346,7 +357,7 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
   useEffect(() => {
     if (listo.current) cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.producto, props.dias, props.soloConPrecios, props.soloInseguridad, props.tick]);
+  }, [props.producto, props.dias, props.soloConPrecios, props.soloInseguridad, props.mostrarBajas, props.elaboracion, props.tick]);
 
   return <div ref={cont} className="h-full w-full" role="application" aria-label="Mapa de precios de tortillas" />;
 });

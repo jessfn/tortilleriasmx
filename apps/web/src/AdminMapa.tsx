@@ -27,6 +27,8 @@ export default function AdminMapa({ foco, alCambio, puedeValidar = true }: { foc
   const [dias, setDias] = useState(30);
   const [solo, setSolo] = useState(false);
   const [inseguridad, setInseguridad] = useState(false);
+  const [bajas, setBajas] = useState(false);
+  const [elaboracion, setElaboracion] = useState("");
   const [tick, setTick] = useState(0);
   const [vista, setVista] = useState<VistaMapa>({ puntos: [], celdas: [], modo: "celdas", lejano: false, cargando: true, rango: [20, 32] });
   const [abierto, setAbierto] = useState(false); // hoja inferior en celular
@@ -149,6 +151,22 @@ export default function AdminMapa({ foco, alCambio, puedeValidar = true }: { foc
         <input type="checkbox" checked={inseguridad} onChange={(e) => { setInseguridad(e.target.checked); if (e.target.checked) setSolo(false); }} className="h-5 w-5 shrink-0 accent-guinda" />
       </label>
 
+      <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-white px-3 py-2.5 text-sm shadow-sm ring-1 ring-stone-200">
+        <span className="min-w-0">
+          <span className="block font-medium">Mostrar dadas de baja</span>
+          <span className="block text-[11px] text-stone-500">Las que ya no funcionan, en gris</span>
+        </span>
+        <input type="checkbox" checked={bajas} onChange={(e) => setBajas(e.target.checked)} className="h-5 w-5 shrink-0 accent-guinda" />
+      </label>
+      <div>
+        <p className="mb-1.5 text-xs font-semibold text-stone-500">Elaboración</p>
+        <div className="flex flex-wrap gap-1.5">
+          {([["", "Todas"], ["maquina", "Máquina"], ["mano", "A mano"], ["ambas", "Ambas"], ["sin", "Sin dato"]] as const).map(([v, t]) => (
+            <button key={v} className={chip(elaboracion === v)} onClick={() => setElaboracion(v)}>{t}</button>
+          ))}
+        </div>
+      </div>
+
       <div className="space-y-2.5 border-t border-stone-200 pt-3">
         <p className="text-xs font-semibold text-stone-500">Ir a una zona</p>
         <Selector
@@ -244,7 +262,7 @@ export default function AdminMapa({ foco, alCambio, puedeValidar = true }: { foc
         <ul className="space-y-0.5"><LeyendaPuntos /></ul>
       </div>
       <Suspense fallback={<div className="grid h-full place-items-center text-stone-500"><Loader2 className="h-7 w-7 animate-spin" /></div>}>
-        <Mapa ref={ref} producto={producto} dias={dias} soloConPrecios={solo} soloInseguridad={inseguridad} tick={tick} onVista={setVista} onSeleccion={setSel} seleccion={sel && { id: sel.id, lat: sel.lat, lng: sel.lng }} />
+        <Mapa ref={ref} producto={producto} dias={dias} soloConPrecios={solo} soloInseguridad={inseguridad} mostrarBajas={bajas} elaboracion={elaboracion || undefined} tick={tick} onVista={setVista} onSeleccion={setSel} seleccion={sel && { id: sel.id, lat: sel.lat, lng: sel.lng }} />
       </Suspense>
 
       {/* Estado del mapa */}

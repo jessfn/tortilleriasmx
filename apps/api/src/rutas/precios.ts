@@ -37,8 +37,19 @@ export function rutasPrecios(app: FastifyInstance) {
     const FECHA = capturadoEn ? "($9::timestamptz AT TIME ZONE 'America/Mexico_City')::date" : HOY_MX;
     const extra = capturadoEn ? [capturadoEn.toISOString()] : [];
 
-    const t = await pool.query("SELECT municipio_clave, estatus FROM tortillerias WHERE id = $1", [d.tortilleriaId]);
+    const t = await pool.query("SELECT municipio_clave, estatus, operacion, elaboracion FROM tortillerias WHERE id = $1", [d.tortilleriaId]);
     if (!t.rowCount || t.rows[0].estatus === "rechazada") return reply.code(404).send({ error: "Tortillería no existe" });
+
+    // Una tortillería dada de baja ya no recibe precios: se avisa y queda anotada la contradicción para que el supervisor decida si la reactiva
+    if (t.rows[0].operacion === "inactiva") {
+      const { rows: b } = await pool.query(
+        `UPDATE tortilleria_bajas SET contradicciones = contradicciones + 1
+          WHERE id = (SELECT id FROM tortilleria_bajas WHERE tortilleria_id = $1 AND reactivada_en IS NULL ORDER BY creado_en DESC LIMIT 1)
+        RETURNING motivo, to_char(coalesce(capturado_en, creado_en) AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD') AS fecha`,
+        [d.tortilleriaId],
+      );
+      return reply.code(409).send({ error: "Esta tortillería se dio de baja", baja: b[0] ? { motivo: b[0].motivo, fecha: b[0].fecha } : null });
+    }
 
     const yaCapturado = (precioKg: unknown) =>
       reply.code(409).send({ error: "Ya capturaste este producto hoy en esta tortillería", precioKg: precioKg === null ? null : Number(precioKg), producto: d.producto });
@@ -52,12 +63,19 @@ export function rutasPrecios(app: FastifyInstance) {
 
     // Mediana municipal de los últimos 90 días para detectar precios atípicos (±30 %). Solo con precios que cuentan:
     // un atípico pendiente o el precio de una tortillería rechazada no contaminan la referencia.
-    const med = await pool.query(
-      `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY p.precio_kg) AS mediana, count(*)::int AS n
-         FROM precios_que_cuentan p
-        WHERE p.municipio_clave = $1 AND p.producto = $2 AND p.fecha > ${HOY_MX} - ${PRECIO_ATIPICO_DIAS}`,
-      [t.rows[0].municipio_clave, d.producto],
-    );
+    // La tortilla a mano suele ser más cara: si la tortillería tiene tipo de elaboración y hay al menos 3 precios del mismo tipo en el municipio,
+    // la referencia es solo de ese tipo; si no alcanzan (o no tiene tipo), la de todo el municipio.
+    const medianaDe = (tipo: string | null) =>
+      pool.query(
+        `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY p.precio_kg) AS mediana, count(*)::int AS n
+           FROM precios_que_cuentan p
+          WHERE p.municipio_clave = $1 AND p.producto = $2 AND p.fecha > ${HOY_MX} - ${PRECIO_ATIPICO_DIAS} AND ($3::text IS NULL OR p.elaboracion_tortilleria = $3)`,
+        [t.rows[0].municipio_clave, d.producto, tipo],
+      );
+    let refElaboracion: string | null = null;
+    let med = t.rows[0].elaboracion ? await medianaDe(t.rows[0].elaboracion) : null;
+    if (med && Number(med.rows[0].n) >= PRECIO_ATIPICO_MIN_CAPTURAS) refElaboracion = t.rows[0].elaboracion;
+    else med = await medianaDe(null);
     const mediana = med.rows[0].mediana === null ? null : Number(med.rows[0].mediana);
     const nRef = Number(med.rows[0].n);
     const atipico = mediana !== null && nRef >= PRECIO_ATIPICO_MIN_CAPTURAS && (Math.abs(d.precioKg - mediana) / mediana) * 100 > PRECIO_ATIPICO_PORCENTAJE;
@@ -68,12 +86,12 @@ export function rutasPrecios(app: FastifyInstance) {
     try {
       const { rows } = await pool.query(
         `INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, geom_captura, precision_gps, alerta, capturista_id, origen, fecha, id_cliente, capturado_en,
-                                     estatus, aprobacion, mediana_ref, n_ref)
+                                     estatus, aprobacion, mediana_ref, n_ref, ref_elaboracion)
          VALUES ($1,$2,$3, CASE WHEN $4::float8 IS NULL OR $5::float8 IS NULL THEN NULL ELSE ST_SetSRID(ST_MakePoint($4,$5),4326) END, $6,$7,$8,'app', ${FECHA}, $10, $9::timestamptz,
-                 CASE WHEN $7::boolean THEN 'pendiente' ELSE 'validada' END, CASE WHEN $7::boolean THEN NULL ELSE 'automatica' END, $11::numeric, $12::int)
+                 CASE WHEN $7::boolean THEN 'pendiente' ELSE 'validada' END, CASE WHEN $7::boolean THEN NULL ELSE 'automatica' END, $11::numeric, $12::int, $13::text)
          RETURNING id`,
         [d.tortilleriaId, d.producto, d.precioKg, conGps ? d.lng : null, conGps ? d.lat : null, d.precisionGps ?? null, atipico, req.user.sub, capturadoEn ? capturadoEn.toISOString() : null, d.idCliente ?? null,
-          mediana === null ? null : Math.round(mediana * 100) / 100, mediana === null ? null : nRef],
+          mediana === null ? null : Math.round(mediana * 100) / 100, mediana === null ? null : nRef, refElaboracion],
       );
       id = rows[0].id;
     } catch (e: any) {

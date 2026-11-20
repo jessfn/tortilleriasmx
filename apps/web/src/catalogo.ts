@@ -73,6 +73,7 @@ function aLocales(clave: string, r: Extract<Respuesta, { filas: unknown }>): Loc
     estado_clave: clave,
     ultima_negativa: i.ultima_negativa === undefined ? null : ((f[i.ultima_negativa] as string | null) ?? null),
     tiene_foto: i.tiene_foto === undefined ? undefined : f[i.tiene_foto] === 1,
+    elaboracion: i.elaboracion === undefined ? null : ((f[i.elaboracion] as string | null) ?? null),
   }));
 }
 
@@ -118,6 +119,40 @@ export async function actualizarCatalogos(): Promise<number> {
     }
   }
   return n;
+}
+
+/** Una baja ("ya no funciona") quita la tortillería del catálogo de este teléfono de inmediato, sin esperar a la siguiente descarga */
+export async function quitarLocal(id: string) {
+  for (const c of descargadas) {
+    if (!c.puntos.some((x) => x.id === id)) continue;
+    c.puntos = c.puntos.filter((x) => x.id !== id);
+    try {
+      await (await abrir()).put("catalogo", c);
+    } catch {
+      /* se corrige en la siguiente descarga */
+    }
+  }
+  const i = temporales.findIndex((x) => x.id === id);
+  if (i >= 0) temporales.splice(i, 1);
+  recomponer();
+}
+
+/** Recuerda en este teléfono el tipo de elaboración (para preseleccionarlo en la próxima visita, también sin conexión) */
+export async function marcarElaboracionLocal(id: string, valor: string) {
+  for (const c of descargadas) {
+    const p = c.puntos.find((x) => x.id === id);
+    if (p && p.elaboracion !== valor) {
+      p.elaboracion = valor;
+      try {
+        await (await abrir()).put("catalogo", c);
+      } catch {
+        /* se corrige en la siguiente descarga */
+      }
+    }
+  }
+  const t = temporales.find((x) => x.id === id);
+  if (t) t.elaboracion = valor;
+  recomponer();
 }
 
 /** Marca localmente que una tortillería ya tiene foto (sin esperar a la siguiente descarga) */

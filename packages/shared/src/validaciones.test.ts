@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   telefonoSchema, precioSchema, normalizarTexto, registroSchema, nombreSchema, capturaPrecioSchema, fiscalSchema,
-  nuevaTortilleriaSchema, TIPOS_VIAL, PERSONAL_OCUPADO, rfcFechaValida,
+  nuevaTortilleriaSchema, TIPOS_VIAL, PERSONAL_OCUPADO, rfcFechaValida, elaboracionSchema, bajaSchema, textoElaboracion, textoMotivoBaja,
 } from "./validaciones.js";
+import { permisosEfectivos } from "./permisos.js";
 
 const ID = "00000000-0000-4000-8000-000000000000";
 
@@ -67,7 +68,7 @@ describe("datos fiscales", () => {
 describe("tortillería nueva", () => {
   const base = {
     nombre: "Tortillería La Guadalupe", estadoClave: "09", municipioClave: "09015", localidad: "Ciudad de México", tipoVial: "CALLE",
-    calle: "Hidalgo", numeroExt: "123", colonia: "Centro", codigoPostal: "09700", telefono: "5512345678", personalOcupado: "0 a 5 personas", lat: 19.43, lng: -99.13,
+    calle: "Hidalgo", numeroExt: "123", colonia: "Centro", codigoPostal: "09700", telefono: "5512345678", personalOcupado: "0 a 5 personas", elaboracion: "maquina", lat: 19.43, lng: -99.13,
   };
   it("acepta lo mínimo y normaliza el texto", () => {
     const r = nuevaTortilleriaSchema.parse(base);
@@ -90,7 +91,7 @@ describe("tortillería nueva", () => {
     expect(nuevaTortilleriaSchema.safeParse({ ...base, correo: "tortas@ejemplo.com", telefono: "5512345678" }).success).toBe(true);
   });
   it("los demás campos son obligatorios", () => {
-    for (const campo of ["nombre", "localidad", "calle", "numeroExt", "colonia", "codigoPostal", "personalOcupado", "tipoVial", "lat", "lng"]) {
+    for (const campo of ["nombre", "localidad", "calle", "numeroExt", "colonia", "codigoPostal", "personalOcupado", "elaboracion", "tipoVial", "lat", "lng"]) {
       const { [campo]: _quitado, ...resto } = base as Record<string, unknown>;
       expect(nuevaTortilleriaSchema.safeParse(resto).success, campo).toBe(false);
     }
@@ -155,5 +156,33 @@ describe("precio con centavos y RFC con fecha real", () => {
     const r = fiscalSchema.safeParse({ tipoPersona: "fisica", rfc: "ABCD660000123", razonSocial: "Juan Pérez" });
     expect(!r.success && r.error.issues[0].message).toContain("fecha del RFC");
     expect(rfcFechaValida("PEPA800101AB1", "fisica")).toBe(true);
+  });
+});
+
+describe("C19: tipo de elaboración y baja", () => {
+  it("la elaboración solo acepta máquina, a mano o ambas", () => {
+    expect(elaboracionSchema.safeParse({ elaboracion: "mano" }).success).toBe(true);
+    expect(elaboracionSchema.safeParse({ elaboracion: "ambas", idCliente: crypto.randomUUID(), capturadoEn: new Date().toISOString() }).success).toBe(true);
+    expect(elaboracionSchema.safeParse({ elaboracion: "robot" }).success).toBe(false);
+    expect(elaboracionSchema.safeParse({}).success).toBe(false);
+    expect(textoElaboracion("mano")).toBe("A mano");
+    expect(textoElaboracion(null)).toBe("Sin dato");
+  });
+  it("la baja pide motivo; 'otro' exige de 5 a 200 caracteres; el GPS es opcional pero válido", () => {
+    expect(bajaSchema.safeParse({ motivo: "cerro" }).success).toBe(true);
+    expect(bajaSchema.safeParse({ motivo: "cerro", lat: 19.4, lng: -99.1, precisionGps: 12 }).success).toBe(true);
+    expect(bajaSchema.safeParse({}).success).toBe(false);
+    expect(bajaSchema.safeParse({ motivo: "cerrado" }).success).toBe(false); // "cerrado" es de los datos fiscales, no una baja
+    expect(bajaSchema.safeParse({ motivo: "otro" }).success).toBe(false);
+    expect(bajaSchema.safeParse({ motivo: "otro", motivoOtro: "abc" }).success).toBe(false);
+    expect(bajaSchema.safeParse({ motivo: "otro", motivoOtro: "Ahora es una papelería" }).success).toBe(true);
+    expect(bajaSchema.safeParse({ motivo: "cerro", lat: 200, lng: 0 }).success).toBe(false);
+    expect(textoMotivoBaja("cerro")).toBe("Cerró definitivamente");
+  });
+  it("el permiso 'gestionar_bajas' viene por omisión en el supervisor y siempre en el administrador", () => {
+    expect(permisosEfectivos("supervisor", null)).toContain("gestionar_bajas");
+    expect(permisosEfectivos("admin", null)).toContain("gestionar_bajas");
+    expect(permisosEfectivos("supervisor", ["ver_resumen"])).not.toContain("gestionar_bajas");
+    expect(permisosEfectivos("capturista", null)).toEqual([]);
   });
 });

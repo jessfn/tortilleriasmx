@@ -13,6 +13,7 @@ export const PERMISOS = [
   { clave: "ver_revision", tipo: "vista", texto: "Revisión", ayuda: "Tortillerías nuevas y precios atípicos por revisar" },
   { clave: "ver_usuarios_app", tipo: "vista", texto: "Usuarios de la app", ayuda: "La lista de quienes capturan precios en la app" },
   { clave: "ver_extras", tipo: "vista", texto: "Extras (reportes)", ayuda: "Descargar reportes en PDF y Excel por día, semana, mes o año" },
+  { clave: "gestionar_bajas", tipo: "accion", texto: "Ver y reactivar tortillerías dadas de baja", ayuda: "Las que los censadores reportaron como \"ya no funciona\"" },
   { clave: "revisar_precios", tipo: "accion", texto: "Aprobar o rechazar precios atípicos", ayuda: "Uno por uno o varios a la vez" },
   { clave: "validar_tortillerias", tipo: "accion", texto: "Validar o rechazar tortillerías nuevas", ayuda: "Las dadas de alta por los censadores" },
   { clave: "ver_datos_fiscales", tipo: "accion", texto: "Ver RFC y celular completos", ayuda: "Sin este permiso se ven enmascarados" },

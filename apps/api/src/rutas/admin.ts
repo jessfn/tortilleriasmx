@@ -53,8 +53,9 @@ export function rutasAdmin(app: FastifyInstance) {
       `WITH ${ultimosPreciosSql("30")}
        SELECT
          (SELECT count(*)::int FROM usuarios WHERE rol = 'capturista') AS usuarios,
-         (SELECT count(DISTINCT p.tortilleria_id)::int FROM precios_que_cuentan p WHERE p.origen_tortilleria = 'denue') AS denue_visitadas,
-         (SELECT count(*)::int FROM tortillerias WHERE origen = 'denue') AS denue_total,
+         (SELECT count(DISTINCT p.tortilleria_id)::int FROM precios_que_cuentan p WHERE p.origen_tortilleria = 'denue' AND p.operacion_tortilleria = 'activa') AS denue_visitadas,
+         (SELECT count(*)::int FROM tortillerias WHERE origen = 'denue' AND operacion = 'activa') AS denue_total,
+         (SELECT count(*)::int FROM tortillerias WHERE operacion = 'inactiva') AS dadas_de_baja,
          (SELECT count(*)::int FROM tortillerias WHERE origen = 'nueva') AS nuevas_total,
          (SELECT count(*)::int FROM tortillerias WHERE origen = 'nueva' AND estatus = 'validada') AS nuevas_validadas,
          (SELECT count(*)::int FROM tortillerias WHERE origen = 'nueva' AND estatus = 'pendiente') AS nuevas_pendientes,
@@ -166,7 +167,7 @@ export function rutasAdmin(app: FastifyInstance) {
           AND ($5::text = '' OR ${SIN_ACENTOS_SQL("coalesce(t.nombre,'') || ' ' || coalesce(m.nombre,'') || ' ' || coalesce(e.nombre,'') || ' ' || coalesce(u.correo,'')")} LIKE '%' || $5 || '%')`;
     const { rows } = await pool.query(
       `SELECT c.id, c.producto, c.precio_kg, c.fecha, c.estatus, c.alerta, c.tortilleria_id,
-              c.mediana_ref::float8 AS mediana_ref, c.n_ref, c.aprobacion,
+              c.mediana_ref::float8 AS mediana_ref, c.n_ref, c.ref_elaboracion, c.aprobacion,
               c.precision_gps, ST_Y(c.geom_captura) AS captura_lat, ST_X(c.geom_captura) AS captura_lng,
               coalesce(c.capturado_en, c.creado_en) AS capturado_en,
               t.nombre, m.nombre AS municipio, e.nombre AS estado, u.correo AS capturista
@@ -237,7 +238,8 @@ export function rutasAdmin(app: FastifyInstance) {
     const params: unknown[] = [filtros.desde, filtros.hasta, estado, municipio];
     if (estatus !== "cuentan" && estatus !== "todos") params.push(estatus);
     const sql = `SELECT c.id, to_char(c.fecha, 'YYYY-MM-DD') AS fecha, to_char(coalesce(c.capturado_en, c.creado_en) AT TIME ZONE 'America/Mexico_City', 'HH24:MI') AS hora,
-              c.producto, c.precio_kg::float8 AS precio_kg, c.estatus, c.alerta AS atipico, c.mediana_ref::float8 AS mediana_ref, c.aprobacion,
+              c.producto, c.precio_kg::float8 AS precio_kg, c.estatus, c.alerta AS atipico, c.mediana_ref::float8 AS mediana_ref, c.ref_elaboracion, c.aprobacion,
+              t.elaboracion, t.operacion,
               t.id AS id_tortilleria, t.id_denue, t.origen, t.estatus AS estatus_tortilleria, t.nombre, t.domicilio, e.nombre AS estado, m.nombre AS municipio,
               ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng,
               (EXISTS (SELECT 1 FROM tortilleria_fiscal x WHERE x.tortilleria_id = t.id) OR EXISTS (SELECT 1 FROM responsables r WHERE r.tortilleria_id = t.id)) AS tiene_fiscal,
@@ -251,9 +253,9 @@ export function rutasAdmin(app: FastifyInstance) {
         WHERE ${regla} AND ($1::date IS NULL OR c.fecha >= $1::date) AND ($2::date IS NULL OR c.fecha <= $2::date)
           AND ($3::text IS NULL OR t.estado_clave = $3) AND ($4::text IS NULL OR t.municipio_clave = $4)`;
     const COLUMNAS = [
-      "id_captura", "fecha", "hora_captura", "producto", "precio_kg", "estatus", "atipico", "mediana_ref", "aprobacion", "id_tortilleria", "id_denue", "origen",
+      "id_captura", "fecha", "hora_captura", "producto", "precio_kg", "estatus", "atipico", "mediana_ref", "ref_elaboracion", "aprobacion", "id_tortilleria", "id_denue", "origen",
       "estatus_tortilleria", "nombre_tortilleria", "domicilio", "estado", "municipio", "lat", "lng", "tiene_datos_fiscales", "ultimo_motivo_sin_fiscal",
-      "censador_correo", "gps_lat", "gps_lng", "precision_gps",
+      "censador_correo", "gps_lat", "gps_lng", "precision_gps", "elaboracion", "operacion",
     ];
     // Un texto que empiece con = + - @ lo tomaría Excel como fórmula: se le antepone un apóstrofo
     const celda = (v: unknown) => {
@@ -272,8 +274,8 @@ export function rutasAdmin(app: FastifyInstance) {
         if (!rows.length) return;
         yield rows
           .map((r) =>
-            [r.id, r.fecha, r.hora, r.producto, r.precio_kg, r.estatus, r.atipico, r.mediana_ref, r.aprobacion, r.id_tortilleria, r.id_denue, r.origen, r.estatus_tortilleria,
-              r.nombre, r.domicilio, r.estado, r.municipio, r.lat, r.lng, r.tiene_fiscal, r.ultimo_motivo, r.censador, r.gps_lat, r.gps_lng, r.precision_gps].map(celda).join(","),
+            [r.id, r.fecha, r.hora, r.producto, r.precio_kg, r.estatus, r.atipico, r.mediana_ref, r.ref_elaboracion, r.aprobacion, r.id_tortilleria, r.id_denue, r.origen, r.estatus_tortilleria,
+              r.nombre, r.domicilio, r.estado, r.municipio, r.lat, r.lng, r.tiene_fiscal, r.ultimo_motivo, r.censador, r.gps_lat, r.gps_lng, r.precision_gps, r.elaboracion, r.operacion].map(celda).join(","),
           )
           .join("\r\n") + "\r\n";
         ultimo = rows[rows.length - 1].id;

@@ -60,7 +60,7 @@ describe("teléfono con país", () => {
     expect(f.celular).toBe("+34612345678");
     const base = {
       nombre: "Tortillería La Guadalupe", estadoClave: "09", municipioClave: "09015", localidad: "Ciudad de México", tipoVial: "CALLE", calle: "Hidalgo",
-      numeroExt: "123", colonia: "Centro", codigoPostal: "09700", personalOcupado: "0 a 5 personas", lat: 19.43, lng: -99.13,
+      numeroExt: "123", colonia: "Centro", codigoPostal: "09700", personalOcupado: "0 a 5 personas", elaboracion: "maquina", lat: 19.43, lng: -99.13,
     };
     expect(nuevaTortilleriaSchema.parse({ ...base, telefono: "+502 5555 1234" }).telefono).toBe("+50255551234");
     expect(nuevaTortilleriaSchema.safeParse({ ...base, telefono: "+502" }).success).toBe(false);

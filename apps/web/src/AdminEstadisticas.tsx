@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { MOTIVOS_SIN_FISCAL, textoMotivoSinFiscal } from "@tortillerias/shared";
-import { ArrowDown, ArrowUp, ChevronRight, Download, FileSpreadsheet, FileX, Layers, Loader2, Map as MapaIcono, Store, Wheat } from "lucide-react";
+import { ELABORACION, MOTIVOS_BAJA, MOTIVOS_SIN_FISCAL, textoMotivoBaja, textoMotivoSinFiscal } from "@tortillerias/shared";
+import { ArrowDown, ArrowUp, Ban, ChevronRight, Cog, Download, FileSpreadsheet, FileX, Layers, Loader2, Map as MapaIcono, Store, Wheat } from "lucide-react";
 import { api, apiDescargar } from "./api";
 import { dinero, entero, EnVivo, Tendencia, useVivo, type DiaPrecio } from "./AdminVivo";
 import { BarraValor } from "./AdminVivo";
@@ -273,6 +273,8 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
         </Tarjeta>
 
         <SinFiscal estado={estado} />
+        <Bajas estado={estado} />
+        <Elaboracion estado={estado} dias={dias} />
         </div>
       </div>
     </>
@@ -341,6 +343,137 @@ function SinFiscal({ estado }: { estado?: FilaZona }) {
               ))}
             </ul>
           </div>
+        </>
+      )}
+    </Tarjeta>
+  );
+}
+
+type ResumenBajas = { total: number; por_motivo: Record<string, number>; zonas: { clave: string; nombre: string; total: number; por_motivo: Record<string, number> }[] };
+
+/** Tortillerías dadas de baja ("ya no funcionan"): total, por motivo y por estado (o por municipio con un estado elegido) */
+function Bajas({ estado }: { estado?: FilaZona }) {
+  const [r, setR] = useState<ResumenBajas>();
+  useEffect(() => {
+    let vigente = true;
+    setR(undefined);
+    api<ResumenBajas>(`/admin/bajas/resumen${estado ? `?estado=${estado.clave}` : ""}`)
+      .then((x) => vigente && setR(x))
+      .catch(() => {});
+    return () => { vigente = false; };
+  }, [estado?.clave]);
+  const maxMotivo = Math.max(1, ...MOTIVOS_BAJA.map((m) => r?.por_motivo[m.clave] ?? 0));
+  return (
+    <Tarjeta className="space-y-3">
+      <h2 className="flex items-center gap-2 text-sm font-bold">
+        <span className="grid h-8 w-8 place-items-center rounded-full bg-red-50 text-red-700"><Ban className="h-4 w-4" aria-hidden /></span>
+        Dadas de baja {estado ? `· ${estado.nombre}` : ""}
+      </h2>
+      {!r ? (
+        <div className="grid place-items-center py-4 text-stone-400"><Loader2 className="h-5 w-5 animate-spin" /></div>
+      ) : (
+        <>
+          <div className="flex items-baseline gap-2">
+            <span className="text-3xl font-bold leading-none">{entero(r.total)}</span>
+            <span className="text-xs text-stone-500">tortillerías que ya no funcionan (salen del total del censo)</span>
+          </div>
+          <ul className="space-y-1.5">
+            {MOTIVOS_BAJA.filter((m) => r.por_motivo[m.clave]).sort((a, b) => r.por_motivo[b.clave] - r.por_motivo[a.clave]).map((m) => (
+              <li key={m.clave} className="text-xs">
+                <div className="flex justify-between gap-2"><span className="truncate">{textoMotivoBaja(m.clave)}</span><b>{entero(r.por_motivo[m.clave])}</b></div>
+                <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-stone-100"><div className="h-full rounded-full bg-red-400" style={{ width: `${(r.por_motivo[m.clave] / maxMotivo) * 100}%` }} /></div>
+              </li>
+            ))}
+            {!r.total && <li className="text-xs text-stone-500">Ninguna tortillería dada de baja.</li>}
+          </ul>
+          {r.zonas.length > 0 && (
+            <div className="border-t border-stone-100 pt-2">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-400">{estado ? "Por municipio" : "Por estado"}</p>
+              <ul className="max-h-48 divide-y divide-stone-100 overflow-y-auto text-xs">
+                {r.zonas.slice(0, 30).map((z) => (
+                  <li key={z.clave} className="flex items-center justify-between gap-2 py-1.5">
+                    <span className="min-w-0 truncate">{z.nombre}</span>
+                    <b className="shrink-0 text-stone-800">{entero(z.total)}</b>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+    </Tarjeta>
+  );
+}
+
+type ResumenElab = {
+  nacional: { visitadas: Record<string, number>; promedio: Record<string, number | null> };
+  zonas: { clave: string; nombre: string; visitadas: Record<string, number>; promedio: Record<string, number | null> }[];
+};
+const TIPOS_ELAB = [...ELABORACION.map((e) => ({ clave: e.clave as string, texto: e.corto })), { clave: "sin_dato", texto: "Sin dato" }];
+
+/** Tortillerías visitadas por tipo de elaboración (y sin dato) y precio promedio de la tortilla por tipo, por estado o por municipio */
+function Elaboracion({ estado, dias }: { estado?: FilaZona; dias: number }) {
+  const [r, setR] = useState<ResumenElab>();
+  useEffect(() => {
+    let vigente = true;
+    setR(undefined);
+    api<ResumenElab>(`/admin/estadisticas/elaboracion?dias=${dias}${estado ? `&estado=${estado.clave}` : ""}`)
+      .then((x) => vigente && setR(x))
+      .catch(() => {});
+    return () => { vigente = false; };
+  }, [estado?.clave, dias]);
+  const total = r ? TIPOS_ELAB.reduce((a, t) => a + (r.nacional.visitadas[t.clave] ?? 0), 0) : 0;
+  return (
+    <Tarjeta className="space-y-3">
+      <h2 className="flex items-center gap-2 text-sm font-bold">
+        <span className="grid h-8 w-8 place-items-center rounded-full bg-guinda/10 text-guinda"><Cog className="h-4 w-4" aria-hidden /></span>
+        Tipo de elaboración {estado ? `· ${estado.nombre}` : ""}
+      </h2>
+      {!r ? (
+        <div className="grid place-items-center py-4 text-stone-400"><Loader2 className="h-5 w-5 animate-spin" /></div>
+      ) : (
+        <>
+          <ul className="space-y-2">
+            {TIPOS_ELAB.map((t) => {
+              const n = r.nacional.visitadas[t.clave] ?? 0;
+              const p = r.nacional.promedio[t.clave];
+              return (
+                <li key={t.clave} className="text-xs">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="font-medium">{t.texto}</span>
+                    <span className="text-stone-500"><b className="text-stone-800">{entero(n)}</b> tortillerías · tortilla <b className="text-stone-800">{p == null ? "—" : dinero(p)}</b></span>
+                  </div>
+                  <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-stone-100"><div className={`h-full rounded-full ${t.clave === "sin_dato" ? "bg-stone-400" : "bg-guinda"}`} style={{ width: `${total ? (n / total) * 100 : 0}%` }} /></div>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="text-[11px] leading-snug text-stone-500">Tortillerías visitadas (con al menos un precio que cuenta). El promedio es el último precio de cada tortillería en el periodo.</p>
+          {r.zonas.length > 0 && (
+            <div className="border-t border-stone-100 pt-2">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-400">{estado ? "Por municipio" : "Por estado"}</p>
+              <div className="max-h-56 overflow-auto">
+                <table className="w-full text-[11px]">
+                  <thead className="sticky top-0 bg-white text-stone-400">
+                    <tr><th className="py-1 text-left font-semibold">{estado ? "Municipio" : "Estado"}</th>{TIPOS_ELAB.map((t) => <th key={t.clave} className="px-1 py-1 text-right font-semibold">{t.texto}</th>)}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {r.zonas.slice(0, 40).map((z) => (
+                      <tr key={z.clave}>
+                        <td className="max-w-[8rem] truncate py-1.5">{z.nombre}</td>
+                        {TIPOS_ELAB.map((t) => (
+                          <td key={t.clave} className="px-1 py-1.5 text-right tabular-nums">
+                            <b className="text-stone-800">{entero(z.visitadas[t.clave] ?? 0)}</b>
+                            {t.clave !== "sin_dato" && z.promedio[t.clave] != null && <span className="block text-stone-400">{dinero(z.promedio[t.clave] as number)}</span>}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </>
       )}
     </Tarjeta>

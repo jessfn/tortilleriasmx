@@ -17,6 +17,8 @@ const serie = Array.from({ length: n }, (_, i) => ({ k: String(i), etiqueta: ran
 const reporte: Reporte = {
   rango, generado: new Date().toISOString(), totales: tot(1), anterior: tot(0.93), serie, estados,
   censo: { catalogo: 112103, conPrecio: 2517 },
+  bajas: { total: 214, porMotivo: [{ clave: "cerro", texto: "Cerró definitivamente", n: 120 }, { clave: "local_vacio", texto: "Local vacío, en renta o abandonado", n: 48 }, { clave: "cambio_giro", texto: "El local ahora tiene otro giro (ya no es tortillería)", n: 31 }, { clave: "no_existe", texto: "No existe en la dirección del catálogo", n: 12 }, { clave: "otro", texto: "Otro motivo (especifique)", n: 3 }], porEstado: [{ clave: "11", nombre: "Guanajuato", n: 41 }, { clave: "21", nombre: "Puebla", n: 33 }, { clave: "15", nombre: "México", n: 27 }] },
+  elaboracion: [{ clave: "maquina", texto: "Máquina", tortillerias: 9120, promedio: 23.4 }, { clave: "mano", texto: "A mano", tortillerias: 4210, promedio: 28.9 }, { clave: "ambas", texto: "Ambas", tortillerias: 1630, promedio: 25.1 }, { clave: "sin_dato", texto: "Sin dato", tortillerias: 3040, promedio: 24.2 }],
   motivos: [["no_conoce", 193], ["inseguridad", 154], ["otro", 130], ["se_nego", 66], ["sin_rfc", 46], ["desconfianza", 36], ["cerrado", 12]].map(([clave, n]) => ({ clave: clave as string, texto: ({ no_conoce: "El encargado no conoce los datos / el dueño no está", inseguridad: "Por inseguridad o miedo a extorsión", otro: "Otro motivo", se_nego: "Se negó a proporcionar los datos", sin_rfc: "No tiene RFC (negocio informal)", desconfianza: "Desconfía del uso que se le dará a la información", cerrado: "El establecimiento estaba cerrado" } as any)[clave as string], n: n as number })),
 };
 writeFileSync(salida, await reportePdf(reporte));

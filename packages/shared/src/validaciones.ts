@@ -131,6 +131,25 @@ const texto = (min: number, max: number, msg = "Obligatorio") =>
 const textoOpcional = (max: number) =>
   z.preprocess(vacioAUndefined, z.string().transform((v) => normalizarTexto(v.trim())).pipe(z.string().max(max)).optional());
 
+/* ---------- Tipo de elaboración (C19.2) ---------- */
+
+export const ELABORACION = [
+  { clave: "maquina", texto: "Con máquina tortilladora", corto: "Máquina" },
+  { clave: "mano", texto: "A mano (hechas a mano o en prensa manual)", corto: "A mano" },
+  { clave: "ambas", texto: "Ambas", corto: "Ambas" },
+] as const;
+export type Elaboracion = (typeof ELABORACION)[number]["clave"];
+export const CLAVES_ELABORACION = ["maquina", "mano", "ambas"] as const;
+export const textoElaboracion = (c: string | null | undefined) => ELABORACION.find((e) => e.clave === c)?.corto ?? "Sin dato";
+
+/** Se envía antes que los precios del mismo paquete (para que la comparación del precio atípico use el tipo correcto) */
+export const elaboracionSchema = z.object({
+  elaboracion: z.enum(CLAVES_ELABORACION),
+  idCliente: z.string().uuid().optional(),
+  capturadoEn: z.string().datetime({ offset: true }).optional(),
+});
+export type ElaboracionInput = z.infer<typeof elaboracionSchema>;
+
 export const nuevaTortilleriaSchema = z.object({
   nombre: texto(2, 120),
   estadoClave: z.string().min(1),
@@ -150,6 +169,8 @@ export const nuevaTortilleriaSchema = z.object({
   idCliente: z.string().uuid().optional(),
   // El censador ya vio las parecidas y confirma que es otra
   confirmoNoDuplicado: z.boolean().optional(),
+  // Cómo hacen la tortilla: obligatorio (C19.2)
+  elaboracion: z.enum(CLAVES_ELABORACION),
 });
 export type NuevaTortilleria = z.infer<typeof nuevaTortilleriaSchema>;
 
@@ -198,3 +219,29 @@ export const sinFotoSchema = z
   })
   .refine((d) => d.motivo !== "otro" || !!d.motivoOtro, { message: "Especifica el motivo", path: ["motivoOtro"] });
 export type SinFotoInput = z.infer<typeof sinFotoSchema>;
+
+/* ---------- Tortillería que ya no funciona (C19.1) ---------- */
+
+/** "Cerró definitivamente" NO es lo mismo que "El establecimiento estaba cerrado" de los datos fiscales (cerrado en este momento) */
+export const MOTIVOS_BAJA = [
+  { clave: "cerro", texto: "Cerró definitivamente" },
+  { clave: "cambio_giro", texto: "El local ahora tiene otro giro (ya no es tortillería)" },
+  { clave: "local_vacio", texto: "Local vacío, en renta o abandonado" },
+  { clave: "no_existe", texto: "No existe en la dirección del catálogo" },
+  { clave: "otro", texto: "Otro motivo (especifique)" },
+] as const;
+export type MotivoBaja = (typeof MOTIVOS_BAJA)[number]["clave"];
+export const textoMotivoBaja = (clave: string | null | undefined) => MOTIVOS_BAJA.find((m) => m.clave === clave)?.texto ?? clave ?? "";
+
+export const bajaSchema = z
+  .object({
+    motivo: z.enum(MOTIVOS_BAJA.map((m) => m.clave) as [MotivoBaja, ...MotivoBaja[]]),
+    motivoOtro: z.preprocess(vacioAUndefined, z.string().trim().min(5, "Especifica el motivo (mínimo 5 caracteres)").max(200, "Máximo 200 caracteres").optional()),
+    idCliente: z.string().uuid().optional(),
+    capturadoEn: z.string().datetime({ offset: true }).optional(),
+    lat: z.number().min(-90).max(90).optional(),
+    lng: z.number().min(-180).max(180).optional(),
+    precisionGps: z.number().min(0).max(100000).optional(),
+  })
+  .refine((d) => d.motivo !== "otro" || !!d.motivoOtro, { message: "Especifica el motivo", path: ["motivoOtro"] });
+export type BajaInput = z.infer<typeof bajaSchema>;

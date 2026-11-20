@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, Banknote, BarChart3, ClipboardList, Clock, Landmark, Layers, Loader2, Map as MapaIcono, PlusCircle, Store, TriangleAlert, Users, Wheat } from "lucide-react";
+import { AlertTriangle, Ban, Banknote, BarChart3, ClipboardList, Clock, Landmark, Layers, Loader2, Map as MapaIcono, PlusCircle, Store, TriangleAlert, Users, Wheat } from "lucide-react";
 import { api } from "./api";
 import { BarraValor, dinero, entero, EnVivo, Tendencia, useVivo, type DiaPrecio } from "./AdminVivo";
 import type { FilaZona, FocoMapa } from "./AdminMapa";
@@ -9,6 +9,8 @@ export type Resumen = {
   usuarios: number; catalogo: number; tortillerias_pendientes: number; capturas: number; capturas_pendientes: number; alertas: number;
   /** del catálogo con al menos un precio que cuenta, total del catálogo y avance del censo (%) */
   denue_visitadas: number; denue_total: number; avance_censo: number;
+  /** tortillerías que los censadores dieron de baja ("ya no funcionan"): salen del total del avance */
+  dadas_de_baja?: number;
   nuevas: { total: number; validadas: number; pendientes: number; rechazadas: number };
   promedio_maiz: string | null; promedio_masa: string | null; capturas_hoy: number; censadores_hoy: number;
   porEstado: { estado: string; promedio: string; n: number }[];
@@ -160,6 +162,7 @@ export default function AdminResumen({
           <Dato icono={ClipboardList} etiqueta="Precios capturados" valor={entero(r.capturas)} tono="gris" />
           <Dato icono={Store} etiqueta="Tortillerías del DENUE visitadas" valor={entero(r.denue_visitadas)} tono="verde" />
           <Dato icono={TriangleAlert} etiqueta="Alertas de precio" valor={entero(r.alertas)} tono="dorado" />
+          <Dato icono={Ban} etiqueta="Dadas de baja" valor={entero(r.dadas_de_baja ?? 0)} tono="gris" />
           <Tarjeta className="col-span-2 space-y-1.5 !py-2.5">
             <div className="flex items-center gap-3">
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-guinda/10 text-guinda"><PlusCircle className="h-[18px] w-[18px]" aria-hidden /></span>

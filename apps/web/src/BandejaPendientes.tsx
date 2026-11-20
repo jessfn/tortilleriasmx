@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Inbox, Loader2, RefreshCw, Send, Store, Trash2 } from "lucide-react";
 import type { Paquete } from "./bd";
 import { descartar, enviarDeTodosModos, estadoSync, listarPaquetes, NOMBRE_PRODUCTO, pideAtencion, reintentar, sincronizar, usarExistente } from "./bandeja";
-import { textoMotivoSinFiscal, textoMotivoSinFoto } from "@tortillerias/shared";
+import { textoElaboracion, textoMotivoBaja, textoMotivoSinFiscal, textoMotivoSinFoto } from "@tortillerias/shared";
 import { Boton, HojaModal, Tarjeta } from "./ui";
 
 /** Los paquetes de la bandeja del usuario; se actualizan solos cuando cambia la bandeja (`avisar()` de bandeja.ts) */
@@ -57,8 +57,9 @@ function FilaPaquete({ p }: { p: Paquete }) {
           </div>
           <p className="mt-0.5 text-xs text-stone-500">
             {p.nueva && <b className="text-guinda">Tortillería nueva · </b>}
-            {precios || "Sin precios"}
+            {p.baja ? <b className="text-red-700">Baja: ya no funciona · {p.baja.motivo === "otro" && p.baja.motivoOtro ? `Otro: ${p.baja.motivoOtro}` : textoMotivoBaja(p.baja.motivo)}</b> : precios || "Sin precios"}
           </p>
+          {p.elaboracion && <p className="mt-0.5 text-xs text-stone-500">Elaboración: {textoElaboracion(p.elaboracion.valor)}</p>}
           {p.sinFiscal && <p className="mt-0.5 text-xs text-stone-500">Sin datos fiscales: {textoMotivoSinFiscal(p.sinFiscal.motivo)}</p>}
           {p.sinFoto && <p className="mt-0.5 text-xs text-stone-500">Sin foto: {textoMotivoSinFoto(p.sinFoto.motivo)}</p>}
           {p.fotoExistente && !p.nueva && <p className="mt-0.5 text-xs text-stone-500">Incluye la foto de la tortillería</p>}
@@ -68,7 +69,11 @@ function FilaPaquete({ p }: { p: Paquete }) {
 
       {p.mensaje && <p className={`rounded-lg px-2.5 py-1.5 text-xs ${p.estado === "error" ? "bg-red-50 text-red-700" : "bg-stone-100 text-stone-600"}`}>{p.mensaje}</p>}
       {p.precios.some((x) => x.estado === "conflicto") && p.estado === "conflicto" && !duplicado && (
-        <p className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">Ya habías capturado este producto ese día. Puedes descartar esta captura.</p>
+        <p className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">
+          {/baja/i.test(p.precios.find((x) => x.estado === "conflicto")?.mensaje ?? "")
+            ? "Esta tortillería ya se había dado de baja. Puedes descartar esta captura."
+            : "Ya habías capturado este producto ese día. Puedes descartar esta captura."}
+        </p>
       )}
 
       {duplicado && (

@@ -1,10 +1,10 @@
-import { formatearTelefono, permisosEfectivos, type Permiso } from "@tortillerias/shared";
+import { formatearTelefono, permisosEfectivos, textoElaboracion, type Permiso } from "@tortillerias/shared";
 import { NegativasFiscales } from "./NegativasFiscales";
-import { NegativasFoto } from "./NegativasFoto";
+import SituacionTortilleria from "./SituacionTortilleria";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowUpDown, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, ChevronDown, ChevronLeft, ChevronRight, Clock, Eye, History, Loader2, Search, Mail, MapPin, Navigation, Phone, Store, TriangleAlert,
-  UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, KeyRound, Copy, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog, Sparkles,
+  UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, KeyRound, Copy, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog, Sparkles, Ban,
 } from "lucide-react";
 import { api, type Sesion } from "./api";
 import FotoAuth from "./FotoAuth";
@@ -22,6 +22,7 @@ import AdminResumen, { type Resumen } from "./AdminResumen";
 import AdminMapa, { type FocoMapa } from "./AdminMapa";
 import AdminEstadisticas from "./AdminEstadisticas";
 import AdminExtras from "./AdminExtras";
+import AdminBajas from "./AdminBajas";
 import { useVivo } from "./AdminVivo";
 
 export type TortilleriaAdm = {
@@ -38,6 +39,8 @@ export type CapturaAdm = {
   precision_gps?: number | null; captura_lat?: number | null; captura_lng?: number | null; capturado_en?: string | null;
   /** mediana del municipio al capturar, con cuántos precios se calculó, y cómo se aprobó */
   mediana_ref?: number | null; n_ref?: number | null; aprobacion?: string | null;
+  /** con qué se comparó: maquina | mano | ambas (solo ese tipo en el municipio) o null (todo el municipio) */
+  ref_elaboracion?: string | null;
 };
 /** Datos fiscales de la tortillería; si solo hay un registro viejo de responsable, llega con legado = true */
 export type Fiscal = { tipoPersona: string; razonSocial: string; rfc: string; celular: string | null; legado?: boolean; responsable?: { nombre: string; apellidos: string } };
@@ -78,6 +81,7 @@ export default function PanelAdmin({
     ...(puede("ver_mapa") ? [{ id: "mapa", texto: "Mapa", icono: MapaIcono }] : []),
     ...(puede("ver_estadisticas") ? [{ id: "estadisticas", texto: "Estadísticas", icono: LineChart }] : []),
     ...(puede("ver_revision") ? [{ id: "revision", texto: "Revisión", icono: ClipboardCheck, insignia: undefined as number | undefined }] : []),
+    ...(puede("gestionar_bajas") || puede("ver_revision") ? [{ id: "bajas", texto: "Bajas", icono: Ban }] : []),
     ...(puede("ver_extras") ? [{ id: "extras", texto: "Extras", icono: Sparkles }] : []),
     ...(puede("ver_usuarios_app") || esAdmin ? [{ id: "usuarios", texto: "Usuarios", icono: Users }] : []),
     ...(esAdmin ? [{ id: "auditoria", texto: "Auditoría", icono: History }] : []),
@@ -104,7 +108,7 @@ export default function PanelAdmin({
       pendientes={pendientes}
       alInicio={alInicio}
       alSalir={alSalir}
-      plano={tab === "mapa" || tab === "revision" || tab === "usuarios" || tab === "auditoria"}
+      plano={tab === "mapa" || tab === "revision" || tab === "usuarios" || tab === "auditoria" || tab === "bajas"}
       titulo={esAdmin ? "Administración" : "Supervisión"}
       vivo={vivo}
       pestañas={pestañasDisponibles.map((p) => (p.id === "revision" ? { ...p, insignia: pendientes } : p))}
@@ -130,6 +134,7 @@ export default function PanelAdmin({
       {tab === "usuarios" && (puede("ver_usuarios_app") || esAdmin) && (
         <AdminUsuarios miId={sesion.usuario.id} esAdmin={esAdmin} puedeVerApp={puede("ver_usuarios_app")} puedeGestionarApp={puede("gestionar_usuarios_app")} />
       )}
+      {tab === "bajas" && (puede("gestionar_bajas") || puede("ver_revision")) && <AdminBajas puedeReactivar={puede("gestionar_bajas")} alCambio={cargarResumen} />}
       {tab === "extras" && puede("ver_extras") && <AdminExtras />}
       {tab === "auditoria" && esAdmin && <AdminAuditoria />}
       {tab === "perfil" && <Perfil sesion={sesion} alActualizar={alActualizarSesion} alSalir={alSalir} />}
@@ -550,7 +555,7 @@ function DetalleTortilleria({
       {fotos === undefined ? (
         <div className="aspect-[4/3] animate-pulse rounded-2xl bg-stone-200" />
       ) : fotos.length === 0 ? (
-        <div className="space-y-2"><div className="flex items-center justify-center gap-2 rounded-2xl bg-stone-100 py-5 text-sm text-stone-400"><Camera className="h-5 w-5" aria-hidden /> Esta tortillería no tiene foto</div><NegativasFoto tortilleriaId={t.id} /></div>
+        <div className="flex items-center justify-center gap-2 rounded-2xl bg-stone-100 py-5 text-sm text-stone-400"><Camera className="h-5 w-5" aria-hidden /> Esta tortillería no tiene foto</div>
       ) : (
         <>
           <FotoAuth id={fotos[foto].id} className="aspect-[4/3] w-full rounded-2xl" />
@@ -647,6 +652,7 @@ function DetalleTortilleria({
           <>
 <p className="py-2 text-sm text-stone-500">Aún no tiene datos fiscales: se piden la primera vez que se captura su precio.</p>
 <NegativasFiscales tortilleriaId={t.id} />
+<SituacionTortilleria tortilleriaId={t.id} />
 </>
         ) : (
           <div className="divide-y divide-stone-100">
@@ -723,11 +729,11 @@ function AvisoAtipico({ c }: { c: CapturaAdm }) {
   const dif = med ? ((Number(c.precio_kg) - med) / med) * 100 : null;
   return (
     <div className="rounded-lg bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-900">
-      <p className="flex items-center gap-1.5"><TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden /> Precio atípico respecto a la mediana del municipio</p>
+      <p className="flex items-center gap-1.5"><TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden /> Precio atípico respecto a la mediana {c.ref_elaboracion ? "de tortillerías " : "del municipio"}{c.ref_elaboracion ? `${textoElaboracion(c.ref_elaboracion).toLowerCase()} del municipio` : ""}</p>
       {dif !== null && med !== null && (
         <p className="mt-0.5 pl-5 font-normal">
-          <b className={dif > 0 ? "text-red-700" : "text-blue-700"}>{dif > 0 ? "+" : ""}{Math.round(dif)} %</b> sobre la mediana de <b>${med.toFixed(2)}</b>
-          {c.n_ref ? ` (calculada con ${c.n_ref} precios)` : ""}
+          <b className={dif > 0 ? "text-red-700" : "text-blue-700"}>{dif > 0 ? "+" : ""}{Math.round(dif)} %</b> sobre la mediana de {c.ref_elaboracion ? `tortillerías ${c.ref_elaboracion === "mano" ? "a mano" : c.ref_elaboracion === "maquina" ? "de máquina" : "que hacen de ambas formas"} del municipio` : "todo el municipio"} (<b>${med.toFixed(2)}</b>
+          {c.n_ref ? `, ${c.n_ref} precios` : ""})
         </p>
       )}
     </div>

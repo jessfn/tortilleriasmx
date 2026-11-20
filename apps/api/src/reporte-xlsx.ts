@@ -101,6 +101,25 @@ export async function reporteXlsx(r: Reporte): Promise<Buffer> {
   encabezado(s4.getRow(1));
   for (const m of r.motivos) s4.addRow({ m: m.texto, n: m.n });
 
+  // ---- Actualización del catálogo (bajas)
+  const s6 = wb.addWorksheet("Bajas");
+  s6.columns = [{ header: "Concepto", key: "c", width: 60 }, { header: "Tortillerías", key: "n", width: 14 }];
+  encabezado(s6.getRow(1));
+  s6.addRow({ c: "Total dadas de baja en el periodo", n: r.bajas.total }).font = { bold: true };
+  s6.addRow({});
+  s6.addRow({ c: "Por motivo" }).font = { bold: true, color: { argb: GUINDA } };
+  for (const m of r.bajas.porMotivo) s6.addRow({ c: m.texto, n: m.n });
+  s6.addRow({});
+  s6.addRow({ c: "Por estado" }).font = { bold: true, color: { argb: GUINDA } };
+  for (const e of r.bajas.porEstado) s6.addRow({ c: e.nombre, n: e.n });
+
+  // ---- Tipo de elaboración
+  const s7 = wb.addWorksheet("Elaboración");
+  s7.columns = [{ header: "Tipo de elaboración", key: "t", width: 26 }, { header: "Tortillerías con precio", key: "n", width: 20 }, { header: "Tortilla · promedio por kilo", key: "p", width: 26 }];
+  encabezado(s7.getRow(1));
+  for (const e of r.elaboracion) s7.addRow({ t: e.texto, n: e.tortillerias, p: e.promedio });
+  s7.getColumn("C").numFmt = dinero;
+
   // ---- Detalle de capturas
   const d = await capturasDelPeriodo(r.rango);
   const s5 = wb.addWorksheet("Capturas", { views: [{ state: "frozen", ySplit: 1 }] });

@@ -7,6 +7,7 @@ import { MAX_CELDAS, tamanoCelda, zoomSchema } from "../celdas.js";
 /** Cada ruta pide al menos uno de estos permisos (un administrador los tiene todos) */
 const con = (app: FastifyInstance, ...permisos: Permiso[]) => app.conPermiso(...permisos);
 const uuid = z.string().uuid();
+const ELAB = ["maquina", "mano", "ambas", "sin"];
 
 /** El día cuenta en hora de México, igual que el límite de captura */
 const HOY_MX = "(now() AT TIME ZONE 'America/Mexico_City')::date";
@@ -58,8 +59,10 @@ export function rutasAdminMapa(app: FastifyInstance) {
     const [x1, y1, x2, y2] = b.data;
     const soloConPrecios = q.solo === "precios";
     const soloInseguridad = q.solo === "inseguridad";
+    const conBajas = q.bajas === "1"; // "Mostrar dadas de baja" (el cliente las pinta en gris)
+    const elab = ELAB.includes(q.elaboracion as string) ? (q.elaboracion as string) : null;
     const { rows } = await pool.query(
-      `SELECT t.id, t.nombre, t.domicilio, t.estatus, t.origen, ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng,
+      `SELECT t.id, t.nombre, t.domicilio, t.estatus, t.origen, t.operacion, t.elaboracion, ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng,
               COALESCE(s.n, 0) AS n_capturas,
               s.maiz, s.maiz_fecha, s.masa, s.masa_fecha, COALESCE(s.alerta, false) AS alerta
          FROM tortillerias t
@@ -77,13 +80,15 @@ export function rutasAdminMapa(app: FastifyInstance) {
         WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada'
           AND ($7::boolean IS NOT TRUE OR COALESCE(s.n, 0) > 0)
           AND ($8::boolean IS NOT TRUE OR ${SIN_FISCAL_INSEGURIDAD})
+          AND ($9::boolean IS TRUE OR t.operacion = 'activa')
+          AND ($10::text IS NULL OR ($10 = 'sin' AND t.elaboracion IS NULL) OR t.elaboracion = $10)
         LIMIT $5`,
-      [x1, y1, x2, y2, MAX_PUNTOS_ADMIN + 1, desde(dias.success ? dias.data : 30), soloConPrecios, soloInseguridad],
+      [x1, y1, x2, y2, MAX_PUNTOS_ADMIN + 1, desde(dias.success ? dias.data : 30), soloConPrecios, soloInseguridad, conBajas, elab],
     );
     if (rows.length > MAX_PUNTOS_ADMIN) return { demasiadas: true };
     return {
       puntos: rows.map((r) => ({
-        id: r.id, nombre: r.nombre, domicilio: r.domicilio, estatus: r.estatus, origen: r.origen, lat: r.lat, lng: r.lng,
+        id: r.id, nombre: r.nombre, domicilio: r.domicilio, estatus: r.estatus, origen: r.origen, operacion: r.operacion, elaboracion: r.elaboracion, lat: r.lat, lng: r.lng,
         n_capturas: r.n_capturas, ultimo_maiz: precio(r.maiz, r.maiz_fecha), ultima_masa: precio(r.masa, r.masa_fecha), alerta: r.alerta,
       })),
     };
@@ -107,6 +112,8 @@ export function rutasAdminMapa(app: FastifyInstance) {
           WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada'
             AND ($7::boolean IS NOT TRUE OR t.id IN (SELECT tortilleria_id FROM cap))
             AND ($9::boolean IS NOT TRUE OR ${SIN_FISCAL_INSEGURIDAD})
+            AND ($10::boolean IS TRUE OR t.operacion = 'activa')
+            AND ($11::text IS NULL OR ($11 = 'sin' AND t.elaboracion IS NULL) OR t.elaboracion = $11)
        ),
        precios AS (
          SELECT b.gx, b.gy,
@@ -123,7 +130,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
          FROM base b LEFT JOIN precios p ON p.gx = b.gx AND p.gy = b.gy
         GROUP BY b.gx, b.gy
         LIMIT $8`,
-      [x1, y1, x2, y2, tamanoCelda(zoomSchema.parse(q.zoom)), desde(dias.success ? dias.data : 30), q.solo === "precios", MAX_CELDAS, q.solo === "inseguridad"],
+      [x1, y1, x2, y2, tamanoCelda(zoomSchema.parse(q.zoom)), desde(dias.success ? dias.data : 30), q.solo === "precios", MAX_CELDAS, q.solo === "inseguridad", q.bajas === "1", ELAB.includes(q.elaboracion as string) ? (q.elaboracion as string) : null],
     );
     return {
       celdas: rows.map((r) => ({
@@ -149,7 +156,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
               avg(ST_Y(t.geom)) AS lat, avg(ST_X(t.geom)) AS lng,
               min(ST_X(t.geom)) AS x1, min(ST_Y(t.geom)) AS y1, max(ST_X(t.geom)) AS x2, max(ST_Y(t.geom)) AS y2
          FROM tortillerias t
-        WHERE t.estatus <> 'rechazada' AND t.geom IS NOT NULL AND t.${col} IS NOT NULL AND ($1::text IS NULL OR t.estado_clave = $1)
+        WHERE t.estatus <> 'rechazada' AND t.operacion = 'activa' AND t.geom IS NOT NULL AND t.${col} IS NOT NULL AND ($1::text IS NULL OR t.estado_clave = $1)
         GROUP BY t.${col}`,
       [estado],
     );
@@ -175,7 +182,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
     const visitadas = await pool.query(
       `SELECT p.${col} AS clave, count(DISTINCT p.tortilleria_id)::int AS n
          FROM precios_que_cuentan p
-        WHERE p.origen_tortilleria = 'denue' AND ($1::text IS NULL OR p.estado_clave = $1)
+        WHERE p.origen_tortilleria = 'denue' AND p.operacion_tortilleria = 'activa' AND ($1::text IS NULL OR p.estado_clave = $1)
         GROUP BY p.${col}`,
       [estado],
     );
@@ -349,7 +356,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
       `SELECT t.id, t.nombre, t.domicilio, t.estatus, t.origen, t.creado_en, ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng,
               m.nombre AS municipio, e.nombre AS estado, u.correo AS creador,
               t.localidad, t.tipo_vial, t.calle, t.numero_ext, t.numero_int, t.colonia, t.codigo_postal, t.telefono, t.correo,
-              t.personal_ocupado, t.codigo_scian, t.fecha_alta,
+              t.personal_ocupado, t.codigo_scian, t.fecha_alta, t.operacion, t.elaboracion,
               (SELECT count(*)::int FROM fotos f WHERE f.tortilleria_id = t.id) AS n_fotos,
               (EXISTS (SELECT 1 FROM tortilleria_fiscal x WHERE x.tortilleria_id = t.id)
                OR EXISTS (SELECT 1 FROM responsables r WHERE r.tortilleria_id = t.id)) AS tiene_fiscal

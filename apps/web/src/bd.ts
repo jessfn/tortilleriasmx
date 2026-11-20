@@ -24,6 +24,8 @@ export type Local = {
   ultima_negativa?: string | null;
   /** ¿ya tiene foto? Si no, la primera visita debe traerla. undefined = no se sabe (catálogo viejo): no se exige. */
   tiene_foto?: boolean;
+  /** cómo hacen la tortilla (maquina, mano, ambas); null = aún sin dato. Sirve para preseleccionarlo sin conexión. */
+  elaboracion?: string | null;
 };
 
 export type RegistroCatalogo = { clave: string; nombre: string; version: string; descargado: string; puntos: Local[] };
@@ -52,9 +54,13 @@ export type Paquete = {
   /** Tortillería que ya existía y aún no tenía foto: la foto del frente, o el motivo de por qué no se pudo (nunca las dos) */
   fotoExistente?: { idCliente: string; archivo?: Blob };
   sinFoto?: { motivo: string; motivoOtro?: string; idCliente: string };
+  /** Tipo de elaboración de una tortillería que ya existía (solo si no lo tenía o es distinto). Se envía antes de los precios. */
+  elaboracion?: { valor: string; idCliente: string };
+  /** "Ya no funciona": paquete de baja (sin precios). La tortillería queda inactiva en cuanto llega al servidor. */
+  baja?: { motivo: string; motivoOtro?: string; idCliente: string };
   precios: Precio[];
   gps?: { lat: number; lng: number; precision?: number };
-  hecho: { tortilleria?: boolean; foto?: boolean; fiscal?: boolean; sinFiscal?: boolean; fotoExistente?: boolean; sinFoto?: boolean };
+  hecho: { tortilleria?: boolean; foto?: boolean; fiscal?: boolean; sinFiscal?: boolean; fotoExistente?: boolean; sinFoto?: boolean; elaboracion?: boolean; baja?: boolean };
   /** parecidas que encontró el servidor (conflicto de duplicado) */
   posibles?: { id: string; nombre: string; domicilio: string | null }[];
 };

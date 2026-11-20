@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { textoMotivoSinFiscal } from "@tortillerias/shared";
+import { textoElaboracion, textoMotivoBaja, textoMotivoSinFiscal } from "@tortillerias/shared";
 import { pool } from "./db.js";
 
 /* ===================== Periodos (siempre en hora de la Ciudad de México) ===================== */
@@ -145,6 +145,10 @@ export type Reporte = {
   estados: FilaEstado[];
   censo: { catalogo: number; conPrecio: number };
   motivos: { clave: string; texto: string; n: number }[];
+  /** Actualización del catálogo: tortillerías que los censadores dieron de baja en el periodo */
+  bajas: { total: number; porMotivo: { clave: string; texto: string; n: number }[]; porEstado: { clave: string; nombre: string; n: number }[] };
+  /** Tipo de elaboración: tortillerías con precio en el periodo y precio promedio de la tortilla por tipo */
+  elaboracion: { clave: string; texto: string; tortillerias: number; promedio: number | null }[];
 };
 
 const VENTANA = (desdeP: string, hastaP: string) =>
@@ -254,8 +258,31 @@ export async function reunirReporte(rango: Rango): Promise<Reporte> {
   });
 
   // Avance del censo y motivos por los que no se obtuvieron datos fiscales en el periodo
-  const { rows: [cat] } = await pool.query(`SELECT count(*)::int AS n FROM tortillerias WHERE estatus <> 'rechazada'`);
-  const { rows: [con] } = await pool.query(`SELECT count(DISTINCT tortilleria_id)::int AS n FROM precios_que_cuentan p WHERE coalesce(p.capturado_en, p.creado_en) < $1::date::timestamp AT TIME ZONE '${ZONA}'`, [rango.hastaExcl]);
+  // el catálogo y el avance se calculan sin las tortillerías dadas de baja
+  const { rows: [cat] } = await pool.query(`SELECT count(*)::int AS n FROM tortillerias WHERE estatus <> 'rechazada' AND operacion = 'activa'`);
+  const { rows: [con] } = await pool.query(`SELECT count(DISTINCT tortilleria_id)::int AS n FROM precios_que_cuentan p WHERE p.operacion_tortilleria = 'activa' AND coalesce(p.capturado_en, p.creado_en) < $1::date::timestamp AT TIME ZONE '${ZONA}'`, [rango.hastaExcl]);
+  const baj = await pool.query(
+    `SELECT b.motivo, t.estado_clave AS clave, count(*)::int AS n
+       FROM tortilleria_bajas b JOIN tortillerias t ON t.id = b.tortilleria_id
+      WHERE coalesce(b.capturado_en, b.creado_en) >= $1::date::timestamp AT TIME ZONE '${ZONA}' AND coalesce(b.capturado_en, b.creado_en) < $2::date::timestamp AT TIME ZONE '${ZONA}'
+      GROUP BY b.motivo, t.estado_clave`,
+    [rango.desde, rango.hastaExcl],
+  );
+  const porMotivoB = new Map<string, number>();
+  const porEstadoB = new Map<string, number>();
+  for (const b of baj.rows) {
+    porMotivoB.set(b.motivo, (porMotivoB.get(b.motivo) ?? 0) + b.n);
+    porEstadoB.set(b.clave ?? "", (porEstadoB.get(b.clave ?? "") ?? 0) + b.n);
+  }
+  const elab = await pool.query(
+    `WITH u AS (
+       SELECT DISTINCT ON (p.tortilleria_id) p.tortilleria_id, p.elaboracion_tortilleria AS tipo, p.precio_kg::float8 AS precio
+         FROM precios_que_cuentan p WHERE p.producto = 'maiz' AND ${VENTANA("$1", "$2")}
+        ORDER BY p.tortilleria_id, coalesce(p.capturado_en, p.creado_en) DESC, p.creado_en DESC)
+     SELECT coalesce(tipo, 'sin_dato') AS tipo, count(*)::int AS n, avg(precio) AS prom FROM u GROUP BY coalesce(tipo, 'sin_dato')`,
+    [rango.desde, rango.hastaExcl],
+  );
+  const ORDEN_ELAB = ["maquina", "mano", "ambas", "sin_dato"];
   const mot = await pool.query(
     `SELECT motivo, count(*)::int AS n FROM fiscal_negativas
       WHERE creado_en >= $1::date::timestamp AT TIME ZONE '${ZONA}' AND creado_en < $2::date::timestamp AT TIME ZONE '${ZONA}' GROUP BY motivo ORDER BY n DESC`,
@@ -265,6 +292,15 @@ export async function reunirReporte(rango: Rango): Promise<Reporte> {
     rango, generado: new Date().toISOString(), totales, anterior, serie, estados,
     censo: { catalogo: cat.n, conPrecio: con.n },
     motivos: mot.rows.map((m: any) => ({ clave: m.motivo, texto: textoMotivoSinFiscal(m.motivo), n: m.n })),
+    bajas: {
+      total: [...porMotivoB.values()].reduce((a, b) => a + b, 0),
+      porMotivo: [...porMotivoB.entries()].map(([clave, n]) => ({ clave, texto: textoMotivoBaja(clave), n })).sort((a, b) => b.n - a.n),
+      porEstado: [...porEstadoB.entries()].map(([clave, n]) => ({ clave, nombre: nombres.get(clave) ?? clave, n })).sort((a, b) => b.n - a.n || a.nombre.localeCompare(b.nombre, "es")),
+    },
+    elaboracion: ORDEN_ELAB.map((clave) => {
+      const f = elab.rows.find((x: any) => x.tipo === clave);
+      return { clave, texto: clave === "sin_dato" ? "Sin dato" : textoElaboracion(clave), tortillerias: f?.n ?? 0, promedio: f?.prom == null ? null : Math.round(f.prom * 100) / 100 };
+    }),
   };
 }
 

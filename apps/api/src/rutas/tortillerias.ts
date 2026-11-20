@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { fiscalSchema, nuevaTortilleriaSchema, sinFiscalSchema, sinFotoSchema } from "@tortillerias/shared";
+import { bajaSchema, elaboracionSchema, fiscalSchema, nuevaTortilleriaSchema, sinFiscalSchema, sinFotoSchema } from "@tortillerias/shared";
 import { auditar, pool } from "../db.js";
 import { cifrar, descifrar, enmascarar, hashBusqueda } from "../crypto.js";
 import { domicilioDe, type Fila } from "../denue.js";
@@ -26,6 +26,17 @@ const bboxSchema = z
 
 export const MAX_PUNTOS_MAPA = 5000;
 
+/** Hora del teléfono: máximo 7 días atrás y solo se tolera el desajuste del reloj hacia el futuro. Devuelve la fecha, null (no vino) o el texto del error. */
+function horaDeCaptura(valor?: string): Date | null | string {
+  if (!valor) return null;
+  const f = new Date(valor);
+  const dif = Date.now() - f.getTime();
+  if (dif < -TOLERANCIA_FUTURO_MS) return "La hora de captura está en el futuro. Revisa la hora de tu teléfono.";
+  if (dif > MAX_DIAS_ATRASO * 24 * 3600 * 1000) return `La captura tiene más de ${MAX_DIAS_ATRASO} días y ya no se puede enviar`;
+  return f;
+}
+
+
 const uuid = z.string().uuid();
 const LIMITE_ESCRITURA = { rateLimit: { max: 60, timeWindow: "1 minute" } };
 
@@ -41,7 +52,7 @@ export function rutasTortillerias(app: FastifyInstance) {
     // El rectángulo (&&) usa el índice espacial; ST_DWithin afina el círculo exacto. 1° de latitud ≈ 111 km.
     const grados = radio ? radio / 111000 / Math.cos(((lat ?? 0) * Math.PI) / 180) + 0.001 : null;
     const { rows } = await pool.query(
-      `SELECT t.id, t.nombre, t.domicilio, t.estatus,
+      `SELECT t.id, t.nombre, t.domicilio, t.estatus, t.elaboracion,
               ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng, d.razon_social,
               CASE WHEN $4::float8 IS NULL THEN NULL
                    ELSE ST_Distance(t.geom::geography, ST_SetSRID(ST_MakePoint($5,$4),4326)::geography) END AS distancia_m
@@ -53,7 +64,7 @@ export function rutasTortillerias(app: FastifyInstance) {
                 t.geom && ST_Expand(ST_SetSRID(ST_MakePoint($5,$4),4326), $7::float8)
                 AND ST_DWithin(t.geom::geography, ST_SetSRID(ST_MakePoint($5,$4),4326)::geography, $6::float8)))
           AND ($3::text IS NULL OR t.nombre ILIKE '%' || $3 || '%' OR t.domicilio ILIKE '%' || $3 || '%')
-          AND t.estatus <> 'rechazada'
+          AND t.estatus <> 'rechazada' AND t.operacion = 'activa'
         ORDER BY distancia_m NULLS LAST, t.nombre
         LIMIT $8`,
       [municipio ?? null, estado ?? null, q ?? null, cercania ? lat : null, cercania ? lng : null, radio, grados, limite ?? 10000],
@@ -67,10 +78,10 @@ export function rutasTortillerias(app: FastifyInstance) {
     if (!b.success) return reply.code(400).send({ error: "bbox inválido: minLng,minLat,maxLng,maxLat" });
     const [x1, y1, x2, y2] = b.data;
     const { rows } = await pool.query(
-      `SELECT t.id, t.nombre, t.domicilio, t.estatus, ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng, d.razon_social
+      `SELECT t.id, t.nombre, t.domicilio, t.estatus, t.elaboracion, ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng, d.razon_social
          FROM tortillerias t
          LEFT JOIN denue_catalogo d ON d.id_denue = t.id_denue
-        WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada'
+        WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada' AND t.operacion = 'activa'
         LIMIT $5`,
       [x1, y1, x2, y2, MAX_PUNTOS_MAPA + 1],
     );
@@ -88,7 +99,7 @@ export function rutasTortillerias(app: FastifyInstance) {
       `SELECT count(*)::int AS n, avg(ST_X(t.geom)) AS lng, avg(ST_Y(t.geom)) AS lat,
               min(ST_X(t.geom)) AS x1, min(ST_Y(t.geom)) AS y1, max(ST_X(t.geom)) AS x2, max(ST_Y(t.geom)) AS y2
          FROM tortillerias t
-        WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada'
+        WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada' AND t.operacion = 'activa'
         GROUP BY floor(ST_X(t.geom) / $5::float8), floor(ST_Y(t.geom) / $5::float8)
         LIMIT $6`,
       [x1, y1, x2, y2, tamanoCelda(zoomSchema.parse(q.zoom)), MAX_CELDAS],
@@ -122,16 +133,17 @@ export function rutasTortillerias(app: FastifyInstance) {
     const { rows } = await pool.query(
       `INSERT INTO tortillerias(nombre, domicilio, estado_clave, municipio_clave, geom, origen, estatus, creado_por,
                                 localidad, tipo_vial, calle, numero_ext, numero_int, colonia, codigo_postal, telefono, correo,
-                                personal_ocupado, codigo_scian, fecha_alta, id_cliente)
+                                personal_ocupado, codigo_scian, fecha_alta, id_cliente, elaboracion, elaboracion_actualizada_en)
        VALUES ($3,$4,$5,$6,${punto},'nueva','pendiente',$7,
-               $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'311830', to_char(now() AT TIME ZONE 'America/Mexico_City', 'YYYY-MM'), $18)
+               $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'311830', to_char(now() AT TIME ZONE 'America/Mexico_City', 'YYYY-MM'), $18, $19, now())
        RETURNING id`,
       [
         d.lng, d.lat, d.nombre, domicilio, d.estadoClave, d.municipioClave, req.user.sub,
         d.localidad, d.tipoVial, d.calle, d.numeroExt, d.numeroInt ?? null, d.colonia, d.codigoPostal, d.telefono ?? null, d.correo ?? null,
-        d.personalOcupado, d.idCliente ?? null,
+        d.personalOcupado, d.idCliente ?? null, d.elaboracion,
       ],
     );
+    await pool.query("INSERT INTO tortilleria_elaboracion(tortilleria_id, capturista_id, elaboracion) VALUES ($1,$2,$3)", [rows[0].id, req.user.sub, d.elaboracion]);
     await auditar(req.user.sub, d.confirmoNoDuplicado ? "crear_tortilleria_confirmada" : "crear_tortilleria", "tortillerias", rows[0].id);
     return reply.code(201).send({ id: rows[0].id, estatus: "pendiente" });
   });
@@ -156,7 +168,12 @@ export function rutasTortillerias(app: FastifyInstance) {
     );
     // ¿Ya tiene foto? La primera visita a una tortillería que ya existe debe traerla (o el motivo de por qué no se pudo)
     const f = await pool.query("SELECT EXISTS (SELECT 1 FROM fotos WHERE tortilleria_id = $1) AS tiene_foto", [req.params.id]);
-    return { tiene: !!rows[0]?.tiene, ultimaNegativa: n.rows[0] ? { motivo: n.rows[0].motivo, fecha: n.rows[0].fecha } : null, tieneFoto: !!f.rows[0]?.tiene_foto };
+    // el tipo de elaboración (para preseleccionarlo) y si ya se dio de baja
+    const o = await pool.query("SELECT elaboracion, operacion FROM tortillerias WHERE id = $1", [req.params.id]);
+    return {
+      tiene: !!rows[0]?.tiene, ultimaNegativa: n.rows[0] ? { motivo: n.rows[0].motivo, fecha: n.rows[0].fecha } : null, tieneFoto: !!f.rows[0]?.tiene_foto,
+      elaboracion: o.rows[0]?.elaboracion ?? null, inactiva: o.rows[0]?.operacion === "inactiva",
+    };
   });
 
   // "No se pudo tomar la foto" de una tortillería que ya existe: queda el motivo (una fila por intento). Nunca bloquea el precio.
@@ -192,6 +209,87 @@ export function rutasTortillerias(app: FastifyInstance) {
     }
     await auditar(req.user.sub, "foto_negativa", "foto_negativas", ins.rows[0].id);
     return reply.code(201).send({ id: ins.rows[0].id });
+  });
+
+  /* ------------------------------------------------------------------ tipo de elaboración (C19.2) */
+
+  // Se envía ANTES que los precios del paquete (así la comparación del precio atípico ya usa el tipo correcto). Queda el historial;
+  // el valor vigente solo cambia si este registro es más reciente que el vigente (un paquete sin conexión enviado tarde no pisa algo más nuevo).
+  app.post<{ Params: { id: string } }>("/tortillerias/:id/elaboracion", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
+    if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+    const p = elaboracionSchema.safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
+    const d = p.data;
+    if (d.idCliente) {
+      const ya = await pool.query("SELECT id FROM tortilleria_elaboracion WHERE id_cliente = $1", [d.idCliente]);
+      if (ya.rowCount) return reply.code(200).send({ id: ya.rows[0].id, existente: true });
+    }
+    const hora = horaDeCaptura(d.capturadoEn);
+    if (typeof hora === "string") return reply.code(400).send({ error: hora });
+    const t = await pool.query("SELECT 1 FROM tortillerias WHERE id = $1 AND estatus <> 'rechazada'", [req.params.id]);
+    if (!t.rowCount) return reply.code(404).send({ error: "Tortillería no existe" });
+    let id: string;
+    try {
+      const ins = await pool.query(
+        "INSERT INTO tortilleria_elaboracion(tortilleria_id, capturista_id, elaboracion, capturado_en, id_cliente) VALUES ($1,$2,$3,$4,$5) RETURNING id",
+        [req.params.id, req.user.sub, d.elaboracion, hora ? hora.toISOString() : null, d.idCliente ?? null],
+      );
+      id = ins.rows[0].id;
+    } catch (e: any) {
+      if (e?.code === "23505" && d.idCliente) {
+        const ya = await pool.query("SELECT id FROM tortilleria_elaboracion WHERE id_cliente = $1", [d.idCliente]);
+        return reply.code(200).send({ id: ya.rows[0].id, existente: true });
+      }
+      throw e;
+    }
+    const cuando = hora ? hora.toISOString() : new Date().toISOString();
+    const vigente = await pool.query(
+      `UPDATE tortillerias SET elaboracion = $2, elaboracion_actualizada_en = $3::timestamptz
+        WHERE id = $1 AND (elaboracion_actualizada_en IS NULL OR elaboracion_actualizada_en < $3::timestamptz) RETURNING id`,
+      [req.params.id, d.elaboracion, cuando],
+    );
+    await auditar(req.user.sub, "registrar_elaboracion", "tortilleria_elaboracion", id);
+    return reply.code(201).send({ id, vigente: !!vigente.rowCount });
+  });
+
+  /* ------------------------------------------------------------------ "ya no funciona" (C19.1) */
+
+  // Un solo reporte basta: la tortillería queda inactiva en seguida (el cambio y el reporte van en la misma sentencia). No se captura precio ni se pide foto.
+  app.post<{ Params: { id: string } }>("/tortillerias/:id/baja", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
+    if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+    const p = bajaSchema.safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
+    const d = p.data;
+    if (d.idCliente) {
+      const ya = await pool.query("SELECT id FROM tortilleria_bajas WHERE id_cliente = $1", [d.idCliente]);
+      if (ya.rowCount) return reply.code(200).send({ id: ya.rows[0].id, existente: true });
+    }
+    const hora = horaDeCaptura(d.capturadoEn);
+    if (typeof hora === "string") return reply.code(400).send({ error: hora });
+    const t = await pool.query("SELECT operacion FROM tortillerias WHERE id = $1 AND estatus <> 'rechazada'", [req.params.id]);
+    if (!t.rowCount) return reply.code(404).send({ error: "Tortillería no existe" });
+    if (t.rows[0].operacion === "inactiva") return reply.code(200).send({ yaInactiva: true });
+    const conGps = d.lat !== undefined && d.lng !== undefined;
+    let id: string | undefined;
+    try {
+      const ins = await pool.query(
+        `WITH cambio AS (UPDATE tortillerias SET operacion = 'inactiva', operacion_cambiada_en = now() WHERE id = $1 AND operacion = 'activa' RETURNING id)
+         INSERT INTO tortilleria_bajas(tortilleria_id, capturista_id, motivo, motivo_otro, geom_captura, precision_gps, capturado_en, id_cliente)
+         SELECT $1, $2, $3, $4, CASE WHEN $5::float8 IS NULL OR $6::float8 IS NULL THEN NULL ELSE ST_SetSRID(ST_MakePoint($5,$6),4326) END, $7, $8, $9 FROM cambio
+         RETURNING id`,
+        [req.params.id, req.user.sub, d.motivo, d.motivo === "otro" ? d.motivoOtro : null, conGps ? d.lng : null, conGps ? d.lat : null, d.precisionGps ?? null, hora ? hora.toISOString() : null, d.idCliente ?? null],
+      );
+      id = ins.rows[0]?.id;
+    } catch (e: any) {
+      if (e?.code === "23505" && d.idCliente) {
+        const ya = await pool.query("SELECT id FROM tortilleria_bajas WHERE id_cliente = $1", [d.idCliente]);
+        return reply.code(200).send({ id: ya.rows[0]?.id, existente: true });
+      }
+      throw e;
+    }
+    if (!id) return reply.code(200).send({ yaInactiva: true }); // otro censador la dio de baja justo antes
+    await auditar(req.user.sub, "reportar_baja", "tortilleria_bajas", id);
+    return reply.code(201).send({ id });
   });
 
   // "No se obtuvieron los datos fiscales": queda el motivo (una fila por intento). Nunca bloquea el precio.

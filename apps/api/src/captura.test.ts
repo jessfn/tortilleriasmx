@@ -36,6 +36,7 @@ const migracion10 = readFileSync(path.join(aqui, "../../../db/migrations/010_apr
 const migracion11 = readFileSync(path.join(aqui, "../../../db/migrations/011_personal_y_permisos.sql"), "utf8");
 const migracion12 = readFileSync(path.join(aqui, "../../../db/migrations/012_foto_negativas.sql"), "utf8");
 const migracion13 = readFileSync(path.join(aqui, "../../../db/migrations/013_reportes.sql"), "utf8");
+const migracion14 = readFileSync(path.join(aqui, "../../../db/migrations/014_bajas_y_elaboracion.sql"), "utf8").replace(/geometry\(Point,4326\)/g, "geometry");
 
 const PRE = `
 CREATE DOMAIN geometry AS point;
@@ -48,6 +49,8 @@ CREATE FUNCTION ST_MakeEnvelope(float8, float8, float8, float8, int) RETURNS box
 CREATE FUNCTION st_en_caja(point, box) RETURNS boolean LANGUAGE sql AS $$ SELECT $1 <@ $2 $$;
 CREATE OPERATOR && (LEFTARG = point, RIGHTARG = box, FUNCTION = st_en_caja);
 -- distancia en metros (aprox. plana: suficiente para la prueba de duplicados)
+CREATE FUNCTION ST_Expand(point, float8) RETURNS box LANGUAGE sql AS $$ SELECT box(point($1[0] - $2, $1[1] - $2), point($1[0] + $2, $1[1] + $2)) $$;
+CREATE FUNCTION ST_Distance(point, point) RETURNS float8 LANGUAGE sql AS $$ SELECT ($1 <-> $2) * 111000 $$;
 CREATE FUNCTION ST_DWithin(point, point, float8) RETURNS boolean LANGUAGE sql AS $$ SELECT ($1 <-> $2) * 111000 <= $3 $$;
 
 CREATE TABLE usuarios (
@@ -109,6 +112,7 @@ beforeAll(async () => {
   await h.db.exec(migracion11);
   await h.db.exec(migracion12);
   await h.db.exec(migracion13);
+  await h.db.exec(migracion14);
   process.env.UPLOADS_DIR = mkdtempSync(path.join(tmpdir(), "fotos-"));
   const u = async (nombre: string, rol: string) => (await q("INSERT INTO usuarios(usuario, rol, correo) VALUES ($1,$2,$1) RETURNING id", [nombre, rol]))[0].id;
   ana = await u("ana@correo.com", "capturista");
@@ -237,8 +241,8 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
   });
 
   it("al inicio no tiene datos fiscales (y se puede saber sin sesión)", async () => {
-    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, ana)).json()).toEqual({ tiene: false, ultimaNegativa: null, tieneFoto: false });
-    expect(await (await fetch(`${base}/tortillerias/${tA}/fiscal/existe`)).json()).toEqual({ tiene: false, ultimaNegativa: null, tieneFoto: false });
+    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, ana)).json()).toEqual({ tiene: false, ultimaNegativa: null, tieneFoto: false, elaboracion: null, inactiva: false });
+    expect(await (await fetch(`${base}/tortillerias/${tA}/fiscal/existe`)).json()).toEqual({ tiene: false, ultimaNegativa: null, tieneFoto: false, elaboracion: null, inactiva: false });
   });
 
   it("el primero los captura; el RFC se guarda cifrado", async () => {
@@ -251,7 +255,7 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
     expect(Buffer.from(f.rfc_cifrado).toString("utf8")).not.toContain("TGU100101AB1");
     expect(f.celular_cifrado).not.toBeNull();
     expect((await q("SELECT count(*)::int AS n FROM consentimientos WHERE tortilleria_id = $1", [tA]))[0].n).toBe(1);
-    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, beto)).json()).toEqual({ tiene: true, ultimaNegativa: null, tieneFoto: false });
+    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, beto)).json()).toEqual({ tiene: true, ultimaNegativa: null, tieneFoto: false, elaboracion: null, inactiva: false });
   });
 
   it("la segunda vez NO sobrescribe: responde 200 con lo existente, enmascarado", async () => {
@@ -294,7 +298,7 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
        VALUES ($1,'ANA','PEREZ',$2,'h',$3,'h2','fisica',$4,'h3',NULL)`,
       [t, cifrar("CURPXXXXXXXXXXXXXX"), cifrar("5511111111"), cifrar("PEPA800101AB1")],
     );
-    expect(await (await get(`/tortillerias/${t}/fiscal/existe`, ana)).json()).toEqual({ tiene: true, ultimaNegativa: null, tieneFoto: false });
+    expect(await (await get(`/tortillerias/${t}/fiscal/existe`, ana)).json()).toEqual({ tiene: true, ultimaNegativa: null, tieneFoto: false, elaboracion: null, inactiva: false });
     const r = await post(`/tortillerias/${t}/fiscal`, ana, moral);
     expect(r.status).toBe(200);
     expect((await q("SELECT count(*)::int AS n FROM tortilleria_fiscal WHERE tortilleria_id = $1", [t]))[0].n).toBe(0);
@@ -307,7 +311,7 @@ describe("tortillería nueva", () => {
   const nueva = {
     nombre: "Tortillería Nueva Esperanza", estadoClave: "09", municipioClave: "09015", localidad: "Ciudad de México", tipoVial: "AVENIDA",
     calle: "Hidalgo", numeroExt: "123", numeroInt: "2", colonia: "Centro", codigoPostal: "09700", telefono: "5598765432",
-    correo: "nueva@ejemplo.com", personalOcupado: "6 a 10 personas", lat: 19.5, lng: -99.2,
+    correo: "nueva@ejemplo.com", personalOcupado: "6 a 10 personas", lat: 19.5, lng: -99.2, elaboracion: "maquina",
   };
   let id: string;
 
@@ -544,7 +548,7 @@ describe("sin conexión: idempotencia y fecha real de captura", () => {
 describe("sin conexión: tortillería nueva y foto con idCliente", () => {
   const nueva = {
     nombre: "Tortilleria Sin Senal", estadoClave: "09", municipioClave: "09015", localidad: "Ciudad de Mexico", tipoVial: "CALLE",
-    calle: "Norte", numeroExt: "SN", colonia: "Centro", codigoPostal: "09700", telefono: "5512345678", personalOcupado: "0 a 5 personas", lat: 19.6, lng: -99.3,
+    calle: "Norte", numeroExt: "SN", colonia: "Centro", codigoPostal: "09700", telefono: "5512345678", personalOcupado: "0 a 5 personas", lat: 19.6, lng: -99.3, elaboracion: "mano",
   };
   const idT = "33333333-3333-4333-8333-333333333333";
   const idF = "44444444-4444-4444-8444-444444444444";
@@ -595,7 +599,7 @@ describe("sin conexión: tortillería nueva y foto con idCliente", () => {
 describe("catálogo por estado para el teléfono", () => {
   it("solo trae ese estado, sin rechazadas ni sin ubicación, y con tiene_fiscal correcto", async () => {
     const r = await (await get("/catalogo/estado/09", ana)).json();
-    expect(r.columnas).toEqual(["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal", "ultima_negativa", "tiene_foto"]);
+    expect(r.columnas).toEqual(["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal", "ultima_negativa", "elaboracion"]);
     const nombres = r.filas.map((f: any[]) => f[1]);
     expect(nombres).toContain("LA GUERA");
     expect(nombres).not.toContain("RECHAZADA");
@@ -1123,7 +1127,7 @@ describe("C15: usuarios, exportación y auditoría", () => {
     const txt = new TextDecoder("utf-8").decode(bytes);
     const lineas = txt.trim().split("\r\n");
     expect(lineas[0]).toBe(
-      "id_captura,fecha,hora_captura,producto,precio_kg,estatus,atipico,mediana_ref,aprobacion,id_tortilleria,id_denue,origen,estatus_tortilleria,nombre_tortilleria,domicilio,estado,municipio,lat,lng,tiene_datos_fiscales,ultimo_motivo_sin_fiscal,censador_correo,gps_lat,gps_lng,precision_gps",
+      "id_captura,fecha,hora_captura,producto,precio_kg,estatus,atipico,mediana_ref,ref_elaboracion,aprobacion,id_tortilleria,id_denue,origen,estatus_tortilleria,nombre_tortilleria,domicilio,estado,municipio,lat,lng,tiene_datos_fiscales,ultimo_motivo_sin_fiscal,censador_correo,gps_lat,gps_lng,precision_gps,elaboracion,operacion",
     );
     const [{ n }] = await q("SELECT count(*)::int AS n FROM precios_que_cuentan WHERE estado_clave = '16'"); // por omisión: solo lo que cuenta
     expect(lineas.length - 1).toBe(n);
@@ -1179,7 +1183,7 @@ describe("C16: usuarios de la app y personal del administrador (aparte, con perm
     expect(s.permisos).toEqual(["ver_resumen"]);
     expect(s.permisos_efectivos).toEqual(["ver_resumen"]);
     // un administrador tiene todo; un supervisor sin editar, lo de por omisión (sin gestionar usuarios de la app)
-    expect(personal.filas.find((u: any) => u.id === adm).permisos_efectivos).toHaveLength(11);
+    expect(personal.filas.find((u: any) => u.id === adm).permisos_efectivos).toHaveLength(12);
     const sup0 = personal.filas.find((u: any) => u.id === sup);
     expect(sup0.permisos).toBeNull();
     expect(sup0.permisos_efectivos).not.toContain("gestionar_usuarios_app");
@@ -1226,7 +1230,7 @@ describe("C16: usuarios de la app y personal del administrador (aparte, con perm
     expect((await post("/admin/personal", adm, { ...base_, rol: "capturista", permisos: ["ver_resumen"] }, "admin")).status).toBe(400); // los de la app no se crean aquí
     const adm2 = await post("/admin/personal", adm, { ...base_, correo: "otro.admin@sader.gob.mx", rol: "admin", permisos: ["ver_resumen"] }, "admin");
     expect(adm2.status).toBe(201);
-    expect((await adm2.json()).permisos_efectivos).toHaveLength(11); // un administrador siempre puede todo
+    expect((await adm2.json()).permisos_efectivos).toHaveLength(12); // un administrador siempre puede todo
     expect((await q("SELECT permisos FROM usuarios WHERE correo = 'otro.admin@sader.gob.mx'"))[0].permisos).toBeNull();
   });
 
@@ -1458,19 +1462,6 @@ describe("C17: foto de las tortillerías que ya existen (o el motivo de por qué
     expect((await neg(t, ana, { motivo: "cerrado", capturadoEn: hace(3600 * 1000) })).status).toBe(201);
   });
 
-  it("el catálogo del estado trae si cada tortillería tiene foto, y su versión cambia al subirla", async () => {
-    const t = await nuevaF("FOTO 6");
-    const antes = await (await get("/catalogo/estado/09", ana)).json();
-    const i = antes.columnas.indexOf("tiene_foto");
-    expect(i).toBeGreaterThan(-1);
-    expect(antes.filas.find((f: any[]) => f[0] === t)[i]).toBe(0);
-    expect(antes.version).toMatch(/-f2$/); // marca del formato: los teléfonos con catálogo viejo lo descargan de nuevo
-    expect((await subir(t)).status).toBe(201);
-    const des = await (await get("/catalogo/estado/09", ana)).json();
-    expect(des.version).not.toBe(antes.version);
-    expect(des.filas.find((f: any[]) => f[0] === t)[i]).toBe(1);
-  });
-
   it("el administrador ve los intentos sin foto con su motivo y quién los registró", async () => {
     const t = await nuevaF("FOTO 7");
     await neg(t, ana, { motivo: "otro", motivoOtro: "Local en remodelación" });
@@ -1569,7 +1560,7 @@ describe("C18: reportes (EXTRAS)", () => {
     const ExcelJS = (await import("exceljs")).default;
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(await r.arrayBuffer() as any);
-    expect(wb.worksheets.map((s) => s.name)).toEqual(["Resumen", "Por estado", "Por hora", "Sin datos fiscales", "Capturas"]);
+    expect(wb.worksheets.map((s) => s.name)).toEqual(["Resumen", "Por estado", "Por hora", "Sin datos fiscales", "Bajas", "Elaboración", "Capturas"]);
     const estados = wb.getWorksheet("Por estado")!;
     expect(estados.getRow(2).getCell(1).value).toBe("CIUDAD DE MEXICO");
     expect(wb.getWorksheet("Por hora")!.rowCount).toBe(25); // encabezado + 24 horas
@@ -1577,5 +1568,274 @@ describe("C18: reportes (EXTRAS)", () => {
     expect(caps.rowCount).toBe(7); // encabezado + 6 capturas
     expect(caps.getRow(1).values).not.toContain("Nombre");
     expect(JSON.stringify(wb.getWorksheet("Capturas")!.getSheetValues())).not.toMatch(/LA GUERA|EL MAIZ|CHOLULTECA/);
+  });
+});
+
+/* ===================== C19: bajas ("ya no funciona"), tipo de elaboración y cancelación de C17 ===================== */
+describe("C19: tortillerías que ya no funcionan y tipo de elaboración", () => {
+  const muni = "09099";
+  const nuevaT = async (nombre: string, o: { elab?: string; municipio?: string; lat?: number } = {}) =>
+    (await q(
+      "INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus, elaboracion, elaboracion_actualizada_en) VALUES ($1,'09',$2, point(-99.5, $3),'denue','validada',$4, CASE WHEN $4::text IS NULL THEN NULL ELSE now() END) RETURNING id",
+      [nombre, o.municipio ?? muni, o.lat ?? 19.7, o.elab ?? null],
+    ))[0].id as string;
+  const baja = (id: string, usuario: string, body: unknown) => post(`/tortillerias/${id}/baja`, usuario, body);
+  const elab = (id: string, usuario: string, body: unknown) => post(`/tortillerias/${id}/elaboracion`, usuario, body);
+  const precio = (id: string, usuario: string, producto: string, precioKg: number, extra: object = {}) => post("/precios", usuario, { tortilleriaId: id, producto, precioKg, ...extra });
+  let dia = 0; // la fecha solo evita el índice de "una captura por día" entre capturas sembradas del mismo censador
+  const sembrar = (t: string, producto: string, precioKg: number) =>
+    q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, fecha, capturista_id, estatus, aprobacion) VALUES ($1,$2,$3, current_date + $4::int, $5,'validada','automatica')", [t, producto, precioKg, ++dia, beto]);
+  const enLista = async (nombre: string) => {
+    const r = await fetch(`${base}/tortillerias?municipio=${muni}`);
+    const filas = (await r.json()) as any;
+    if (!Array.isArray(filas)) throw new Error(`/tortillerias respondió ${r.status}: ${JSON.stringify(filas)}`);
+    return filas.some((x: any) => x.nombre === nombre);
+  };
+
+  beforeAll(async () => {
+    await q("INSERT INTO municipios VALUES ('09099','09','MUNICIPIO DE PRUEBA C19')");
+  });
+
+  /* ---------- C19.0 ---------- */
+  it("C19.0: el catálogo ya no trae 'tiene_foto' y una tortillería existente recibe precios sin foto", async () => {
+    const r = await (await get("/catalogo/estado/09", ana)).json();
+    expect(r.columnas).not.toContain("tiene_foto");
+    expect(r.columnas).toContain("elaboracion");
+    expect(r.version).toMatch(/-f3$/);
+    const t = await nuevaT("SIN FOTO C19");
+    expect((await q("SELECT count(*)::int AS n FROM fotos WHERE tortilleria_id = $1", [t]))[0].n).toBe(0);
+    expect((await precio(t, ana, "maiz", 22)).status).toBe(201); // nunca se exigió ni se exige foto a una tortillería existente
+  });
+
+  /* ---------- C19.1 ---------- */
+  it("la baja valida: sin sesión 401; sin motivo, motivo desconocido u 'otro' sin texto 400; id inválido 400; inexistente 404", async () => {
+    const t = await nuevaT("BAJA VALIDA");
+    expect((await fetch(`${base}/tortillerias/${t}/baja`, { method: "POST", headers: json, body: JSON.stringify({ motivo: "cerro" }) })).status).toBe(401);
+    expect((await baja(t, ana, {})).status).toBe(400);
+    expect((await baja(t, ana, { motivo: "porque_si" })).status).toBe(400);
+    expect((await baja(t, ana, { motivo: "otro" })).status).toBe(400);
+    expect((await baja(t, ana, { motivo: "otro", motivoOtro: "abc" })).status).toBe(400);
+    expect((await baja("no-es-id", ana, { motivo: "cerro" })).status).toBe(400);
+    expect((await baja(crypto.randomUUID(), ana, { motivo: "cerro" })).status).toBe(404);
+    expect((await q("SELECT operacion FROM tortillerias WHERE id = $1", [t]))[0].operacion).toBe("activa"); // nada de lo anterior la dio de baja
+    const hace = (ms: number) => new Date(Date.now() - ms).toISOString();
+    expect((await baja(t, ana, { motivo: "cerro", capturadoEn: hace(8 * 24 * 3600 * 1000) })).status).toBe(400);
+  });
+
+  it("una sola baja la deja inactiva de inmediato: desaparece de la lista, el mapa y el catálogo, y cambia la versión del catálogo", async () => {
+    const t = await nuevaT("SE VA", { lat: 19.71 });
+    await nuevaT("SE QUEDA", { lat: 19.72 });
+    expect(await enLista("SE VA")).toBe(true);
+    const antes = await (await get("/catalogo/estado/09", ana)).json();
+    expect(antes.filas.some((f: any[]) => f[0] === t)).toBe(true);
+    const idCliente = crypto.randomUUID();
+    const r = await baja(t, ana, { motivo: "cambio_giro", idCliente, capturadoEn: new Date().toISOString(), lat: 19.7101, lng: -99.5001, precisionGps: 12 });
+    expect(r.status).toBe(201);
+    expect((await q("SELECT operacion, operacion_cambiada_en IS NOT NULL AS cuando FROM tortillerias WHERE id = $1", [t]))[0]).toEqual({ operacion: "inactiva", cuando: true });
+    expect(await q("SELECT motivo, capturista_id, precision_gps FROM tortilleria_bajas WHERE tortilleria_id = $1", [t])).toEqual([{ motivo: "cambio_giro", capturista_id: ana, precision_gps: 12 }]);
+    expect(await enLista("SE VA")).toBe(false);
+    expect(await enLista("SE QUEDA")).toBe(true);
+    const mapa = await (await fetch(`${base}/tortillerias/mapa?bbox=-99.6,19.6,-99.4,19.8`)).json();
+    expect(mapa.map((x: any) => x.nombre)).not.toContain("SE VA");
+    expect(mapa.map((x: any) => x.nombre)).toContain("SE QUEDA");
+    const des = await (await get("/catalogo/estado/09", ana)).json();
+    expect(des.filas.some((f: any[]) => f[0] === t)).toBe(false);
+    expect(des.version).not.toBe(antes.version);
+    expect(vi.mocked(auditar)).toHaveBeenCalledWith(ana, "reportar_baja", "tortilleria_bajas", expect.any(String));
+    // el mismo reporte reenviado (sin conexión) no duplica
+    const otra = await baja(t, ana, { motivo: "cambio_giro", idCliente });
+    expect(otra.status).toBe(200);
+    expect((await otra.json()).existente).toBe(true);
+    // otro censador que no sabía: ya estaba inactiva
+    const ya = await baja(t, beto, { motivo: "cerro", idCliente: crypto.randomUUID() });
+    expect(ya.status).toBe(200);
+    expect(await ya.json()).toEqual({ yaInactiva: true });
+    expect((await q("SELECT count(*)::int AS n FROM tortilleria_bajas WHERE tortilleria_id = $1", [t]))[0].n).toBe(1);
+  });
+
+  it("un precio para una tortillería dada de baja se rechaza con 409 y suma una contradicción; sus precios anteriores se conservan", async () => {
+    const t = await nuevaT("CON PRECIOS");
+    await sembrar(t, "maiz", 25);
+    expect((await baja(t, ana, { motivo: "local_vacio" })).status).toBe(201);
+    const r = await precio(t, ana, "maiz", 26);
+    expect(r.status).toBe(409);
+    const cuerpo = await r.json();
+    expect(cuerpo.error).toMatch(/dio de baja/);
+    expect(cuerpo.baja.motivo).toBe("local_vacio");
+    expect((await precio(t, beto, "maiz", 27)).status).toBe(409);
+    expect((await q("SELECT contradicciones FROM tortilleria_bajas WHERE tortilleria_id = $1", [t]))[0].contradicciones).toBe(2);
+    expect((await q("SELECT count(*)::int AS n FROM capturas_precio WHERE tortilleria_id = $1", [t]))[0].n).toBe(1); // no se guardó nada nuevo
+    expect((await q("SELECT count(*)::int AS n FROM precios_que_cuentan WHERE tortilleria_id = $1", [t]))[0].n).toBe(1); // el historial sigue contando
+  });
+
+  it("en el administrador: el mapa oculta las inactivas (se pueden mostrar), el avance del censo sale sin ellas y aparece 'dadas de baja'", async () => {
+    const t = await nuevaT("PARA EL PANEL", { lat: 19.73 });
+    await sembrar(t, "maiz", 24);
+    const bbox = "bbox=-99.6,19.6,-99.4,19.9";
+    const r0 = await (await get("/admin/resumen", sup, "supervisor")).json();
+    const m0 = await (await get(`/admin/mapa?${bbox}`, sup, "supervisor")).json();
+    expect(m0.puntos.some((p: any) => p.id === t)).toBe(true);
+    await baja(t, ana, { motivo: "no_existe" });
+    const r1 = await (await get("/admin/resumen", sup, "supervisor")).json();
+    expect(r1.denue_total).toBe(r0.denue_total - 1);
+    expect(r1.denue_visitadas).toBe(r0.denue_visitadas - 1);
+    expect(r1.dadas_de_baja).toBe(r0.dadas_de_baja + 1);
+    const m1 = await (await get(`/admin/mapa?${bbox}`, sup, "supervisor")).json();
+    expect(m1.puntos.some((p: any) => p.id === t)).toBe(false);
+    const m2 = await (await get(`/admin/mapa?${bbox}&bajas=1`, sup, "supervisor")).json();
+    expect(m2.puntos.find((p: any) => p.id === t)).toMatchObject({ operacion: "inactiva", ultimo_maiz: { precio: 24 } }); // con sus precios de antes
+    const res = await (await get("/admin/bajas/resumen", sup, "supervisor")).json();
+    expect(res.total).toBeGreaterThanOrEqual(1);
+    expect(res.por_motivo.no_existe).toBeGreaterThanOrEqual(1);
+    expect(res.zonas.find((z: any) => z.clave === "09").total).toBe(res.total);
+    expect((await get("/admin/bajas/resumen", ana)).status).toBe(403);
+  });
+
+  it("la lista de bajas se filtra, se ordena por contradicciones y trae la distancia entre el GPS del reporte y el catálogo", async () => {
+    const t = await nuevaT("LEJOS", { lat: 19.8 });
+    await baja(t, ana, { motivo: "cerro", lat: 19.81, lng: -99.5 }); // ~1.1 km del catálogo
+    await precio(t, beto, "maiz", 20); // contradicción
+    const l = await (await get(`/admin/bajas?motivo=cerro&estado=09&municipio=${muni}&orden=contradicciones`, sup, "supervisor")).json();
+    const fila = l.filas.find((f: any) => f.tortilleria_id === t);
+    expect(fila).toMatchObject({ nombre: "LEJOS", motivo: "cerro", censador: "ana@correo.com", contradicciones: 1 });
+    expect(fila.distancia_m).toBeGreaterThan(900);
+    expect(fila.distancia_m).toBeLessThan(1300);
+    expect(l.filas[0].contradicciones).toBeGreaterThanOrEqual(l.filas[l.filas.length - 1].contradicciones);
+    expect((await get("/admin/bajas?motivo=nada", sup, "supervisor")).status).toBe(400);
+    expect((await get("/admin/bajas", ana)).status).toBe(403);
+    const sit = await (await get(`/admin/tortillerias/${t}/situacion`, sup, "supervisor")).json();
+    expect(sit.operacion).toBe("inactiva");
+    expect(sit.bajas).toHaveLength(1);
+  });
+
+  it("reactivar: solo con el permiso 'gestionar_bajas'; vuelve a la lista y al catálogo, y queda quién y cuándo", async () => {
+    const t = await nuevaT("REACTIVABLE", { lat: 19.74 });
+    await baja(t, ana, { motivo: "cerro" });
+    const url = `/admin/tortillerias/${t}/operacion`;
+    const patch = (usuario: string, rol: string) => fetch(base + url, { method: "PATCH", headers: auth(usuario, rol), body: JSON.stringify({ operacion: "activa" }) });
+    expect((await patch(ana, "capturista")).status).toBe(403);
+    await q("UPDATE usuarios SET permisos = ARRAY['ver_resumen','ver_revision'] WHERE id = $1", [sup]);
+    expect((await patch(sup, "supervisor")).status).toBe(403); // sin el permiso marcado
+    await q("UPDATE usuarios SET permisos = NULL WHERE id = $1", [sup]); // por omisión sí lo tiene
+    expect((await fetch(base + url, { method: "PATCH", headers: auth(sup, "supervisor"), body: JSON.stringify({ operacion: "inactiva" }) })).status).toBe(400); // solo se reactiva
+    expect((await patch(sup, "supervisor")).status).toBe(200);
+    expect((await q("SELECT operacion FROM tortillerias WHERE id = $1", [t]))[0].operacion).toBe("activa");
+    expect((await q("SELECT reactivada_por, reactivada_en IS NOT NULL AS cuando FROM tortilleria_bajas WHERE tortilleria_id = $1", [t]))[0]).toEqual({ reactivada_por: sup, cuando: true });
+    expect(vi.mocked(auditar)).toHaveBeenCalledWith(sup, "reactivar_tortilleria", "tortillerias", t);
+    expect(await enLista("REACTIVABLE")).toBe(true);
+    expect((await precio(t, ana, "maiz", 23)).status).toBe(201); // ya acepta precios otra vez
+    expect((await patch(adm, "admin")).status).toBe(200); // ya estaba activa: sin error
+  });
+
+  /* ---------- C19.2 ---------- */
+  it("la elaboración es obligatoria en una tortillería nueva y queda con su historial", async () => {
+    const nueva = {
+      nombre: "Tortilleria Con Elaboracion", estadoClave: "09", municipioClave: muni, localidad: "Ciudad de Mexico", tipoVial: "CALLE",
+      calle: "Norte", numeroExt: "SN", colonia: "Centro", codigoPostal: "09700", telefono: "5512345678", personalOcupado: "0 a 5 personas", lat: 19.61, lng: -99.31,
+    };
+    expect((await post("/tortillerias", ana, nueva)).status).toBe(400); // sin elaboración
+    expect((await post("/tortillerias", ana, { ...nueva, elaboracion: "robot" })).status).toBe(400);
+    const ok = await post("/tortillerias", ana, { ...nueva, elaboracion: "mano" });
+    expect(ok.status).toBe(201);
+    const { id } = await ok.json();
+    expect((await q("SELECT elaboracion FROM tortillerias WHERE id = $1", [id]))[0].elaboracion).toBe("mano");
+    expect(await q("SELECT elaboracion, capturista_id FROM tortilleria_elaboracion WHERE tortilleria_id = $1", [id])).toEqual([{ elaboracion: "mano", capturista_id: ana }]);
+  });
+
+  it("registrar la elaboración: valida, es idempotente y un registro más viejo no pisa uno más nuevo", async () => {
+    const t = await nuevaT("ELABORACION");
+    expect((await elab(t, ana, {})).status).toBe(400);
+    expect((await elab(t, ana, { elaboracion: "robot" })).status).toBe(400);
+    expect((await elab("no-es-id", ana, { elaboracion: "mano" })).status).toBe(400);
+    expect((await elab(crypto.randomUUID(), ana, { elaboracion: "mano" })).status).toBe(404);
+    expect((await fetch(`${base}/tortillerias/${t}/elaboracion`, { method: "POST", headers: json, body: JSON.stringify({ elaboracion: "mano" }) })).status).toBe(401);
+    const ahora = new Date();
+    const hace = (min: number) => new Date(ahora.getTime() - min * 60000).toISOString();
+    const idCliente = crypto.randomUUID();
+    const r1 = await elab(t, ana, { elaboracion: "mano", idCliente, capturadoEn: hace(5) });
+    expect(r1.status).toBe(201);
+    expect((await q("SELECT elaboracion FROM tortillerias WHERE id = $1", [t]))[0].elaboracion).toBe("mano");
+    const rep = await elab(t, ana, { elaboracion: "mano", idCliente });
+    expect(rep.status).toBe(200);
+    expect((await rep.json()).existente).toBe(true);
+    // un paquete sin conexión de hace una hora llega tarde: queda en el historial pero no cambia el valor vigente
+    const vieja = await elab(t, beto, { elaboracion: "maquina", capturadoEn: hace(60) });
+    expect(vieja.status).toBe(201);
+    expect((await vieja.json()).vigente).toBe(false);
+    expect((await q("SELECT elaboracion FROM tortillerias WHERE id = $1", [t]))[0].elaboracion).toBe("mano");
+    expect((await q("SELECT count(*)::int AS n FROM tortilleria_elaboracion WHERE tortilleria_id = $1", [t]))[0].n).toBe(2);
+    // uno más nuevo sí cambia el vigente
+    expect((await (await elab(t, beto, { elaboracion: "ambas", capturadoEn: hace(1) })).json()).vigente).toBe(true);
+    expect((await q("SELECT elaboracion FROM tortillerias WHERE id = $1", [t]))[0].elaboracion).toBe("ambas");
+    // se devuelve para preseleccionarlo
+    expect((await (await fetch(`${base}/tortillerias/${t}/fiscal/existe`)).json()).elaboracion).toBe("ambas");
+    expect((await (await get("/catalogo/estado/09", ana)).json()).filas.find((f: any[]) => f[0] === t).at(-1)).toBe("ambas");
+    expect(vi.mocked(auditar)).toHaveBeenCalledWith(ana, "registrar_elaboracion", "tortilleria_elaboracion", expect.any(String));
+  });
+
+  it("precios atípicos por tipo: la tortilla a mano no se marca por ser más cara; con menos de 3 del mismo tipo se usa todo el municipio", async () => {
+    // 3 tortillerías a mano de $30 y 5 a máquina de $22 en el mismo municipio
+    for (let i = 0; i < 3; i++) await sembrar(await nuevaT(`MANO ${i}`, { elab: "mano", municipio: "09098" }), "maiz", 30);
+    for (let i = 0; i < 5; i++) await sembrar(await nuevaT(`MAQ ${i}`, { elab: "maquina", municipio: "09098" }), "maiz", 22);
+    const aMano = await nuevaT("NUEVA A MANO", { elab: "mano", municipio: "09098" });
+    const aMaq = await nuevaT("NUEVA A MAQUINA", { elab: "maquina", municipio: "09098" });
+    const sinTipo = await nuevaT("SIN TIPO", { municipio: "09098" });
+    const r1 = await (await precio(aMano, ana, "maiz", 31)).json();
+    expect(r1.alerta).toBe(false); // contra los $30 de las de a mano, no contra los $22 de todo el municipio
+    expect((await q("SELECT ref_elaboracion, mediana_ref::float8 AS m, n_ref, estatus FROM capturas_precio WHERE id = $1", [r1.id]))[0]).toEqual({ ref_elaboracion: "mano", m: 30, n_ref: 3, estatus: "validada" });
+    const r2 = await (await precio(aMaq, ana, "maiz", 31)).json();
+    expect(r2.alerta).toBe(true); // $31 sí es atípico entre las de máquina ($22)
+    expect((await q("SELECT ref_elaboracion, mediana_ref::float8 AS m, n_ref, estatus FROM capturas_precio WHERE id = $1", [r2.id]))[0]).toEqual({ ref_elaboracion: "maquina", m: 22, n_ref: 5, estatus: "pendiente" });
+    // sin tipo: toda la referencia del municipio (a mano + a máquina + la nueva de $31 que ya cuenta)
+    const r3 = await (await precio(sinTipo, ana, "maiz", 24)).json();
+    expect((await q("SELECT ref_elaboracion FROM capturas_precio WHERE id = $1", [r3.id]))[0].ref_elaboracion).toBeNull();
+    // un tipo con menos de 3 precios (solo hay uno de "ambas") usa la mediana de todo el municipio
+    const ambas = await nuevaT("AMBAS", { elab: "ambas", municipio: "09098" });
+    const r4 = await (await precio(ambas, ana, "maiz", 25)).json();
+    expect((await q("SELECT ref_elaboracion, n_ref FROM capturas_precio WHERE id = $1", [r4.id]))[0].ref_elaboracion).toBeNull();
+    // la tarjeta de Revisión lo dice
+    const rev = await (await get(`/admin/capturas?estatus=pendiente&tortilleria=${aMaq}`, sup, "supervisor")).json();
+    expect(rev.find((c: any) => c.id === r2.id)).toMatchObject({ ref_elaboracion: "maquina", n_ref: 5 });
+  });
+
+  it("estadísticas por tipo de elaboración: cuántas tortillerías de cada tipo (y sin dato) y el precio promedio por tipo", async () => {
+    await q("INSERT INTO municipios VALUES ('09098','09','OTRO MUNICIPIO C19') ON CONFLICT DO NOTHING");
+    const r = await (await get("/admin/estadisticas/elaboracion?estado=09&dias=30", sup, "supervisor")).json();
+    const z = r.zonas.find((x: any) => x.clave === "09098");
+    expect(z.visitadas).toMatchObject({ mano: 4, maquina: 5, ambas: 1, sin_dato: 1 }); // 3+1 a mano, 5 a máquina, 1 "ambas", 1 sin dato
+    expect(z.promedio.maquina).toBe(22); // el de $31 quedó pendiente: no cuenta
+    expect(z.promedio.mano).toBe(30.25); // (30 + 30 + 30 + 31) / 4: último precio de cada tortillería
+    expect(r.nacional.visitadas.mano).toBeGreaterThanOrEqual(4);
+    expect((await get("/admin/estadisticas/elaboracion", ana)).status).toBe(403);
+  });
+
+  /* ---------- C19.3 ---------- */
+  it("el reporte en Excel trae las bajas del periodo (por motivo y estado) y el precio de la tortilla por tipo de elaboración", async () => {
+    const hoy = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    const r = await get(`/admin/reportes/descargar?periodo=dia&fecha=${hoy}&formato=xlsx`, adm, "admin");
+    expect(r.status).toBe(200);
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load((await r.arrayBuffer()) as any);
+    const bajas = wb.getWorksheet("Bajas")!;
+    expect(Number(bajas.getRow(2).getCell(2).value)).toBeGreaterThanOrEqual(4); // las de estas pruebas
+    const textoBajas = JSON.stringify(bajas.getSheetValues());
+    expect(textoBajas).toContain("Cerró definitivamente");
+    expect(textoBajas).toContain("CIUDAD DE MEXICO");
+    const el = wb.getWorksheet("Elaboración")!;
+    const fila = (t: string) => { for (let i = 2; i <= el.rowCount; i++) if (el.getRow(i).getCell(1).value === t) return el.getRow(i); };
+    expect(Number(fila("A mano")!.getCell(2).value)).toBeGreaterThanOrEqual(4);
+    expect(Number(fila("A mano")!.getCell(3).value)).toBeGreaterThan(Number(fila("Máquina")!.getCell(3).value)); // la de a mano cuesta más
+    expect(fila("Sin dato")).toBeDefined();
+  });
+
+  it("el CSV de capturas trae las columnas nuevas (elaboracion, operacion y ref_elaboracion)", async () => {
+    const r = await get("/admin/exportar/capturas?estatus=todos", adm, "admin");
+    expect(r.status).toBe(200);
+    const texto = Buffer.from(await r.arrayBuffer()).toString("utf8");
+    const cab = texto.replace(/^﻿/, "").split("\r\n")[0].split(",");
+    expect(cab).toEqual(expect.arrayContaining(["elaboracion", "operacion", "ref_elaboracion"]));
+    const fila = texto.split("\r\n").find((l) => l.includes("NUEVA A MANO") || l.includes(",mano,")) ?? "";
+    expect(fila).toContain("mano");
   });
 });
