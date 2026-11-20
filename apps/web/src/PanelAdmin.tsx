@@ -4,7 +4,7 @@ import { NegativasFoto } from "./NegativasFoto";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowUpDown, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, ChevronDown, ChevronLeft, ChevronRight, Clock, Eye, History, Loader2, Search, Mail, MapPin, Navigation, Phone, Store, TriangleAlert,
-  UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, KeyRound, Copy, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog,
+  UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, KeyRound, Copy, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog, Sparkles,
 } from "lucide-react";
 import { api, type Sesion } from "./api";
 import FotoAuth from "./FotoAuth";
@@ -21,6 +21,7 @@ import AdminBarra from "./AdminBarra";
 import AdminResumen, { type Resumen } from "./AdminResumen";
 import AdminMapa, { type FocoMapa } from "./AdminMapa";
 import AdminEstadisticas from "./AdminEstadisticas";
+import AdminExtras from "./AdminExtras";
 import { useVivo } from "./AdminVivo";
 
 export type TortilleriaAdm = {
@@ -65,6 +66,7 @@ export default function PanelAdmin({
     ...(puede("ver_mapa") ? [{ id: "mapa", texto: "Mapa", icono: MapaIcono }] : []),
     ...(puede("ver_estadisticas") ? [{ id: "estadisticas", texto: "Estadísticas", icono: LineChart }] : []),
     ...(puede("ver_revision") ? [{ id: "revision", texto: "Revisión", icono: ClipboardCheck, insignia: undefined as number | undefined }] : []),
+    ...(puede("ver_extras") ? [{ id: "extras", texto: "Extras", icono: Sparkles }] : []),
     ...(puede("ver_usuarios_app") || esAdmin ? [{ id: "usuarios", texto: "Usuarios", icono: Users }] : []),
     ...(esAdmin ? [{ id: "auditoria", texto: "Auditoría", icono: History }] : []),
     { id: "perfil", texto: "Perfil", icono: UserRound },
@@ -116,6 +118,7 @@ export default function PanelAdmin({
       {tab === "usuarios" && (puede("ver_usuarios_app") || esAdmin) && (
         <AdminUsuarios miId={sesion.usuario.id} esAdmin={esAdmin} puedeVerApp={puede("ver_usuarios_app")} puedeGestionarApp={puede("gestionar_usuarios_app")} />
       )}
+      {tab === "extras" && puede("ver_extras") && <AdminExtras />}
       {tab === "auditoria" && esAdmin && <AdminAuditoria />}
       {tab === "perfil" && <Perfil sesion={sesion} alActualizar={alActualizarSesion} alSalir={alSalir} />}
     </AdminBarra>

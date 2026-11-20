@@ -11,6 +11,7 @@ import { rutasFotos } from "./rutas/fotos.js";
 import { rutasPanel } from "./rutas/panel.js";
 import { rutasAdmin } from "./rutas/admin.js";
 import { rutasAdminMapa } from "./rutas/admin-mapa.js";
+import { rutasAdminReportes } from "./rutas/admin-reportes.js";
 import { rutasCatalogoEstado } from "./rutas/catalogo-estado.js";
 
 export async function crearApp() {
@@ -45,6 +46,7 @@ export async function crearApp() {
   rutasPanel(app);
   rutasAdmin(app);
   rutasAdminMapa(app);
+  rutasAdminReportes(app);
   rutasCatalogoEstado(app);
   return app;
 }

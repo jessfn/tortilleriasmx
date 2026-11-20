@@ -18,6 +18,7 @@ const ACCIONES: Record<string, string> = {
   tortilleria_rechazada: "Rechazó una tortillería",
   crear_tortilleria: "Dio de alta una tortillería",
   exportar_capturas: "Descargó las capturas (CSV)",
+  descargar_reporte: "Descargó un reporte (Extras)",
   aprobacion_masiva_migracion_010: "Aprobación automática de precios normales (migración 010)",
 };
 const accionTexto = (a: string) => ACCIONES[a] ?? a.replace(/_/g, " ");

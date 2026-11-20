@@ -12,6 +12,7 @@ export const PERMISOS = [
   { clave: "ver_estadisticas", tipo: "vista", texto: "Estadísticas", ayuda: "Por estado y municipio, y tortillerías sin datos fiscales" },
   { clave: "ver_revision", tipo: "vista", texto: "Revisión", ayuda: "Tortillerías nuevas y precios atípicos por revisar" },
   { clave: "ver_usuarios_app", tipo: "vista", texto: "Usuarios de la app", ayuda: "La lista de quienes capturan precios en la app" },
+  { clave: "ver_extras", tipo: "vista", texto: "Extras (reportes)", ayuda: "Descargar reportes en PDF y Excel por día, semana, mes o año" },
   { clave: "revisar_precios", tipo: "accion", texto: "Aprobar o rechazar precios atípicos", ayuda: "Uno por uno o varios a la vez" },
   { clave: "validar_tortillerias", tipo: "accion", texto: "Validar o rechazar tortillerías nuevas", ayuda: "Las dadas de alta por los censadores" },
   { clave: "ver_datos_fiscales", tipo: "accion", texto: "Ver RFC y celular completos", ayuda: "Sin este permiso se ven enmascarados" },
@@ -23,8 +24,8 @@ export type Permiso = (typeof PERMISOS)[number]["clave"];
 export const CLAVES_PERMISOS = PERMISOS.map((p) => p.clave) as readonly Permiso[];
 export const esPermiso = (c: string): c is Permiso => (CLAVES_PERMISOS as readonly string[]).includes(c);
 
-/** Lo que tiene un supervisor al que nunca se le han editado los permisos: todo lo de siempre, sin la gestión de usuarios de la app */
-export const PERMISOS_SUPERVISOR_POR_OMISION: readonly Permiso[] = CLAVES_PERMISOS.filter((c) => c !== "ver_usuarios_app" && c !== "gestionar_usuarios_app");
+/** Lo que tiene un supervisor al que nunca se le han editado los permisos: todo lo de siempre, sin la gestión de usuarios de la app ni los reportes (Extras), que el administrador delega */
+export const PERMISOS_SUPERVISOR_POR_OMISION: readonly Permiso[] = CLAVES_PERMISOS.filter((c) => c !== "ver_usuarios_app" && c !== "gestionar_usuarios_app" && c !== "ver_extras");
 
 export type RolUsuario = "capturista" | "supervisor" | "admin";
 

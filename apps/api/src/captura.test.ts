@@ -35,6 +35,7 @@ const migracion9 = readFileSync(path.join(aqui, "../../../db/migrations/009_sin_
 const migracion10 = readFileSync(path.join(aqui, "../../../db/migrations/010_aprobacion_automatica.sql"), "utf8");
 const migracion11 = readFileSync(path.join(aqui, "../../../db/migrations/011_personal_y_permisos.sql"), "utf8");
 const migracion12 = readFileSync(path.join(aqui, "../../../db/migrations/012_foto_negativas.sql"), "utf8");
+const migracion13 = readFileSync(path.join(aqui, "../../../db/migrations/013_reportes.sql"), "utf8");
 
 const PRE = `
 CREATE DOMAIN geometry AS point;
@@ -107,6 +108,7 @@ beforeAll(async () => {
   await h.db.exec(migracion10);
   await h.db.exec(migracion11);
   await h.db.exec(migracion12);
+  await h.db.exec(migracion13);
   process.env.UPLOADS_DIR = mkdtempSync(path.join(tmpdir(), "fotos-"));
   const u = async (nombre: string, rol: string) => (await q("INSERT INTO usuarios(usuario, rol, correo) VALUES ($1,$2,$1) RETURNING id", [nombre, rol]))[0].id;
   ana = await u("ana@correo.com", "capturista");
@@ -1177,7 +1179,7 @@ describe("C16: usuarios de la app y personal del administrador (aparte, con perm
     expect(s.permisos).toEqual(["ver_resumen"]);
     expect(s.permisos_efectivos).toEqual(["ver_resumen"]);
     // un administrador tiene todo; un supervisor sin editar, lo de por omisión (sin gestionar usuarios de la app)
-    expect(personal.filas.find((u: any) => u.id === adm).permisos_efectivos).toHaveLength(10);
+    expect(personal.filas.find((u: any) => u.id === adm).permisos_efectivos).toHaveLength(11);
     const sup0 = personal.filas.find((u: any) => u.id === sup);
     expect(sup0.permisos).toBeNull();
     expect(sup0.permisos_efectivos).not.toContain("gestionar_usuarios_app");
@@ -1224,7 +1226,7 @@ describe("C16: usuarios de la app y personal del administrador (aparte, con perm
     expect((await post("/admin/personal", adm, { ...base_, rol: "capturista", permisos: ["ver_resumen"] }, "admin")).status).toBe(400); // los de la app no se crean aquí
     const adm2 = await post("/admin/personal", adm, { ...base_, correo: "otro.admin@sader.gob.mx", rol: "admin", permisos: ["ver_resumen"] }, "admin");
     expect(adm2.status).toBe(201);
-    expect((await adm2.json()).permisos_efectivos).toHaveLength(10); // un administrador siempre puede todo
+    expect((await adm2.json()).permisos_efectivos).toHaveLength(11); // un administrador siempre puede todo
     expect((await q("SELECT permisos FROM usuarios WHERE correo = 'otro.admin@sader.gob.mx'"))[0].permisos).toBeNull();
   });
 
@@ -1476,5 +1478,104 @@ describe("C17: foto de las tortillerías que ya existen (o el motivo de por qué
     expect(h).toHaveLength(1);
     expect(h[0]).toMatchObject({ motivo: "otro", motivo_otro: "Local en remodelación", censador: "ana@correo.com" });
     expect((await get(`/admin/tortillerias/${t}/negativas-foto`, ana)).status).toBe(403);
+  });
+});
+
+/* ===================== C18: EXTRAS, reportes en PDF y Excel ===================== */
+describe("C18: reportes (EXTRAS)", () => {
+  let tC: string;
+  const rep = (qs: string, usuario = adm, rol = "admin") => get(`/admin/reportes/${qs}`, usuario, rol);
+  let n = 0; // la fecha solo evita el índice de "una captura por día"; los reportes usan el momento exacto de la captura
+  const cap = (t: string, producto: string, precio: number, momento: string, estatus = "validada") =>
+    q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, fecha, capturista_id, estatus, creado_en) VALUES ($1,$2,$3,'2019-01-01'::date + $7::int,$4,$5,$6)", [t, producto, precio, ana, estatus, momento, n++]);
+
+  beforeAll(async () => {
+    await q("INSERT INTO estados VALUES ('21','PUEBLA')");
+    await q("INSERT INTO municipios VALUES ('21114','21','PUEBLA')");
+    tC = (await q("INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus) VALUES ('LA CHOLULTECA','21','21114', point(-98.2, 19.04),'denue','validada') RETURNING id"))[0].id;
+    // México no tiene horario de verano: 00:00 del 19 = 06:00 UTC
+    await cap(tA, "maiz", 9, "2020-03-19T05:59:59Z"); // 11:59:59 p. m. del 18: NO es del día 19
+    await cap(tA, "maiz", 20, "2020-03-19T16:00:00Z"); // 10:00 a. m. del 19
+    await cap(tA, "maiz", 24, "2020-03-19T20:00:00Z"); // 2:00 p. m. del 19 (último precio de tA)
+    await cap(tA, "masa", 15, "2020-03-19T20:30:00Z");
+    await cap(tB, "maiz", 30, "2020-03-19T18:00:00Z");
+    await cap(tC, "maiz", 18, "2020-03-19T15:00:00Z");
+    await cap(tC, "maiz", 55, "2020-03-19T15:30:00Z", "pendiente"); // no cuenta
+    await cap(tC, "maiz", 40, "2020-03-20T05:59:59Z"); // 11:59:59 p. m. del 19: SÍ es del día 19 (y último precio de tC)
+    await cap(tC, "maiz", 12, "2020-03-20T06:00:00Z"); // 12:00 a. m. del 20: NO
+  });
+
+  it("solo entra quien tiene el permiso de Extras (un supervisor con los permisos de siempre, no)", async () => {
+    const url = "vista-previa?periodo=dia&fecha=2020-03-19";
+    expect((await rep(url, ana, "capturista")).status).toBe(403);
+    expect((await rep(url, sup, "supervisor")).status).toBe(403);
+    await q("UPDATE usuarios SET permisos = ARRAY['ver_extras'] WHERE id = $1", [sup]);
+    expect((await rep(url, sup, "supervisor")).status).toBe(200);
+    expect((await rep("descargar?periodo=dia&fecha=2020-03-19&formato=pdf", sup, "supervisor")).status).toBe(200);
+    await q("UPDATE usuarios SET permisos = NULL WHERE id = $1", [sup]);
+    expect((await rep(url, sup, "supervisor")).status).toBe(403);
+    expect((await rep(url, adm)).status).toBe(200);
+    expect((await fetch(`${base}/admin/reportes/${url}`)).status).toBe(401);
+  });
+
+  it("el día va de las 12:00 a. m. a las 11:59 p. m. de México; solo cuentan precios aprobados de tortillerías validadas", async () => {
+    const r = await (await rep("vista-previa?periodo=dia&fecha=2020-03-19")).json();
+    expect(r.titulo).toBe("Jueves 19 de marzo de 2020");
+    expect(r.horario).toContain("12:00 a. m. a 11:59 p. m.");
+    expect(r.totales.capturas).toBe(6); // el de $9 y el de $12 quedan fuera por la hora; el de $55 por estar pendiente
+    expect(r.totales).toMatchObject({ visitadas: 3, capMaiz: 5, capMasa: 1, censadores: 1, nuevas: 0 });
+    // promedio entre tortillerías con su último precio del día: tA 24, tB 30, tC 40
+    expect(r.totales.maiz).toMatchObject({ tiendas: 3, promedio: 31.33, minimo: 24, maximo: 40 });
+    expect(r.totales.masa).toMatchObject({ tiendas: 1, promedio: 15 });
+    const dia18 = await (await rep("vista-previa?periodo=dia&fecha=2020-03-18")).json();
+    expect(dia18.totales.capturas).toBe(1); // la de las 11:59:59 p. m.
+    const dia20 = await (await rep("vista-previa?periodo=dia&fecha=2020-03-20")).json();
+    expect(dia20.totales.capturas).toBe(1); // la de las 12:00 a. m.
+  });
+
+  it("semana, mes y año incluyen ese día; el rango también; compara con el periodo anterior", async () => {
+    for (const qs of ["periodo=semana&fecha=2020-03-17", "periodo=mes&fecha=2020-03-01", "periodo=anio&fecha=2020-06-01", "periodo=rango&fecha=2020-03-18&hasta=2020-03-20"]) {
+      const r = await (await rep(`vista-previa?${qs}`)).json();
+      expect(r.totales.capturas, qs).toBe(8); // todas las aprobadas, menos la pendiente
+    }
+    const r = await (await rep("vista-previa?periodo=dia&fecha=2020-03-19")).json();
+    expect(r.anteriorTotales.capturas).toBe(1);
+    expect(r.estados).toBe(2);
+  });
+
+  it("rechaza periodos mal pedidos", async () => {
+    for (const qs of ["periodo=hora&fecha=2020-03-19", "periodo=dia", "periodo=dia&fecha=19/03/2020", "periodo=dia&fecha=2999-01-01", "periodo=rango&fecha=2020-03-19", "periodo=rango&fecha=2020-03-19&hasta=2020-03-01", "periodo=dia&fecha=2020-03-19&formato=docx"])
+      expect((await rep(`vista-previa?${qs}`)).status, qs).toBe(400);
+  });
+
+  it("descarga el PDF (con nombre de archivo y auditoría) para el día, un periodo vacío y un año", async () => {
+    for (const qs of ["periodo=dia&fecha=2020-03-19", "periodo=dia&fecha=2019-01-01", "periodo=anio&fecha=2020-01-01", "periodo=rango&fecha=2020-01-01&hasta=2020-03-31"]) {
+      const r = await rep(`descargar?${qs}&formato=pdf`);
+      expect(r.status, qs).toBe(200);
+      expect(r.headers.get("content-type")).toBe("application/pdf");
+      expect(r.headers.get("content-disposition")).toMatch(/TortilleriasMX_Reporte_.*\.pdf/);
+      const b = Buffer.from(await r.arrayBuffer());
+      expect(b.subarray(0, 5).toString()).toBe("%PDF-");
+      expect(b.length).toBeGreaterThan(20000);
+      if (qs.startsWith("periodo=dia&fecha=2020") && process.env.GUARDAR_REPORTES) (await import("node:fs")).writeFileSync(path.join(process.env.GUARDAR_REPORTES, "ejemplo.pdf"), b);
+    }
+    expect(vi.mocked(auditar)).toHaveBeenCalledWith(adm, "descargar_reporte", "reporte", "dia:2020-03-19..2020-03-19:pdf");
+  });
+
+  it("descarga el Excel con sus hojas, sin datos personales", async () => {
+    const r = await rep("descargar?periodo=dia&fecha=2020-03-19&formato=xlsx");
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toContain("spreadsheetml");
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await r.arrayBuffer() as any);
+    expect(wb.worksheets.map((s) => s.name)).toEqual(["Resumen", "Por estado", "Por hora", "Sin datos fiscales", "Capturas"]);
+    const estados = wb.getWorksheet("Por estado")!;
+    expect(estados.getRow(2).getCell(1).value).toBe("CIUDAD DE MEXICO");
+    expect(wb.getWorksheet("Por hora")!.rowCount).toBe(25); // encabezado + 24 horas
+    const caps = wb.getWorksheet("Capturas")!;
+    expect(caps.rowCount).toBe(7); // encabezado + 6 capturas
+    expect(caps.getRow(1).values).not.toContain("Nombre");
+    expect(JSON.stringify(wb.getWorksheet("Capturas")!.getSheetValues())).not.toMatch(/LA GUERA|EL MAIZ|CHOLULTECA/);
   });
 });
