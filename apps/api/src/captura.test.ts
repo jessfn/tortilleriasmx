@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync } from "node:fs";
@@ -37,6 +37,7 @@ const migracion11 = readFileSync(path.join(aqui, "../../../db/migrations/011_per
 const migracion12 = readFileSync(path.join(aqui, "../../../db/migrations/012_foto_negativas.sql"), "utf8");
 const migracion13 = readFileSync(path.join(aqui, "../../../db/migrations/013_reportes.sql"), "utf8");
 const migracion14 = readFileSync(path.join(aqui, "../../../db/migrations/014_bajas_y_elaboracion.sql"), "utf8").replace(/geometry\(Point,4326\)/g, "geometry");
+const migracion15 = readFileSync(path.join(aqui, "../../../db/migrations/015_administradores_estatales.sql"), "utf8");
 
 const PRE = `
 CREATE DOMAIN geometry AS point;
@@ -77,7 +78,7 @@ CREATE TABLE capturas_precio (
   estatus text NOT NULL DEFAULT 'pendiente', alerta boolean NOT NULL DEFAULT false, origen text NOT NULL DEFAULT 'publica',
   creado_en timestamptz NOT NULL DEFAULT now()
 );
-CREATE TABLE fotos (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tortilleria_id uuid NOT NULL REFERENCES tortillerias(id), archivo text NOT NULL, miniatura text, capturista_id uuid);
+CREATE TABLE fotos (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tortilleria_id uuid NOT NULL REFERENCES tortillerias(id), archivo text NOT NULL, miniatura text, capturista_id uuid, fecha timestamptz NOT NULL DEFAULT now());
 CREATE TABLE alertas (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tipo text NOT NULL, captura_id uuid REFERENCES capturas_precio(id), estatus text NOT NULL DEFAULT 'abierta');
 CREATE TABLE auditoria (id bigserial PRIMARY KEY, usuario_id uuid, accion text NOT NULL, entidad text, entidad_id text, fecha timestamptz NOT NULL DEFAULT now());
 CREATE TABLE consentimientos (id bigserial PRIMARY KEY, responsable_id uuid REFERENCES responsables(id), version text NOT NULL, aceptado_en timestamptz NOT NULL DEFAULT now());
@@ -113,6 +114,7 @@ beforeAll(async () => {
   await h.db.exec(migracion12);
   await h.db.exec(migracion13);
   await h.db.exec(migracion14);
+  await h.db.exec(migracion15);
   process.env.UPLOADS_DIR = mkdtempSync(path.join(tmpdir(), "fotos-"));
   const u = async (nombre: string, rol: string) => (await q("INSERT INTO usuarios(usuario, rol, correo) VALUES ($1,$2,$1) RETURNING id", [nombre, rol]))[0].id;
   ana = await u("ana@correo.com", "capturista");
@@ -1183,7 +1185,7 @@ describe("C16: usuarios de la app y personal del administrador (aparte, con perm
     expect(s.permisos).toEqual(["ver_resumen"]);
     expect(s.permisos_efectivos).toEqual(["ver_resumen"]);
     // un administrador tiene todo; un supervisor sin editar, lo de por omisión (sin gestionar usuarios de la app)
-    expect(personal.filas.find((u: any) => u.id === adm).permisos_efectivos).toHaveLength(12);
+    expect(personal.filas.find((u: any) => u.id === adm).permisos_efectivos).toHaveLength(13);
     const sup0 = personal.filas.find((u: any) => u.id === sup);
     expect(sup0.permisos).toBeNull();
     expect(sup0.permisos_efectivos).not.toContain("gestionar_usuarios_app");
@@ -1230,7 +1232,7 @@ describe("C16: usuarios de la app y personal del administrador (aparte, con perm
     expect((await post("/admin/personal", adm, { ...base_, rol: "capturista", permisos: ["ver_resumen"] }, "admin")).status).toBe(400); // los de la app no se crean aquí
     const adm2 = await post("/admin/personal", adm, { ...base_, correo: "otro.admin@sader.gob.mx", rol: "admin", permisos: ["ver_resumen"] }, "admin");
     expect(adm2.status).toBe(201);
-    expect((await adm2.json()).permisos_efectivos).toHaveLength(12); // un administrador siempre puede todo
+    expect((await adm2.json()).permisos_efectivos).toHaveLength(13); // un administrador siempre puede todo
     expect((await q("SELECT permisos FROM usuarios WHERE correo = 'otro.admin@sader.gob.mx'"))[0].permisos).toBeNull();
   });
 
@@ -1837,5 +1839,503 @@ describe("C19: tortillerías que ya no funcionan y tipo de elaboración", () => 
     expect(cab).toEqual(expect.arrayContaining(["elaboracion", "operacion", "ref_elaboracion"]));
     const fila = texto.split("\r\n").find((l) => l.includes("NUEVA A MANO") || l.includes(",mano,")) ?? "";
     expect(fila).toContain("mano");
+  });
+});
+
+/* ===================== C20: administradores estatales, estados de cuenta y fecha de corte ===================== */
+describe("C20: alcance por estado, estados de cuenta y fecha de corte", () => {
+  const CURP = ["HEGG560427MVZRRL04", "GOMC850101HDFRRL09", "LOPA900315MJCPRN03", "RAMS751212HNLMRN08", "TOPE800725MPLRRS05", "CAVL910630HGTSLR02"];
+  const reg = (extra: object = {}) => ({
+    nombre: "Laura", apellidoPaterno: "Pérez", apellidoMaterno: "Gómez", curp: CURP[0], correo: "laura@correo.com", password: "Contra123", confirmar: "Contra123",
+    estadoClave: "14", aceptoAviso: true, ...extra,
+  });
+  const registrar = (body: object) => fetch(`${base}/auth/registro`, { method: "POST", headers: json, body: JSON.stringify(body) });
+  const patch = (url: string, usuario: string, rol: string, body: unknown) => fetch(base + url, { method: "PATCH", headers: auth(usuario, rol), body: JSON.stringify(body) });
+  const crear = async (correo: string, o: { rol?: string; alcance?: string[] | null; nacional?: boolean; estado?: string | null; cuenta?: string; activo?: boolean } = {}) =>
+    (await q(
+      "INSERT INTO usuarios(usuario, rol, correo, estados_alcance, alcance_nacional, estado_clave, estado_cuenta, activo, datos_completos) VALUES ($1,$2,$1,$3::text[],$4,$5,$6,$7,true) RETURNING id",
+      [correo, o.rol ?? "capturista", o.alcance ?? null, o.nacional ?? false, o.estado ?? null, o.cuenta ?? "autorizado", o.activo ?? true],
+    ))[0].id as string;
+  let e14: string, e0510: string, eNac: string, c14: string, c15: string, c05: string, cSin: string;
+  const T: Record<string, string> = {};
+  const CAP: Record<string, string> = {};
+
+  beforeAll(async () => {
+    for (const [c, n] of [["05", "COAHUILA"], ["10", "DURANGO"], ["14", "JALISCO"], ["15", "MEXICO"]]) await q("INSERT INTO estados VALUES ($1,$2) ON CONFLICT DO NOTHING", [c, n]);
+    e14 = await crear("e14@oref.gob.mx", { rol: "estatal", alcance: ["14"] });
+    e0510 = await crear("e0510@oref.gob.mx", { rol: "estatal", alcance: ["05", "10"] });
+    eNac = await crear("nac@uoteha.gob.mx", { rol: "estatal", nacional: true });
+    c14 = await crear("c14@correo.com", { estado: "14" });
+    c15 = await crear("c15@correo.com", { estado: "15" });
+    c05 = await crear("c05@correo.com", { estado: "05" });
+    cSin = await crear("csin@correo.com", { estado: null });
+    for (const [clave, cens] of [["14", c14], ["15", c15], ["05", c05], ["10", c05]] as const) {
+      // una tortillería nueva (con foto, por validar), con un precio atípico pendiente
+      T[clave] = (await q("INSERT INTO tortillerias(nombre, estado_clave, geom, origen, estatus, creado_por) VALUES ($1,$2, point(-99, 19),'nueva','pendiente',$3) RETURNING id", [`NUEVA ${clave}`, clave, cens]))[0].id;
+      await q("INSERT INTO fotos(tortilleria_id, archivo) VALUES ($1,'x.jpg')", [T[clave]]);
+      CAP[clave] = (await q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, capturista_id, estatus, alerta) VALUES ($1,'maiz',55,$2,'pendiente',true) RETURNING id", [T[clave], cens]))[0].id;
+    }
+  });
+
+  /* ---------- alcance: una prueba por cada ruta que usa el rol estatal ---------- */
+  const nombresDe = (filas: any[]) => filas.map((f) => f.nombre).sort();
+
+  it("Tortillerías nuevas (lista): cada administrador estatal ve solo las de su alcance; el nacional, todas", async () => {
+    const lista = async (id: string) => nombresDe(await (await get("/admin/tortillerias?origen=nueva&estatus=pendiente", id, "estatal")).json());
+    expect(await lista(e14)).toEqual(["NUEVA 14"]);
+    expect(await lista(e0510)).toEqual(["NUEVA 05", "NUEVA 10"]);
+    expect((await lista(eNac)).length).toBeGreaterThanOrEqual(4);
+    expect(await lista(sup)).toEqual(expect.arrayContaining(["NUEVA 14", "NUEVA 15", "NUEVA 05", "NUEVA 10"]));
+    const pag = await (await get("/admin/tortillerias?origen=nueva&estatus=pendiente&pagina=1&limite=25", e14, "estatal")).json();
+    expect(pag.total).toBe(1);
+  });
+
+  it("Tortillería por id (detalle, fotos, intentos sin datos fiscales): fuera del alcance responde 404", async () => {
+    for (const ruta of [`/admin/tortillerias/${T["15"]}`, `/admin/tortillerias/${T["15"]}/fotos`, `/admin/tortillerias/${T["15"]}/negativas`, `/admin/tortillerias/${T["15"]}/negativas-foto`]) {
+      expect((await get(ruta, e14, "estatal")).status, ruta).toBe(404);
+      expect((await get(ruta.replace(T["15"], T["14"]), e14, "estatal")).status, ruta).toBe(200);
+    }
+    expect((await get(`/admin/tortillerias/${T["10"]}`, e0510, "estatal")).status).toBe(200);
+    expect((await get(`/admin/tortillerias/${T["15"]}`, e0510, "estatal")).status).toBe(404);
+    expect((await get(`/admin/tortillerias/${T["15"]}`, eNac, "estatal")).status).toBe(200);
+  });
+
+  it("Validar o rechazar una tortillería nueva: solo en su alcance (404 fuera); no se valida sin foto", async () => {
+    expect((await patch(`/tortillerias/${T["15"]}/estatus`, e14, "estatal", { estatus: "validada" })).status).toBe(404);
+    expect((await q("SELECT estatus FROM tortillerias WHERE id = $1", [T["15"]]))[0].estatus).toBe("pendiente");
+    const sinFoto = (await q("INSERT INTO tortillerias(nombre, estado_clave, geom, origen, estatus) VALUES ('SIN FOTO 14','14', point(-99, 19),'nueva','pendiente') RETURNING id"))[0].id;
+    expect((await patch(`/tortillerias/${sinFoto}/estatus`, e14, "estatal", { estatus: "validada" })).status).toBe(400);
+    expect((await patch(`/tortillerias/${T["14"]}/estatus`, e14, "estatal", { estatus: "validada" })).status).toBe(200);
+    await q("UPDATE tortillerias SET estatus = 'pendiente' WHERE id = $1", [T["14"]]);
+  });
+
+  it("Precios atípicos (lista): cada administrador estatal ve solo los de las tortillerías de su alcance", async () => {
+    const lista = async (id: string) => (await (await get("/admin/capturas?estatus=pendiente&alertas=1", id, "estatal")).json()).map((c: any) => c.id);
+    expect(await lista(e14)).toEqual([CAP["14"]]);
+    expect((await lista(e0510)).sort()).toEqual([CAP["05"], CAP["10"]].sort());
+    expect(await lista(eNac)).toEqual(expect.arrayContaining(Object.values(CAP)));
+    expect((await get(`/admin/capturas?tortilleria=${T["15"]}`, e14, "estatal").then((r) => r.json())).length).toBe(0);
+  });
+
+  it("Aprobar o rechazar un precio atípico (uno por uno y varios): fuera del alcance 404 o sin efecto", async () => {
+    expect((await patch(`/admin/capturas/${CAP["15"]}`, e14, "estatal", { estatus: "validada" })).status).toBe(404);
+    // varios a la vez: solo cambia lo que está en su alcance
+    const r = await (await patch("/admin/capturas", e14, "estatal", { ids: [CAP["14"], CAP["15"], CAP["05"]], estatus: "rechazada" })).json();
+    expect(r.actualizadas).toBe(1);
+    expect(await q("SELECT id, estatus FROM capturas_precio WHERE id = ANY($1::uuid[]) ORDER BY estatus", [[CAP["14"], CAP["15"], CAP["05"]]])).toEqual(
+      expect.arrayContaining([{ id: CAP["14"], estatus: "rechazada" }, { id: CAP["15"], estatus: "pendiente" }, { id: CAP["05"], estatus: "pendiente" }]),
+    );
+    expect((await patch(`/admin/capturas/${CAP["10"]}`, e0510, "estatal", { estatus: "validada" })).status).toBe(200);
+    expect((await patch(`/admin/capturas/${CAP["15"]}`, eNac, "estatal", { estatus: "validada" })).status).toBe(200);
+    await q("UPDATE capturas_precio SET estatus = 'pendiente' WHERE id = ANY($1::uuid[])", [Object.values(CAP)]);
+  });
+
+  it("Usuarios (lista y conteo): solo los censadores de su estado; sin estado solo los ve quien no tiene límite", async () => {
+    const lista = async (id: string, rol = "estatal", qs = "tipo=app") => ((await (await get(`/admin/usuarios?${qs}`, id, rol)).json()) as any[]).map((u) => u.correo);
+    const de14 = await lista(e14);
+    expect(de14).toContain("c14@correo.com");
+    expect(de14).not.toContain("c15@correo.com");
+    expect(de14).not.toContain("c05@correo.com");
+    expect(de14).not.toContain("csin@correo.com");
+    expect(await lista(e0510)).toEqual(["c05@correo.com"]);
+    const todos = await lista(adm, "admin");
+    expect(todos).toEqual(expect.arrayContaining(["c14@correo.com", "c15@correo.com", "c05@correo.com", "csin@correo.com"]));
+    expect(await lista(eNac)).toEqual(expect.arrayContaining(["c15@correo.com"]));
+    expect((await lista(eNac)).includes("csin@correo.com")).toBe(false); // el nacional también ve por estado: los sin estado solo los ve DGTIC
+    // un estatal no ve las cuentas del administrador
+    expect((await get("/admin/usuarios?tipo=personal", e14, "estatal")).status).toBe(403);
+    expect((await get("/admin/usuarios", e14, "estatal")).status).toBe(403);
+    const cuenta = await (await get("/admin/usuarios/conteo", e14, "estatal")).json();
+    expect(cuenta.autorizados).toBe(1);
+  });
+
+  it("Usuarios por id (autorizar, rechazar, confirmar, desactivar, restablecer contraseña): fuera de su alcance responde 404", async () => {
+    for (const body of [{ accion: "autorizar" }, { accion: "rechazar" }, { accion: "confirmar" }, { activo: false }, { estadoClave: "14" }]) {
+      expect((await patch(`/admin/usuarios/${c15}`, e14, "estatal", body)).status, JSON.stringify(body)).toBe(404);
+      expect((await patch(`/admin/usuarios/${cSin}`, e14, "estatal", body)).status, JSON.stringify(body)).toBe(404);
+    }
+    expect((await post(`/admin/usuarios/${c15}/restablecer-password`, e14, {}, "estatal")).status).toBe(404);
+    expect((await post(`/admin/usuarios/${c14}/restablecer-password`, e14, {}, "estatal")).status).toBe(200);
+    expect((await q("SELECT estado_cuenta, activo FROM usuarios WHERE id = $1", [c15]))[0]).toEqual({ estado_cuenta: "autorizado", activo: true });
+  });
+
+  it("Un administrador estatal no puede mandar a un censador a un estado fuera de su alcance, ni dar de alta uno ahí", async () => {
+    expect((await patch(`/admin/usuarios/${c14}`, e14, "estatal", { estadoClave: "15" })).status).toBe(403);
+    expect((await q("SELECT estado_clave FROM usuarios WHERE id = $1", [c14]))[0].estado_clave).toBe("14");
+    expect((await post("/admin/usuarios-app", e14, { nombre: "Ana", apellidoPaterno: "Ruiz", apellidoMaterno: "Soto", curp: CURP[1], correo: "ana@correo.com", estadoClave: "15" }, "estatal")).status).toBe(403);
+    expect((await patch(`/admin/usuarios/${c14}`, e0510, "estatal", { estadoClave: "05" })).status).toBe(404); // ni siquiera lo ve
+    await q("UPDATE usuarios SET estado_clave = '14' WHERE id = $1", [c14]);
+  });
+
+  it("Crear un censador: autorizado, datos completos, contraseña temporal una sola vez y CURP única y cifrada", async () => {
+    const cuerpo = { nombre: "Ana", apellidoPaterno: "Ruiz", apellidoMaterno: "Soto", curp: CURP[1], correo: "ana.nueva@correo.com", estadoClave: "14" };
+    const r = await post("/admin/usuarios-app", e14, cuerpo, "estatal");
+    expect(r.status).toBe(201);
+    const j = await r.json();
+    expect(j.password).toMatch(/^[A-Za-z0-9]{10}$/);
+    const fila = (await q("SELECT rol, estado_cuenta, datos_completos, debe_cambiar_password, estado_clave, curp_cifrado, curp_hash, creado_por FROM usuarios WHERE id = $1", [j.id]))[0];
+    expect(fila).toMatchObject({ rol: "capturista", estado_cuenta: "autorizado", datos_completos: true, debe_cambiar_password: true, estado_clave: "14", creado_por: e14 });
+    expect(Buffer.from(fila.curp_cifrado).toString("utf8")).not.toContain(CURP[1]); // cifrada: no está en claro
+    expect(fila.curp_hash).toBeTruthy();
+    expect((await post("/admin/usuarios-app", e14, { ...cuerpo, correo: "otro@correo.com" }, "estatal")).status).toBe(409); // misma CURP
+    expect((await post("/admin/usuarios-app", e14, { ...cuerpo, curp: CURP[2] }, "estatal")).status).toBe(409); // mismo correo
+    expect((await post("/admin/usuarios-app", e14, { ...cuerpo, curp: "ABC", correo: "x@correo.com" }, "estatal")).status).toBe(400);
+    expect((await post("/admin/usuarios-app", c14, cuerpo, "capturista")).status).toBe(403);
+    // la lista solo trae la CURP enmascarada
+    const lista = (await (await get("/admin/usuarios?tipo=app&q=ana.nueva", e14, "estatal")).json()) as any[];
+    expect(lista[0].curp).toBe("GOMC**********RL09");
+    expect(JSON.stringify(lista)).not.toContain(CURP[1]);
+    // entra con la temporal y debe cambiarla
+    const login = await (await fetch(`${base}/auth/login`, { method: "POST", headers: json, body: JSON.stringify({ usuario: "ana.nueva@correo.com", password: j.password }) })).json();
+    expect(login.usuario.debeCambiarPassword).toBe(true);
+    expect(login.usuario.estadoCuenta).toBe("autorizado");
+  });
+
+  it("La CURP completa solo la ve un administrador, y queda en la bitácora", async () => {
+    const id = (await q("SELECT id FROM usuarios WHERE correo = 'ana.nueva@correo.com'"))[0].id;
+    expect((await get(`/admin/usuarios/${id}/curp`, e14, "estatal")).status).toBe(403);
+    expect((await get(`/admin/usuarios/${id}/curp`, sup, "supervisor")).status).toBe(403);
+    const r = await get(`/admin/usuarios/${id}/curp`, adm, "admin");
+    expect((await r.json()).curp).toBe(CURP[1]);
+    expect(vi.mocked(auditar)).toHaveBeenCalledWith(adm, "ver_curp", "usuarios", id);
+  });
+
+  /* ---------- lo que un administrador estatal NO puede ---------- */
+  it("Un administrador estatal no ve RFC ni celular completos, no descarga capturas, no ve bitácora, reportes, mapa ni estadísticas, y no crea administradores", async () => {
+    const t = (await q("INSERT INTO tortillerias(nombre, estado_clave, geom, origen, estatus) VALUES ('CON RFC 14','14', point(-99, 19),'denue','validada') RETURNING id"))[0].id;
+    const fis = await post(`/tortillerias/${t}/fiscal`, c14, { tipoPersona: "moral", rfc: "ABC100101AB1", razonSocial: "CON RFC SA", celular: "5512345678", aceptoAviso: true });
+    expect(fis.status).toBe(201);
+    const ver = await (await get(`/tortillerias/${t}/fiscal`, e14, "estatal")).json();
+    expect(ver.rfc).not.toContain("ABC100101AB1"); // enmascarado
+    expect(ver.celular).not.toContain("5512345678");
+    const vistoPorSup = await (await get(`/tortillerias/${t}/fiscal`, sup, "supervisor")).json();
+    expect(vistoPorSup.rfc).toBe("ABC100101AB1");
+    const prohibidas = ["/admin/exportar/capturas", "/admin/auditoria", "/admin/reportes/vista-previa?periodo=dia&fecha=2020-03-19", "/admin/mapa?bbox=-100,18,-98,20", "/admin/mapa/celdas?bbox=-100,18,-98,20&zoom=5",
+      "/admin/estadisticas", "/admin/tendencia", "/admin/actividad", "/admin/resumen", "/admin/sin-fiscal", "/admin/bajas", "/admin/bajas/resumen", "/admin/estadisticas/elaboracion",
+      `/admin/tortillerias/${t}/situacion`, "/admin/ajustes"];
+    for (const ruta of prohibidas) expect((await get(ruta, e14, "estatal")).status, ruta).toBe(403);
+    expect((await post("/admin/personal", e14, { correo: "x@y.com", nombre: "Xx", apellidos: "Yy", rol: "admin", permisos: [] }, "estatal")).status).toBe(403);
+    expect((await patch(`/admin/usuarios/${sup}`, e14, "estatal", { activo: false })).status).toBe(403);
+    expect((await patch(`/admin/usuarios/${e0510}`, e14, "estatal", { activo: false })).status).toBe(403);
+    expect((await fetch(`${base}/admin/ajustes/corte`, { method: "PUT", headers: auth(e14, "estatal"), body: JSON.stringify({ corteMx: "2026-11-30T00:00" }) })).status).toBe(403);
+    expect((await get(`/admin/usuarios/${c14}/curp`, e14, "estatal")).status).toBe(403);
+  });
+
+  it("El administrador estatal con alcance nacional ve el Resumen (solo consulta) y ninguna descarga, Mapa, Estadísticas ni bitácora", async () => {
+    expect((await get("/admin/resumen", eNac, "estatal")).status).toBe(200);
+    expect((await get("/admin/resumen", e0510, "estatal")).status).toBe(403); // el de estados no ve el Resumen nacional
+    for (const ruta of ["/admin/exportar/capturas", "/admin/auditoria", "/admin/reportes/vista-previa?periodo=dia&fecha=2020-03-19", "/admin/mapa?bbox=-100,18,-98,20", "/admin/sin-fiscal", "/admin/equipo/exportar"])
+      expect((await get(ruta, eNac, "estatal")).status, ruta).toBe(403);
+    const eq = await (await get("/admin/equipo", eNac, "estatal")).json();
+    expect(eq.puedeExportar).toBe(false);
+  });
+
+  it("Mi equipo: indicadores y tabla de su estado; no se puede pedir otro estado; exporta CSV sin CURP (menos el nacional)", async () => {
+    await q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, capturista_id, estatus, fecha) VALUES ($1,'masa',25,$2,'validada', current_date)", [T["14"], c14]);
+    const eq = await (await get("/admin/equipo", e14, "estatal")).json();
+    expect(eq.censadores.map((c: any) => c.correo)).toEqual(expect.arrayContaining(["c14@correo.com", "ana.nueva@correo.com"]));
+    expect(eq.censadores.map((c: any) => c.correo)).not.toContain("c15@correo.com");
+    const fila = eq.censadores.find((c: any) => c.correo === "c14@correo.com");
+    expect(fila).toMatchObject({ estado_cuenta: "autorizado" });
+    expect(fila.hoy).toBeGreaterThanOrEqual(2);
+    expect(fila.capturas).toBeGreaterThanOrEqual(2);
+    expect(eq.indicadores.capturas_hoy).toBeGreaterThanOrEqual(1);
+    expect(eq.indicadores.autorizados).toBeGreaterThanOrEqual(2);
+    expect(eq.puedeExportar).toBe(true);
+    expect((await get("/admin/equipo?estado=15", e14, "estatal")).status).toBe(403);
+    expect((await get("/admin/equipo?estado=14", e14, "estatal")).status).toBe(200);
+    const sup15 = await (await get("/admin/equipo?estado=15", sup, "supervisor")).json();
+    expect(sup15.censadores.map((c: any) => c.correo)).toEqual(["c15@correo.com"]);
+    const csv = await get("/admin/equipo/exportar", e14, "estatal");
+    expect(csv.status).toBe(200);
+    const texto = Buffer.from(await csv.arrayBuffer()).toString("utf8");
+    expect(texto.split("\r\n")[0]).not.toMatch(/curp/i);
+    expect(texto).toContain("c14@correo.com");
+    expect(texto).not.toContain("c15@correo.com");
+    expect(texto).not.toMatch(/[A-Z]{4}\d{6}[HM]/); // ninguna CURP
+    expect((await get("/admin/equipo", ana, "capturista")).status).toBe(403);
+  });
+
+  /* ---------- registro y fecha de corte ---------- */
+  it("Registro: datos obligatorios, CURP válida, única y cifrada; con el estado que se elige", async () => {
+    for (const mal of [{ curp: "XXXX" }, { nombre: "" }, { apellidoMaterno: "" }, { estadoClave: "99" }, { aceptoAviso: false }, { confirmar: "otra" }, { correo: "no-es-correo" }]) expect((await registrar(reg(mal))).status, JSON.stringify(mal)).toBe(400);
+    expect((await registrar(reg({ curp: CURP[3] + "x" }))).status).toBe(400);
+    const ok = await registrar(reg({ correo: "reg1@correo.com", curp: CURP[3], estadoClave: "15" }));
+    expect(ok.status).toBe(201);
+    const j = await ok.json();
+    expect(j.usuario).toMatchObject({ rol: "capturista", estadoClave: "15", datosCompletos: true });
+    const fila = (await q("SELECT curp_cifrado, curp_hash, apellidos, apellido_paterno FROM usuarios WHERE correo = 'reg1@correo.com'"))[0];
+    expect(fila.curp_hash).toBeTruthy();
+    expect(Buffer.from(fila.curp_cifrado).toString("utf8")).not.toContain(CURP[3]);
+    expect(fila).toMatchObject({ apellidos: "Pérez Gómez", apellido_paterno: "Pérez" });
+    const dup = await registrar(reg({ correo: "reg2@correo.com", curp: CURP[3].toLowerCase() })); // la misma CURP en minúsculas
+    expect(dup.status).toBe(409);
+    expect((await dup.json()).error).toBe("Ya hay una cuenta con esta CURP");
+    expect((await registrar(reg({ correo: "reg1@correo.com", curp: CURP[4] }))).status).toBe(409); // mismo correo
+  });
+
+  it("Fecha de corte: antes del corte el registro queda autorizado y 'registro abierto'; desde el corte, por autorizar. La fecha se lee de la configuración", async () => {
+    const poner = (iso: string) => q("INSERT INTO configuracion(clave, valor) VALUES ('corte_registro_abierto', $1) ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor", [iso]);
+    await poner(new Date(Date.now() + 3600 * 1000).toISOString());
+    const antes = await (await registrar(reg({ correo: "antes@correo.com", curp: CURP[4] }))).json();
+    expect(antes.usuario.estadoCuenta).toBe("autorizado");
+    expect((await q("SELECT estado_cuenta, registro_abierto FROM usuarios WHERE correo = 'antes@correo.com'"))[0]).toEqual({ estado_cuenta: "autorizado", registro_abierto: true });
+    await poner(new Date(Date.now() - 3600 * 1000).toISOString());
+    const despues = await (await registrar(reg({ correo: "despues@correo.com", curp: CURP[5] }))).json();
+    expect(despues.usuario.estadoCuenta).toBe("por_autorizar");
+    expect((await q("SELECT estado_cuenta, registro_abierto FROM usuarios WHERE correo = 'despues@correo.com'"))[0]).toEqual({ estado_cuenta: "por_autorizar", registro_abierto: false });
+  });
+
+  it("Ajustes: solo un administrador cambia la fecha de corte (hora de México, con bitácora); solo afecta a registros futuros", async () => {
+    const put = (usuario: string, rol: string, corteMx: string) => fetch(`${base}/admin/ajustes/corte`, { method: "PUT", headers: auth(usuario, rol), body: JSON.stringify({ corteMx }) });
+    expect((await put(sup, "supervisor", "2026-11-30T00:00")).status).toBe(403);
+    expect((await put(adm, "admin", "mañana")).status).toBe(400);
+    const r = await put(adm, "admin", "2026-11-30T00:00");
+    expect(r.status).toBe(200);
+    const j = await r.json();
+    expect(j.corte).toBe("2026-11-30T06:00:00.000Z"); // 00:00 de México es 06:00 UTC
+    expect(j.corteMx).toBe("2026-11-30T00:00");
+    expect(vi.mocked(auditar)).toHaveBeenCalledWith(adm, "cambiar_fecha_corte", "configuracion", "2026-11-30T00:00 (hora de México)");
+    const antes = (await q("SELECT estado_cuenta FROM usuarios WHERE correo = 'despues@correo.com'"))[0].estado_cuenta;
+    expect(antes).toBe("por_autorizar"); // las cuentas ya creadas no cambian
+    const g = await (await get("/admin/ajustes", adm, "admin")).json();
+    expect(g.corteMx).toBe("2026-11-30T00:00");
+    expect(typeof g.abierto).toBe("boolean");
+  });
+
+  /* ---------- estados de cuenta ---------- */
+  it("Por autorizar y rechazado reciben 403 en todas las rutas de captura; autorizado no", async () => {
+    const t = (await q("INSERT INTO tortillerias(nombre, estado_clave, geom, origen, estatus) VALUES ('PARA CAPTURA C20','14', point(-99, 19),'denue','validada') RETURNING id"))[0].id;
+    const rutas: [string, string, unknown][] = [
+      ["POST", "/precios", { tortilleriaId: t, producto: "maiz", precioKg: 22 }],
+      ["POST", "/tortillerias", {}],
+      ["POST", `/tortillerias/${t}/fiscal`, {}],
+      ["POST", `/tortillerias/${t}/fiscal/negativa`, { motivo: "cerrado" }],
+      ["POST", `/tortillerias/${t}/baja`, { motivo: "cerro" }],
+      ["POST", `/tortillerias/${t}/elaboracion`, { elaboracion: "mano" }],
+      ["POST", `/tortillerias/${t}/foto/negativa`, { motivo: "cerrado" }],
+    ];
+    const llamar = (usuario: string, [m, u, b]: [string, string, unknown]) => fetch(base + u, { method: m, headers: auth(usuario, "capturista"), body: JSON.stringify(b) });
+    const porAutorizar = await crear("pa@correo.com", { estado: "14", cuenta: "por_autorizar" });
+    const rechazado = await crear("rech@correo.com", { estado: "14", cuenta: "rechazado" });
+    for (const r of rutas) {
+      const a = await llamar(porAutorizar, r);
+      expect(a.status, `${r[1]} por autorizar`).toBe(403);
+      expect((await a.json()).error).toBe("cuenta_por_autorizar");
+      const b = await llamar(rechazado, r);
+      expect(b.status, `${r[1]} rechazado`).toBe(403);
+      expect((await b.json()).error).toBe("cuenta_rechazada");
+    }
+    // fotos
+    for (const [usuario, esperado] of [[porAutorizar, "cuenta_por_autorizar"], [rechazado, "cuenta_rechazada"]] as const) {
+      const fd = new FormData();
+      fd.append("file", new Blob([Buffer.from("x")], { type: "image/jpeg" }), "f.jpg");
+      const f = await fetch(`${base}/tortillerias/${t}/fotos`, { method: "POST", headers: { authorization: auth(usuario, "capturista").authorization }, body: fd });
+      expect(f.status).toBe(403);
+      expect((await f.json()).error).toBe(esperado);
+    }
+    expect((await precio2(c14, t)).status).toBe(201); // autorizada: captura normal
+    // lo demás (consultar su panel, entrar) sigue funcionando
+    const me = await (await get("/auth/me", porAutorizar, "capturista")).json();
+    expect(me.estadoCuenta).toBe("por_autorizar");
+    function precio2(usuario: string, tort: string) { return post("/precios", usuario, { tortilleriaId: tort, producto: "maiz", precioKg: 22 }); }
+  });
+
+  it("Autorizar una solicitud la deja capturar; rechazar excluye sus capturas de lo que cuenta (resumen, estadísticas, mapa); volver a autorizar las regresa; desactivar NO las excluye", async () => {
+    const t = (await q("INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus) VALUES ('CUENTA RECHAZADA','14','14001', point(-99.9, 19.9),'denue','validada') RETURNING id"))[0].id;
+    const cen = await crear("rechazable@correo.com", { estado: "14", cuenta: "por_autorizar" });
+    expect((await post("/precios", cen, { tortilleriaId: t, producto: "maiz", precioKg: 23 })).status).toBe(403);
+    expect((await patch(`/admin/usuarios/${cen}`, e14, "estatal", { accion: "autorizar" })).status).toBe(200);
+    expect((await q("SELECT estado_cuenta, autorizado_por FROM usuarios WHERE id = $1", [cen]))[0]).toEqual({ estado_cuenta: "autorizado", autorizado_por: e14 });
+    expect((await post("/precios", cen, { tortilleriaId: t, producto: "maiz", precioKg: 23 })).status).toBe(201);
+    const cuenta = async () => (await q("SELECT count(*)::int AS n FROM precios_que_cuentan WHERE tortilleria_id = $1", [t]))[0].n;
+    const mapa = async () => {
+      const p = (await (await get("/admin/mapa?bbox=-100,19.8,-99.8,20", sup, "supervisor")).json()).puntos.find((x: any) => x.id === t);
+      return p?.ultimo_maiz?.precio ?? null;
+    };
+    expect(await cuenta()).toBe(1);
+    expect(await mapa()).toBe(23);
+    // rechazar: sus capturas dejan de contar en todas partes
+    expect((await patch(`/admin/usuarios/${cen}`, e14, "estatal", { accion: "rechazar" })).status).toBe(200);
+    expect(await cuenta()).toBe(0);
+    expect(await mapa()).toBeNull();
+    const res = await (await get("/admin/estadisticas?dias=30&estado=14", sup, "supervisor")).json();
+    expect(res.find((z: any) => z.clave === "14001")?.maiz ?? null).toBeNull();
+    expect((await q("SELECT count(*)::int AS n FROM capturas_precio WHERE tortilleria_id = $1", [t]))[0].n).toBe(1); // no se borró nada
+    expect((await post("/precios", cen, { tortilleriaId: t, producto: "masa", precioKg: 20 })).status).toBe(403);
+    // volver a autorizar: regresan solas
+    await patch(`/admin/usuarios/${cen}`, e14, "estatal", { accion: "autorizar" });
+    expect(await cuenta()).toBe(1);
+    expect(await mapa()).toBe(23);
+    // desactivar NO las excluye (alguien que ya terminó su participación)
+    expect((await patch(`/admin/usuarios/${cen}`, e14, "estatal", { activo: false })).status).toBe(200);
+    expect(await cuenta()).toBe(1);
+    expect((await post("/precios", cen, { tortilleriaId: t, producto: "masa", precioKg: 20 })).status).toBe(401); // desactivada: no entra
+    const hechos = vi.mocked(auditar).mock.calls.map((c) => c[1]);
+    expect(hechos).toEqual(expect.arrayContaining(["autorizar_usuario", "rechazar_usuario", "desactivar_usuario_app"]));
+  });
+
+  it("Registro abierto: el estatal los confirma (o rechaza) por pestaña; quedan en la bitácora", async () => {
+    const ab = await crear("abierto@correo.com", { estado: "14" });
+    await q("UPDATE usuarios SET registro_abierto = true WHERE id = $1", [ab]);
+    const lista = async () => ((await (await get("/admin/usuarios?tipo=app&registro_abierto=1&cuenta=autorizado", e14, "estatal")).json()) as any[]).map((u) => u.correo);
+    expect(await lista()).toContain("abierto@correo.com");
+    expect((await patch(`/admin/usuarios/${ab}`, e14, "estatal", { accion: "confirmar" })).status).toBe(200);
+    expect(await lista()).not.toContain("abierto@correo.com");
+    expect(vi.mocked(auditar)).toHaveBeenCalledWith(e14, "confirmar_registro_abierto", "usuarios", ab);
+    await crear("pa15@correo.com", { estado: "15", cuenta: "por_autorizar" });
+    const sol = ((await (await get("/admin/usuarios?tipo=app&cuenta=por_autorizar", e14, "estatal")).json()) as any[]).map((u) => u.correo);
+    expect(sol).toEqual(expect.arrayContaining(["pa@correo.com", "despues@correo.com"])); // las solicitudes de su estado
+    expect(sol).not.toContain("pa15@correo.com"); // la de otro estado, no
+  });
+
+  it("Completa tus datos: guarda nombre, CURP cifrada y estado; la CURP no puede ser de otra cuenta", async () => {
+    const viejo = await crear("viejo@correo.com", { estado: "14" });
+    await q("UPDATE usuarios SET datos_completos = false, estado_sugerido = true WHERE id = $1", [viejo]);
+    const completar = (usuario: string, body: object) => post("/auth/completar-datos", usuario, body, "capturista");
+    const datos = { nombre: "Marta", apellidoPaterno: "León", apellidoMaterno: "Díaz", curp: "LEDM800101MDFNZR05", estadoClave: "15", aceptoAviso: true };
+    const me0 = await (await get("/auth/me", viejo, "capturista")).json();
+    expect(me0).toMatchObject({ datosCompletos: false, estadoSugerido: true, estadoClave: "14" });
+    expect((await completar(viejo, { ...datos, curp: "mal" })).status).toBe(400);
+    expect((await completar(viejo, { ...datos, aceptoAviso: false })).status).toBe(400);
+    expect((await completar(viejo, { ...datos, curp: CURP[1] })).status).toBe(409); // ya es de otra cuenta
+    const ok = await completar(viejo, datos);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ datosCompletos: true, estadoSugerido: false, estadoClave: "15" });
+    expect((await q("SELECT apellidos, estado_sugerido FROM usuarios WHERE id = $1", [viejo]))[0]).toEqual({ apellidos: "León Díaz", estado_sugerido: false });
+  });
+
+  it("La cuenta rechazada deja sus tortillerías nuevas y sus bajas visibles, con etiqueta, para revisarlas", async () => {
+    const rech = await crear("rech2@correo.com", { estado: "14", cuenta: "rechazado" });
+    const tn = (await q("INSERT INTO tortillerias(nombre, estado_clave, geom, origen, estatus, creado_por) VALUES ('NUEVA DE RECHAZADO','14', point(-99, 19),'nueva','pendiente',$1) RETURNING id", [rech]))[0].id;
+    const lista = (await (await get("/admin/tortillerias?origen=nueva&estatus=pendiente", e14, "estatal")).json()) as any[];
+    expect(lista.find((x) => x.id === tn)).toMatchObject({ creador_rechazado: true });
+    expect(lista.find((x) => x.nombre === "NUEVA 14")).toMatchObject({ creador_rechazado: false });
+    const td = (await q("INSERT INTO tortillerias(nombre, estado_clave, municipio_clave, geom, origen, estatus, operacion) VALUES ('BAJA DE RECHAZADO','14','14001', point(-99, 19),'denue','validada','inactiva') RETURNING id"))[0].id;
+    await q("INSERT INTO tortilleria_bajas(tortilleria_id, capturista_id, motivo) VALUES ($1,$2,'cerro')", [td, rech]);
+    const bajas = await (await get("/admin/bajas?rechazado=1", sup, "supervisor")).json();
+    expect(bajas.filas.map((b: any) => b.nombre)).toContain("BAJA DE RECHAZADO");
+    expect(bajas.filas.every((b: any) => b.censador_rechazado)).toBe(true);
+    expect((await q("SELECT operacion FROM tortillerias WHERE id = $1", [td]))[0].operacion).toBe("inactiva"); // no se reactiva sola
+  });
+});
+
+describe("C20: migración 015 y carga masiva de administradores estatales", () => {
+  it("Migración 015: los censadores existentes quedan autorizados, con registro abierto y datos por completar, con el estado donde más capturan", async () => {
+    await q("INSERT INTO estados VALUES ('14','JALISCO'), ('15','MEXICO') ON CONFLICT DO NOTHING");
+    const mk = async (c: string) => (await q("INSERT INTO usuarios(usuario, rol, correo) VALUES ($1,'capturista',$1) RETURNING id", [c]))[0].id as string;
+    const viejo = await mk("mig-viejo@correo.com"), empate = await mk("mig-empate@correo.com"), sinCap = await mk("mig-sin@correo.com");
+    const tort = async (n: string, e: string) => (await q("INSERT INTO tortillerias(nombre, estado_clave, geom, origen, estatus) VALUES ($1,$2, point(-99, 19),'denue','validada') RETURNING id", [n, e]))[0].id as string;
+    const t1 = await tort("MIG A", "14"), t2 = await tort("MIG B", "14"), t3 = await tort("MIG C", "15"), t4 = await tort("MIG D", "15");
+    let d = 0;
+    const cap = (u: string, t: string, creado: string) => q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, capturista_id, estatus, fecha, creado_en) VALUES ($1,'maiz',24,$2,'validada','2018-01-01'::date + $4::int,$3)", [t, u, creado, d++]);
+    await cap(viejo, t1, "2026-01-01T10:00:00Z"); await cap(viejo, t2, "2026-01-02T10:00:00Z"); await cap(viejo, t3, "2026-01-03T10:00:00Z"); // 2 de 14 y 1 de 15
+    await cap(empate, t1, "2026-01-01T10:00:00Z"); await cap(empate, t3, "2026-02-01T10:00:00Z"); // empate: gana el de la captura más reciente (15)
+    await h.db.exec(migracion15); // la migración se puede volver a correr
+    const f = async (id: string) => (await q("SELECT estado_cuenta, registro_abierto, datos_completos, estado_clave, estado_sugerido FROM usuarios WHERE id = $1", [id]))[0];
+    expect(await f(viejo)).toEqual({ estado_cuenta: "autorizado", registro_abierto: true, datos_completos: false, estado_clave: "14", estado_sugerido: true });
+    expect(await f(empate)).toMatchObject({ estado_clave: "15", estado_sugerido: true });
+    expect(await f(sinCap)).toEqual({ estado_cuenta: "autorizado", registro_abierto: true, datos_completos: false, estado_clave: null, estado_sugerido: false });
+    expect((await q("SELECT count(*)::int AS n FROM configuracion WHERE clave = 'corte_registro_abierto'"))[0].n).toBe(1);
+    expect((await q("SELECT valor FROM configuracion WHERE clave = 'corte_registro_abierto'"))[0].valor).toBeTruthy();
+  });
+
+  /* ---------- script de carga ---------- */
+  const cliente = { query: async (sql: string, params?: unknown[]) => { const r = await h.db.query(sql, params); return { rows: r.rows, rowCount: r.rows.length || r.affectedRows || 0 }; } };
+  const fila = (n: number, o: Partial<import("./scripts/cargar-estatales.js").FilaCarga> = {}): import("./scripts/cargar-estatales.js").FilaCarga => ({
+    fila: n, nombre: `PERSONA ${n}`, paterno: "APELLIDO", materno: "MATERNO", curp: ["AUCM850505HJCLRN01", "BEMR900909MNLLRS04", "ZAGL780303HVZRLR09", "FOPE820214MCHRRS06"][n - 2], correo: `carga${n}@sader.gob.mx`,
+    alcance: "Estatal", claves: "14", programa: "Oref", ...o,
+  });
+  const opc = (extra: object = {}) => ({ aplicar: false, restablecer: false, por: "adm@correo.com", passwordTemporal: () => "TempPass" + Math.floor(Math.random() * 90 + 10), urlPanel: "https://panel.example/acceso", ...extra });
+
+  it("Script de carga, modo prueba: valida y cuenta, pero NO escribe nada", async () => {
+    const { cargar } = await import("./scripts/cargar-estatales.js");
+    const antes = (await q("SELECT count(*)::int AS n FROM usuarios"))[0].n;
+    const r = await cargar(cliente, [fila(2), fila(3, { claves: "05,10", programa: "Fertilizantes" }), fila(4, { alcance: "Nacional (consulta y revisión)", claves: "null" })], opc());
+    expect(r).toMatchObject({ creadas: 3, actualizadas: 0, sinCambios: 0, errores: [] });
+    expect((await q("SELECT count(*)::int AS n FROM usuarios"))[0].n).toBe(antes);
+  });
+
+  it("Script de carga: un error en una fila no escribe nada (CURP, correo, estado, duplicados, cuenta de otro tipo)", async () => {
+    const { cargar } = await import("./scripts/cargar-estatales.js");
+    const antes = (await q("SELECT count(*)::int AS n FROM usuarios"))[0].n;
+    const r = await cargar(cliente, [fila(2), fila(3, { curp: "MAL" }), fila(4, { claves: "99" })], opc({ aplicar: true }));
+    expect(r.errores.map((e) => e.fila)).toEqual([3, 4]);
+    expect(r.creadas).toBe(0);
+    expect((await q("SELECT count(*)::int AS n FROM usuarios"))[0].n).toBe(antes);
+    const rep = await cargar(cliente, [fila(2), fila(3, { correo: "carga2@sader.gob.mx" })], opc());
+    expect(rep.errores.some((e) => /Correo repetido/.test(e.mensaje))).toBe(true);
+    const dupCurp = await cargar(cliente, [fila(2), fila(3, { curp: "AUCM850505HJCLRN01" })], opc());
+    expect(dupCurp.errores.some((e) => /CURP repetida/.test(e.mensaje))).toBe(true);
+    const otroTipo = await cargar(cliente, [fila(2, { correo: "c14@correo.com" })], opc()); // ya es de un censador
+    expect(otroTipo.errores[0].mensaje).toMatch(/otro tipo/);
+    await expect(cargar(cliente, [fila(2)], opc({ aplicar: true, por: undefined }))).rejects.toThrow(/--por/);
+    await expect(cargar(cliente, [fila(2)], opc({ aplicar: true, por: "nadie@x.com" }))).rejects.toThrow(/administrador activo/);
+  });
+
+  it("Script de carga con --aplicar: crea las cuentas (dos estados, alcance nacional), cifra la CURP y la bitácora; volver a correrlo no duplica ni cambia contraseñas", async () => {
+    const { cargar, escribirCredenciales } = await import("./scripts/cargar-estatales.js");
+    const filas = [fila(2), fila(3, { claves: "05,10", programa: "Fertilizantes" }), fila(4, { alcance: "Nacional (consulta y revisión)", claves: "null" })];
+    const r = await cargar(cliente, filas, opc({ aplicar: true }));
+    expect(r).toMatchObject({ creadas: 3, actualizadas: 0, errores: [] });
+    const u = async (c: string) => (await q("SELECT rol, programa, estados_alcance, alcance_nacional, estado_cuenta, datos_completos, debe_cambiar_password, creado_por, curp_cifrado, password_hash FROM usuarios WHERE correo = $1", [c]))[0];
+    const a = await u("carga2@sader.gob.mx"), dos = await u("carga3@sader.gob.mx"), nac = await u("carga4@sader.gob.mx");
+    expect(a).toMatchObject({ rol: "estatal", programa: "oref", estados_alcance: ["14"], alcance_nacional: false, estado_cuenta: "autorizado", datos_completos: true, debe_cambiar_password: true, creado_por: adm });
+    expect(dos).toMatchObject({ programa: "fertilizantes", estados_alcance: ["05", "10"] });
+    expect(nac).toMatchObject({ alcance_nacional: true, estados_alcance: null });
+    expect(Buffer.from(a.curp_cifrado).toString("utf8")).not.toContain("AUCM850505HJCLRN01");
+    expect((await q("SELECT entidad_id FROM auditoria WHERE accion = 'carga_masiva_estatales'"))[0].entidad_id).toBe(JSON.stringify({ creadas: 3, actualizadas: 0 }));
+    // entran con su contraseña temporal
+    const cred = r.credenciales[0];
+    expect(cred.password).toMatch(/^TempPass/);
+    const login = await (await fetch(`${base}/auth/login`, { method: "POST", headers: json, body: JSON.stringify({ usuario: cred.correo, password: cred.password }) })).json();
+    expect(login.usuario).toMatchObject({ rol: "estatal", estadosAlcance: ["14"], alcanceNacional: false, programa: "oref", debeCambiarPassword: true });
+    // segunda corrida: nada que crear, nada que cambiar, contraseñas intactas
+    const hashAntes = a.password_hash;
+    const r2 = await cargar(cliente, filas, opc({ aplicar: true }));
+    expect(r2).toMatchObject({ creadas: 0, actualizadas: 0, sinCambios: 3 });
+    expect((await u("carga2@sader.gob.mx")).password_hash).toBe(hashAntes);
+    // un cambio de estados actualiza, sin tocar la contraseña
+    const r3 = await cargar(cliente, [fila(2, { claves: "14,15" }), filas[1], filas[2]], opc({ aplicar: true }));
+    expect(r3).toMatchObject({ creadas: 0, actualizadas: 1, sinCambios: 2 });
+    expect((await u("carga2@sader.gob.mx")).estados_alcance).toEqual(["14", "15"]);
+    expect((await u("carga2@sader.gob.mx")).password_hash).toBe(hashAntes);
+    // con --restablecer sí se genera otra
+    const r4 = await cargar(cliente, [fila(2, { claves: "14,15" })], opc({ aplicar: true, restablecer: true }));
+    expect(r4.actualizadas).toBe(1);
+    expect((await u("carga2@sader.gob.mx")).password_hash).not.toBe(hashAntes);
+    expect(r4.credenciales[0].password).toMatch(/^TempPass/);
+    // archivo de credenciales fuera del repositorio
+    const carpeta = mkdtempSync(path.join(tmpdir(), "cred-"));
+    const ruta = await escribirCredenciales(r.credenciales, carpeta);
+    expect(ruta.startsWith(carpeta)).toBe(true);
+    expect(readFileSync(ruta).length).toBeGreaterThan(1000);
+    // el estatal recién cargado solo ve su estado
+    const e = (await q("SELECT id FROM usuarios WHERE correo = 'carga3@sader.gob.mx'"))[0].id;
+    const nuevas = (await (await get("/admin/tortillerias?origen=nueva", e, "estatal")).json()) as any[];
+    expect(nuevas.every((x) => ["NUEVA 05", "NUEVA 10"].includes(x.nombre))).toBe(true);
+  });
+
+  it("Script de carga: lee la hoja 'Carga' de un .xlsx y un .csv con las mismas columnas", async () => {
+    const { leerArchivo } = await import("./scripts/cargar-estatales.js");
+    const ExcelJS = (await import("exceljs")).default;
+    const carpeta = mkdtempSync(path.join(tmpdir(), "carga-"));
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Carga");
+    ws.addRow(["No.", "Nombre(s)", "Apellido paterno", "Apellido materno", "CURP", "Correo (usuario)", "Alcance", "Claves de estado", "Estados", "Programa de origen"]);
+    ws.addRow([1, "ANA", "RUIZ", "SOTO", "HEGG560427MVZRRL04", "ana@sader.gob.mx", "Estatal", "05,10", "Coahuila, Durango", "Oref"]);
+    wb.addWorksheet("Notas").addRow(["nota"]);
+    const xlsx = path.join(carpeta, "carga.xlsx");
+    await wb.xlsx.writeFile(xlsx);
+    const filas = await leerArchivo(xlsx);
+    expect(filas).toHaveLength(1);
+    expect(filas[0]).toMatchObject({ nombre: "ANA", paterno: "RUIZ", correo: "ana@sader.gob.mx", claves: "05,10", programa: "Oref" });
+    const csv = path.join(carpeta, "carga.csv");
+    writeFileSync(csv, "No.,Nombre(s),Apellido paterno,Apellido materno,CURP,Correo (usuario),Alcance,Claves de estado,Estados,Programa de origen\r\n1,ANA,RUIZ,SOTO,HEGG560427MVZRRL04,ana@sader.gob.mx,Estatal,\"05,10\",\"Coahuila, Durango\",Oref\r\n");
+    expect((await leerArchivo(csv))[0]).toMatchObject({ claves: "05,10", correo: "ana@sader.gob.mx" });
+    const sinHoja = new ExcelJS.Workbook(); sinHoja.addWorksheet("Otra").addRow(["x"]);
+    const malo = path.join(carpeta, "malo.xlsx");
+    await sinHoja.xlsx.writeFile(malo);
+    await expect(leerArchivo(malo)).rejects.toThrow(/hoja "Carga"/);
   });
 });

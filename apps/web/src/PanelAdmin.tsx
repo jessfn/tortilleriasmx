@@ -4,7 +4,7 @@ import SituacionTortilleria from "./SituacionTortilleria";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowUpDown, Banknote, BarChart3, LineChart, Map as MapaIcono, CalendarDays, Check, ClipboardCheck, ExternalLink, FileText, Fingerprint, Hash, ChevronDown, ChevronLeft, ChevronRight, Clock, Eye, History, Loader2, Search, Mail, MapPin, Navigation, Phone, Store, TriangleAlert,
-  UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, KeyRound, Copy, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog, Sparkles, Ban,
+  UserRound, Users, Wheat, X, PackageOpen, Layers, Building2, KeyRound, Copy, Landmark, ShieldCheck, Camera, ClipboardList, CheckCheck, UserCog, Sparkles, Ban, Settings, UsersRound,
 } from "lucide-react";
 import { api, type Sesion } from "./api";
 import FotoAuth from "./FotoAuth";
@@ -23,11 +23,16 @@ import AdminMapa, { type FocoMapa } from "./AdminMapa";
 import AdminEstadisticas from "./AdminEstadisticas";
 import AdminExtras from "./AdminExtras";
 import AdminBajas from "./AdminBajas";
+import AdminCensadores from "./AdminCensadores";
+import AdminEquipo from "./AdminEquipo";
+import AdminAjustes from "./AdminAjustes";
 import { useVivo } from "./AdminVivo";
 
 export type TortilleriaAdm = {
   id: string; nombre: string; domicilio: string | null; estatus: string; origen: string; creado_en: string; lat: number | null; lng: number | null;
   municipio: string | null; estado: string | null; creador: string | null; n_fotos: number;
+  /** la dio de alta una cuenta que después fue rechazada */
+  creador_rechazado?: boolean;
   localidad: string | null; tipo_vial: string | null; calle: string | null; numero_ext: string | null; numero_int: string | null; colonia: string | null;
   codigo_postal: string | null; telefono: string | null; correo: string | null; personal_ocupado: string | null; codigo_scian: string | null;
   fecha_alta: string | null; tiene_fiscal: boolean;
@@ -57,6 +62,19 @@ export default function PanelAdmin({
   sesion, alActualizarSesion, alSalir, alInicio,
 }: { sesion: Sesion; alActualizarSesion: (s: Sesion) => void; alSalir: () => void; alInicio?: () => void }) {
   const esAdmin = sesion.usuario.rol === "admin";
+  /** Administrador estatal: solo ve su estado (o sus estados); el servidor lo exige en cada petición */
+  const esEstatal = sesion.usuario.rol === "estatal";
+  const [nombresEstados, setNombresEstados] = useState<{ clave: string; nombre: string }[]>([]);
+  useEffect(() => {
+    if (esEstatal) api<{ clave: string; nombre: string }[]>("/estados").then(setNombresEstados).catch(() => {});
+  }, [esEstatal]);
+  const alcance = esEstatal && !sesion.usuario.alcanceNacional ? (sesion.usuario.estadosAlcance ?? []) : null;
+  const textoAlcance = !esEstatal
+    ? ""
+    : sesion.usuario.alcanceNacional
+      ? "Todos los estados"
+      : (alcance ?? []).map((c) => nombresEstados.find((e) => e.clave === c)?.nombre ?? c).join(", ") || "Sin estados asignados";
+  const programa = esEstatal && sesion.usuario.programa ? (sesion.usuario.programa === "oref" ? "OREF" : "Fertilizantes") : "";
   const [tabGuardada, setTab] = usePersistente(CLAVES.tabAdmin, "resumen");
   const [resumen, setResumen] = useState<Resumen>();
   const [foco, setFoco] = useState<FocoMapa>();
@@ -80,11 +98,16 @@ export default function PanelAdmin({
     ...(puede("ver_resumen") ? [{ id: "resumen", texto: "Resumen", icono: BarChart3 }] : []),
     ...(puede("ver_mapa") ? [{ id: "mapa", texto: "Mapa", icono: MapaIcono }] : []),
     ...(puede("ver_estadisticas") ? [{ id: "estadisticas", texto: "Estadísticas", icono: LineChart }] : []),
-    ...(puede("ver_revision") ? [{ id: "revision", texto: "Revisión", icono: ClipboardCheck, insignia: undefined as number | undefined }] : []),
-    ...(puede("gestionar_bajas") || puede("ver_revision") ? [{ id: "bajas", texto: "Bajas", icono: Ban }] : []),
+    ...(puede("ver_revision") && !esEstatal ? [{ id: "revision", texto: "Revisión", icono: ClipboardCheck, insignia: undefined as number | undefined }] : []),
+    // administrador estatal: sus tres módulos (Usuarios, Tortillerías nuevas, Precios atípicos) y Mi equipo
+    ...(esEstatal && puede("ver_usuarios_app") ? [{ id: "censadores", texto: "Usuarios", icono: Users }] : []),
+    ...(esEstatal && puede("ver_revision") ? [{ id: "nuevas", texto: "Tortillerías nuevas", icono: Store }, { id: "atipicos", texto: "Precios atípicos", icono: AlertTriangle }] : []),
+    ...(puede("ver_mi_equipo") ? [{ id: "equipo", texto: "Mi equipo", icono: UsersRound }] : []),
+    ...(!esEstatal && puede("ver_usuarios_app") ? [{ id: "censadores", texto: "Autorizaciones", icono: UserCog }] : []),
+    ...(!esEstatal && (puede("gestionar_bajas") || puede("ver_revision")) ? [{ id: "bajas", texto: "Bajas", icono: Ban }] : []),
     ...(puede("ver_extras") ? [{ id: "extras", texto: "Extras", icono: Sparkles }] : []),
-    ...(puede("ver_usuarios_app") || esAdmin ? [{ id: "usuarios", texto: "Usuarios", icono: Users }] : []),
-    ...(esAdmin ? [{ id: "auditoria", texto: "Auditoría", icono: History }] : []),
+    ...(!esEstatal && (puede("ver_usuarios_app") || esAdmin) ? [{ id: "usuarios", texto: "Usuarios", icono: Users }] : []),
+    ...(esAdmin ? [{ id: "auditoria", texto: "Auditoría", icono: History }, { id: "ajustes", texto: "Ajustes", icono: Settings }] : []),
     { id: "perfil", texto: "Perfil", icono: UserRound },
   ];
   const tab = pestañasDisponibles.some((p) => p.id === tabGuardada) ? tabGuardada : pestañasDisponibles[0].id; // por si cambiaron sus permisos
@@ -108,12 +131,13 @@ export default function PanelAdmin({
       pendientes={pendientes}
       alInicio={alInicio}
       alSalir={alSalir}
-      plano={tab === "mapa" || tab === "revision" || tab === "usuarios" || tab === "auditoria" || tab === "bajas"}
-      titulo={esAdmin ? "Administración" : "Supervisión"}
+      plano={["mapa", "revision", "usuarios", "auditoria", "bajas", "nuevas", "atipicos", "censadores"].includes(tab)}
+      titulo={esEstatal ? `Estatal · ${textoAlcance}${programa ? ` · ${programa}` : ""}` : esAdmin ? "Administración" : "Supervisión"}
+      banda={esEstatal ? `${textoAlcance}${programa ? ` · ${programa}` : ""}` : undefined}
       vivo={vivo}
       pestañas={pestañasDisponibles.map((p) => (p.id === "revision" ? { ...p, insignia: pendientes } : p))}
       activa={tab}
-      alCambiar={setTab}
+      alCambiar={(id) => setTab(id === "revision" && esEstatal ? "nuevas" : id)}
     >
       {tab === "resumen" && (
         <AdminResumen
@@ -131,6 +155,11 @@ export default function PanelAdmin({
       {tab === "mapa" && <AdminMapa foco={foco} alCambio={cargarResumen} puedeValidar={puede("validar_tortillerias")} />}
       {tab === "estadisticas" && <AdminEstadisticas alMapa={(f) => puede("ver_mapa") && alMapa(f)} puedeExportar={puede("exportar_capturas")} />}
       {tab === "revision" && <VistaRevision alCambio={cargarResumen} puedeRevisar={puede("revisar_precios")} puedeValidar={puede("validar_tortillerias")} />}
+      {tab === "nuevas" && <VistaRevision solo="tortillerias" alCambio={cargarResumen} puedeRevisar={puede("revisar_precios")} puedeValidar={puede("validar_tortillerias")} />}
+      {tab === "atipicos" && <VistaRevision solo="precios" alCambio={cargarResumen} puedeRevisar={puede("revisar_precios")} puedeValidar={puede("validar_tortillerias")} />}
+      {tab === "censadores" && puede("ver_usuarios_app") && <AdminCensadores esAdmin={esAdmin} titulo={esEstatal ? "Usuarios" : "Autorizaciones de censadores"} estadosPermitidos={alcance} />}
+      {tab === "equipo" && puede("ver_mi_equipo") && <AdminEquipo estadosPermitidos={alcance} />}
+      {tab === "ajustes" && esAdmin && <AdminAjustes />}
       {tab === "usuarios" && (puede("ver_usuarios_app") || esAdmin) && (
         <AdminUsuarios miId={sesion.usuario.id} esAdmin={esAdmin} puedeVerApp={puede("ver_usuarios_app")} puedeGestionarApp={puede("gestionar_usuarios_app")} />
       )}
@@ -144,8 +173,8 @@ export default function PanelAdmin({
 
 /* ---------------- Revisión ---------------- */
 
-function VistaRevision({ alCambio, puedeRevisar, puedeValidar }: { alCambio: () => void; puedeRevisar: boolean; puedeValidar: boolean }) {
-  const [seccion, setSeccion] = useState<"tortillerias" | "precios">("tortillerias");
+function VistaRevision({ solo, alCambio, puedeRevisar, puedeValidar }: { solo?: "tortillerias" | "precios"; alCambio: () => void; puedeRevisar: boolean; puedeValidar: boolean }) {
+  const [seccion, setSeccion] = useState<"tortillerias" | "precios">(solo ?? "tortillerias");
   const [estatus, setEstatus] = useState<"pendiente" | "validada" | "rechazada">("pendiente");
   const [pagina, setPagina] = useState(1);
   const [limite, setLimite] = useState(50);
@@ -298,7 +327,8 @@ function VistaRevision({ alCambio, puedeRevisar, puedeValidar }: { alCambio: () 
     <div className="mx-auto flex h-full min-h-0 w-full max-w-[92rem] flex-col gap-2.5 px-3 pb-3 pt-4 lg:px-6 lg:pb-5">
       <div className="flex shrink-0 flex-col gap-2 md:flex-row md:items-center md:gap-4">
         {/* Qué se revisa: tortillerías nuevas o precios capturados, cada una con su cuenta */}
-        <div role="tablist" aria-label="Qué revisar" className="grid w-full grid-cols-2 gap-1 rounded-2xl bg-stone-200/70 p-1 md:w-[30rem]">
+        {solo && <h2 className="text-base font-bold md:w-[30rem]">{solo === "tortillerias" ? "Tortillerías nuevas" : estatus === "pendiente" ? "Precios atípicos por revisar" : "Precios capturados"}{totales[solo] !== undefined ? <span className="ml-2 rounded-full bg-guinda px-2 py-0.5 align-middle text-xs font-bold text-white">{totales[solo]}</span> : null}</h2>}
+        {!solo && <div role="tablist" aria-label="Qué revisar" className="grid w-full grid-cols-2 gap-1 rounded-2xl bg-stone-200/70 p-1 md:w-[30rem]">
           {(["tortillerias", "precios"] as const).map((s) => {
             const on = seccion === s;
             const Icono = s === "tortillerias" ? Store : Banknote;
@@ -319,7 +349,7 @@ function VistaRevision({ alCambio, puedeRevisar, puedeValidar }: { alCambio: () 
               </button>
             );
           })}
-        </div>
+        </div>}
         {/* Estatus: en el celular reparten el ancho; en pantallas grandes van en una fila */}
         <div role="tablist" aria-label="Estatus" className="grid grid-cols-3 gap-1.5 md:flex">
           {([["pendiente", "Por revisar"], ["validada", "Aprobadas"], ["rechazada", "Rechazadas"]] as const).map(([k, t]) => (
@@ -423,6 +453,7 @@ function VistaRevision({ alCambio, puedeRevisar, puedeValidar }: { alCambio: () 
                       <p className="mt-1 flex items-center gap-3 text-xs text-stone-400">
                         <span className="flex items-center gap-1"><Camera className="h-3 w-3" aria-hidden /> {t.n_fotos}</span>
                         <span className="truncate">{t.creador ?? "DENUE"}</span>
+                        {t.creador_rechazado && <span className="shrink-0 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 ring-1 ring-red-200">Registrada por un usuario rechazado</span>}
                         <span className="ml-auto shrink-0">{fecha(t.creado_en)}</span>
                       </p>
                     </div>
@@ -608,7 +639,7 @@ function DetalleTortilleria({
         {t.correo && <Fila i={Mail} k="Correo de la tortillería" v={t.correo} />}
         {t.personal_ocupado && <Fila i={Users} k="Personal ocupado" v={t.personal_ocupado} />}
         {t.fecha_alta && <Fila i={CalendarDays} k="Fecha de alta" v={t.fecha_alta} />}
-        <Fila i={UserRound} k="Registrada por" v={t.creador ?? "DENUE"} />
+        <Fila i={UserRound} k="Registrada por" v={`${t.creador ?? "DENUE"}${t.creador_rechazado ? " (usuario rechazado)" : ""}`} />
           </div>
         </details>
       </Tarjeta>

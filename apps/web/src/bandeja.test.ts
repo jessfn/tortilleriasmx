@@ -12,7 +12,7 @@ vi.mock("./api", () => {
   }
   return {
     ApiError,
-    leerSesion: () => ({ token: "t", usuario: { id: "u1", nombre: "", apellidos: "", rol: "capturista", correo: "a@b.c" } }),
+    leerSesion: () => ({ token: "t", usuario: { id: "u1", nombre: "", apellidos: "", rol: "capturista", correo: "a@b.c", datosCompletos: false, estadoCuenta: "por_autorizar" } }),
     api: async (ruta: string, op: any = {}) => {
       h.llamadas.push({ ruta, cuerpo: op.json ?? op.form, headers: op.headers });
       const r = h.respuesta?.(ruta, op.json);
@@ -479,5 +479,44 @@ describe("C19: 'ya no funciona' y tipo de elaboración", () => {
     expect(p.estado).toBe("conflicto");
     expect(p.precios[0].mensaje).toMatch(/dado de baja/);
     expect(porId("i2")).toBeUndefined();
+  });
+});
+
+describe("C20: cuenta por autorizar y datos incompletos", () => {
+  it("un 403 de 'cuenta por autorizar' CONSERVA los paquetes (no son un error) y salen solos cuando la autorizan", async () => {
+    h.respuesta = () => new ApiError(403, "Tu solicitud está en revisión", { error: "cuenta_por_autorizar" });
+    await guardarPaquete(paquete());
+    await guardarPaquete(paquete({ tortilleria: { id: "otra", nombre: "OTRA", domicilio: null, lat: 19.4, lng: -99.1 } }));
+    await sincronizar();
+    const lista = await listarPaquetes("u1");
+    expect(lista.map((p) => p.estado)).toEqual(["por_enviar", "por_enviar"]); // ninguno pasó a "error" ni se descartó
+    expect(lista[0].mensaje).toMatch(/aún no está autorizada/);
+    expect(lista[0].proximoIntento).toBeGreaterThan(Date.now());
+    expect(estadoSync.sinAutorizar).toBe(true);
+    expect(rutas()).toEqual(["/precios"]); // se detiene en el primero: no insiste con los demás
+    // la autorizan: "Enviar ahora" los manda, en orden
+    h.respuesta = () => ({});
+    h.llamadas = [];
+    await sincronizar({ forzar: true });
+    expect((await listarPaquetes("u1")).map((p) => p.estado)).toEqual(["enviado", "enviado"]);
+    expect(estadoSync.sinAutorizar).toBe(false);
+  });
+
+  it("una cuenta rechazada también conserva lo guardado, con su aviso", async () => {
+    h.respuesta = () => new ApiError(403, "Tu solicitud no fue autorizada", { error: "cuenta_rechazada" });
+    await guardarPaquete(paquete());
+    await sincronizar();
+    const [p] = await listarPaquetes("u1");
+    expect(p.estado).toBe("por_enviar");
+    expect(p.mensaje).toMatch(/no fue autorizada/);
+  });
+
+  it("'Completa tus datos' NO frena la sincronización: la bandeja sigue enviando lo que ya estaba guardado", async () => {
+    // la sesión simulada trae datosCompletos: false (censador que ya existía y aún no completa sus datos)
+    h.respuesta = () => ({});
+    await guardarPaquete(paquete());
+    await sincronizar();
+    expect((await listarPaquetes("u1"))[0].estado).toBe("enviado");
+    expect(rutas()).toEqual(["/precios"]);
   });
 });

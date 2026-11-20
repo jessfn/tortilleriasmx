@@ -14,7 +14,7 @@ export async function rutasFotos(app: FastifyInstance) {
   await app.register(multipart, { limits: { fileSize: MAX_BYTES, files: 1 } });
 
   // Subida por usuarios registrados (con límite); la consulta exige sesión
-  app.post<{ Params: { id: string } }>("/tortillerias/:id/fotos", { preHandler: app.autenticar, config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {
+  app.post<{ Params: { id: string } }>("/tortillerias/:id/fotos", { preHandler: app.autenticarCaptura, config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const t = await pool.query("SELECT 1 FROM tortillerias WHERE id = $1", [req.params.id]);
     if (!t.rowCount) return reply.code(404).send({ error: "Tortillería no existe" });

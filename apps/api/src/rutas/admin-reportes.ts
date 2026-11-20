@@ -31,7 +31,7 @@ export function rutasAdminReportes(app: FastifyInstance) {
     return { titulo: t.titulo, tipo: t.tipo, horario: t.horario, anterior: t.anterior, desde: p.rango.desde, hasta: p.rango.hasta, dias: p.rango.dias, granularidad: p.rango.granularidad, totales: r.totales, anteriorTotales: r.anterior, estados: r.estados.filter((e) => e.capturas > 0).length };
   });
 
-  app.get("/admin/reportes/descargar", { preHandler: permiso, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
+  app.get("/admin/reportes/descargar", { preHandler: permiso, config: { rateLimit: { max: process.env.NODE_ENV === "test" ? 1000 : 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const p = leer(req.query, reply);
     if (!p) return;
     const r = await reunirReporte(p.rango);

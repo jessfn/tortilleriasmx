@@ -1,3 +1,4 @@
+import { AvisoCuenta } from "./AvisoCuenta";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, CheckCircle2, ClipboardList, Clock, Home, MapPin, PackageOpen, Plus, RefreshCw, Store, UserRound, Wheat, XCircle, Layers, Loader2, WifiOff } from "lucide-react";
 import { api, ApiError, type Sesion } from "./api";
@@ -116,6 +117,7 @@ function TarjetaTortilleria({ t, alActualizar, alAbrir }: { t: MiTortilleria; al
 export default function PanelUsuario({
   sesion, alCapturar, alActualizarPrecio, alActualizarSesion, alSalir,
 }: { sesion: Sesion; alCapturar: () => void; alActualizarPrecio: (t: Punto) => void; alActualizarSesion: (s: Sesion) => void; alSalir: () => void }) {
+  const estadoCuenta = sesion.usuario.estadoCuenta ?? "autorizado";
   const [tab, setTab] = usePersistente(CLAVES.tabUsuario, "inicio");
   const [resumen, setResumen] = useState<Resumen>();
   const [registros, setRegistros] = useState<Registro[]>();
@@ -204,6 +206,7 @@ export default function PanelUsuario({
         <>
           <TarjetaBandeja paquetes={paquetes} />
           <TarjetaDescargaEstado />
+          {estadoCuenta !== "autorizado" ? <AvisoCuenta estado={estadoCuenta} /> : (
           <button
             onClick={alCapturar}
             className="relative flex w-full items-center gap-4 overflow-hidden rounded-3xl bg-gradient-to-br from-guinda to-guinda-oscuro p-5 text-left text-white shadow-lg shadow-guinda/30 transition active:scale-[.98]"
@@ -216,6 +219,7 @@ export default function PanelUsuario({
               <span className="block text-sm text-white/80">Captura el precio de la tortilla</span>
             </span>
           </button>
+          )}
 
           <div className="grid grid-cols-3 gap-2">
             <Dato icono={ClipboardList} etiqueta="Registros" valor={resumen?.registros ?? "–"} />
@@ -256,7 +260,7 @@ export default function PanelUsuario({
           ) : (
             tortillerias.map((t) => <TarjetaTortilleria key={t.id} t={t} alActualizar={actualizar} alAbrir={setDetalle} />)
           )}
-          <Boton onClick={alCapturar} icono={Plus}>
+          <Boton onClick={alCapturar} icono={Plus} disabled={estadoCuenta !== "autorizado"}>
             Registrar otra tortillería
           </Boton>
         </>

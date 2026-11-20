@@ -12,7 +12,7 @@ const fechaOk = (v?: string) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
  * Una baja aplica de inmediato (sin confirmación de supervisor): aquí se consulta, se ordena lo que merece revisarse y se puede reactivar.
  */
 export function rutasAdminBajas(app: FastifyInstance) {
-  const ver = app.conPermiso("gestionar_bajas", "ver_revision");
+  const ver = app.conPermisoNacional("gestionar_bajas", "ver_revision");
 
   // Lista de bajas con quién, cuándo, por qué, la distancia entre el GPS del reporte y la ubicación del catálogo y las contradicciones
   app.get("/admin/bajas", { preHandler: ver }, async (req, reply) => {
@@ -34,14 +34,15 @@ export function rutasAdminBajas(app: FastifyInstance) {
     const limite = Math.min(200, Math.max(1, Number(q.limite) || 50));
     const FECHA = `(coalesce(b.capturado_en, b.creado_en) AT TIME ZONE '${TZ}')::date`;
     const DONDE = `($1::text IS NULL OR t.estado_clave = $1) AND ($2::text IS NULL OR t.municipio_clave = $2) AND ($3::text IS NULL OR b.motivo = $3)
-          AND ($4::date IS NULL OR ${FECHA} >= $4::date) AND ($5::date IS NULL OR ${FECHA} <= $5::date) AND ($6::boolean IS NOT TRUE OR b.reactivada_en IS NULL)`;
-    const params = [estado, municipio, motivo, fechaOk(q.desde), fechaOk(q.hasta), vigentes];
+          AND ($4::date IS NULL OR ${FECHA} >= $4::date) AND ($5::date IS NULL OR ${FECHA} <= $5::date) AND ($6::boolean IS NOT TRUE OR b.reactivada_en IS NULL)
+          AND ($7::boolean IS NOT TRUE OR EXISTS (SELECT 1 FROM usuarios ux WHERE ux.id = b.capturista_id AND ux.estado_cuenta = 'rechazado'))`;
+    const params = [estado, municipio, motivo, fechaOk(q.desde), fechaOk(q.hasta), vigentes, q.rechazado === "1"];
     const { rows } = await pool.query(
       `SELECT b.id, b.tortilleria_id, t.nombre, t.domicilio, e.nombre AS estado, m.nombre AS municipio, t.operacion,
               b.motivo, b.motivo_otro, coalesce(b.capturado_en, b.creado_en) AS fecha, u.correo AS censador,
               ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng, ST_Y(b.geom_captura) AS reporte_lat, ST_X(b.geom_captura) AS reporte_lng, b.precision_gps,
               CASE WHEN b.geom_captura IS NULL OR t.geom IS NULL THEN NULL ELSE ST_Distance(t.geom::geography, b.geom_captura::geography) END AS distancia_m,
-              b.contradicciones, b.reactivada_en, ur.correo AS reactivada_por
+              b.contradicciones, b.reactivada_en, ur.correo AS reactivada_por, (u.estado_cuenta = 'rechazado') AS censador_rechazado
          FROM tortilleria_bajas b
          JOIN tortillerias t ON t.id = b.tortilleria_id
          LEFT JOIN estados e ON e.clave = t.estado_clave
@@ -50,7 +51,7 @@ export function rutasAdminBajas(app: FastifyInstance) {
          LEFT JOIN usuarios ur ON ur.id = b.reactivada_por
         WHERE ${DONDE}
         ORDER BY ${orden}, b.id
-        LIMIT $7 OFFSET $8`,
+        LIMIT $8 OFFSET $9`,
       [...params, limite, (pagina - 1) * limite],
     );
     const { rows: [c] } = await pool.query(
@@ -61,7 +62,7 @@ export function rutasAdminBajas(app: FastifyInstance) {
   });
 
   // Reactivar (por ejemplo, reabrió o fue un error). Queda quién y cuándo, y en la bitácora.
-  app.patch<{ Params: { id: string } }>("/admin/tortillerias/:id/operacion", { preHandler: app.conPermiso("gestionar_bajas") }, async (req, reply) => {
+  app.patch<{ Params: { id: string } }>("/admin/tortillerias/:id/operacion", { preHandler: app.conPermisoNacional("gestionar_bajas") }, async (req, reply) => {
     const p = z.object({ operacion: z.literal("activa") }).safeParse(req.body);
     if (!p.success || !uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Datos inválidos" });
     const t = await pool.query("SELECT operacion FROM tortillerias WHERE id = $1", [req.params.id]);
@@ -74,7 +75,7 @@ export function rutasAdminBajas(app: FastifyInstance) {
   });
 
   // Situación de una tortillería para su detalle: operación (con su última baja) y tipo de elaboración con su historial
-  app.get<{ Params: { id: string } }>("/admin/tortillerias/:id/situacion", { preHandler: app.conPermiso("ver_revision", "ver_mapa") }, async (req, reply) => {
+  app.get<{ Params: { id: string } }>("/admin/tortillerias/:id/situacion", { preHandler: app.conPermisoNacional("ver_revision", "ver_mapa") }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const t = await pool.query("SELECT operacion, elaboracion FROM tortillerias WHERE id = $1", [req.params.id]);
     if (!t.rowCount) return reply.code(404).send({ error: "No existe" });
@@ -94,7 +95,7 @@ export function rutasAdminBajas(app: FastifyInstance) {
   });
 
   // "Dadas de baja": total nacional y por estado (o por municipio con ?estado=), con el desglose por motivo. Solo las que siguen inactivas.
-  app.get("/admin/bajas/resumen", { preHandler: app.conPermiso("ver_estadisticas", "gestionar_bajas", "ver_resumen") }, async (req, reply) => {
+  app.get("/admin/bajas/resumen", { preHandler: app.conPermisoNacional("ver_estadisticas", "gestionar_bajas", "ver_resumen") }, async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const estado = q.estado && /^\d{2}$/.test(q.estado) ? q.estado : null;
     if (q.estado && !estado) return reply.code(400).send({ error: "estado inválido" });
@@ -129,7 +130,7 @@ export function rutasAdminBajas(app: FastifyInstance) {
 
   // Tipo de elaboración por estado o municipio: cuántas tortillerías visitadas de cada tipo (y sin dato) y el precio promedio de la tortilla por tipo.
   // Regla de siempre: el último precio que CUENTA de cada tortillería en el periodo (una tortillería = un valor).
-  app.get("/admin/estadisticas/elaboracion", { preHandler: app.conPermiso("ver_estadisticas", "ver_resumen") }, async (req, reply) => {
+  app.get("/admin/estadisticas/elaboracion", { preHandler: app.conPermisoNacional("ver_estadisticas", "ver_resumen") }, async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const estado = q.estado && /^\d{2}$/.test(q.estado) ? q.estado : null;
     if (q.estado && !estado) return reply.code(400).send({ error: "estado inválido" });

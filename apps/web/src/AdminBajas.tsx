@@ -11,7 +11,7 @@ type Baja = {
   id: string; tortilleria_id: string; nombre: string; domicilio: string | null; estado: string | null; municipio: string | null; operacion: "activa" | "inactiva";
   motivo: string; motivo_otro: string | null; fecha: string; censador: string | null;
   lat: number | null; lng: number | null; reporte_lat: number | null; reporte_lng: number | null; precision_gps: number | null;
-  distancia_m: number | null; contradicciones: number; reactivada_en: string | null; reactivada_por: string | null;
+  distancia_m: number | null; contradicciones: number; reactivada_en: string | null; reactivada_por: string | null; censador_rechazado?: boolean;
 };
 type Zona = { clave: string; nombre: string };
 
@@ -38,6 +38,7 @@ export default function AdminBajas({ puedeReactivar, alCambio }: { puedeReactiva
   const [hasta, setHasta] = useState("");
   const [orden, setOrden] = useState("recientes");
   const [vigentes, setVigentes] = useState(false);
+  const [rechazados, setRechazados] = useState(false);
   const [abierta, setAbierta] = useState<string | null>(null);
   /** en el celular los filtros se pliegan: la lista necesita el espacio */
   const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
@@ -64,6 +65,7 @@ export default function AdminBajas({ puedeReactivar, alCambio }: { puedeReactiva
     if (desde) p.set("desde", desde);
     if (hasta) p.set("hasta", hasta);
     if (vigentes) p.set("solo", "vigentes");
+    if (rechazados) p.set("rechazado", "1");
     api<Pagina<Baja>>(`/admin/bajas?${p}`)
       .then((r) => {
         if (!vigente) return;
@@ -74,7 +76,7 @@ export default function AdminBajas({ puedeReactivar, alCambio }: { puedeReactiva
       })
       .catch((e) => vigente && setError(e.message));
     return () => { vigente = false; };
-  }, [pagina, limite, estado, municipio, motivo, desde, hasta, orden, vigentes, version]);
+  }, [pagina, limite, estado, municipio, motivo, desde, hasta, orden, vigentes, rechazados, version]);
 
   const filtrar = (f: () => void) => { f(); setPagina(1); };
 
@@ -108,7 +110,7 @@ export default function AdminBajas({ puedeReactivar, alCambio }: { puedeReactiva
         aria-expanded={filtrosAbiertos}
         className="flex min-h-11 shrink-0 items-center justify-between gap-2 rounded-xl bg-white px-3 text-sm font-semibold shadow-sm ring-1 ring-stone-200 lg:hidden"
       >
-        <span className="flex items-center gap-2"><Filter className="h-4 w-4 text-guinda" aria-hidden /> Filtros y orden{(estado || municipio || motivo || desde || hasta || vigentes || orden !== "recientes") && <span className="rounded-full bg-guinda px-2 py-0.5 text-[11px] text-white">activos</span>}</span>
+        <span className="flex items-center gap-2"><Filter className="h-4 w-4 text-guinda" aria-hidden /> Filtros y orden{(estado || municipio || motivo || desde || hasta || vigentes || rechazados || orden !== "recientes") && <span className="rounded-full bg-guinda px-2 py-0.5 text-[11px] text-white">activos</span>}</span>
         <ChevronDown className={`h-4 w-4 transition ${filtrosAbiertos ? "rotate-180" : ""}`} aria-hidden />
       </button>
       <div className={`${filtrosAbiertos ? "grid" : "hidden"} max-h-[45dvh] shrink-0 gap-2 overflow-y-auto sm:grid-cols-2 lg:grid lg:max-h-none lg:grid-cols-4 lg:overflow-visible`}>
@@ -125,6 +127,10 @@ export default function AdminBajas({ puedeReactivar, alCambio }: { puedeReactiva
           <input type="checkbox" checked={vigentes} onChange={(e) => filtrar(() => setVigentes(e.target.checked))} className="h-5 w-5 accent-guinda" />
           <span className="font-medium">Solo las que siguen dadas de baja</span>
           <span className="text-xs text-stone-500">(sin las reactivadas)</span>
+        </label>
+        <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-xl bg-white px-3 text-sm shadow-sm ring-1 ring-stone-200 sm:col-span-2">
+          <input type="checkbox" checked={rechazados} onChange={(e) => filtrar(() => setRechazados(e.target.checked))} className="h-5 w-5 accent-guinda" />
+          <span className="font-medium">Hechas por un usuario rechazado</span>
         </label>
       </div>
       {error && <Aviso>{error}</Aviso>}
@@ -160,7 +166,7 @@ export default function AdminBajas({ puedeReactivar, alCambio }: { puedeReactiva
                         {b.motivo === "otro" && b.motivo_otro ? <span className="text-stone-600"> — {b.motivo_otro}</span> : null}
                       </p>
                       <ul className="space-y-1 text-xs text-stone-500">
-                        <li className="flex items-center gap-1.5"><UserRound className="h-3.5 w-3.5 shrink-0 text-guinda" aria-hidden /> <span className="truncate">{b.censador ?? "Sin usuario"} · {cuando(b.fecha)}</span></li>
+                        <li className="flex items-center gap-1.5"><UserRound className="h-3.5 w-3.5 shrink-0 text-guinda" aria-hidden /> <span className="truncate">{b.censador ?? "Sin usuario"} · {cuando(b.fecha)}</span>{b.censador_rechazado && <span className="shrink-0 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 ring-1 ring-red-200">Hecha por un usuario rechazado</span>}</li>
                         <li className={`flex items-center gap-1.5 ${lejos ? "font-semibold text-amber-700" : ""}`}>
                           <MapPin className={`h-3.5 w-3.5 shrink-0 ${lejos ? "text-amber-600" : "text-guinda"}`} aria-hidden />
                           {b.distancia_m == null ? "El reporte no trae ubicación GPS" : `Reportada a ${metros(b.distancia_m)} del lugar del catálogo${b.precision_gps ? ` (GPS ±${Math.round(b.precision_gps)} m)` : ""}${lejos ? " — conviene revisarla" : ""}`}

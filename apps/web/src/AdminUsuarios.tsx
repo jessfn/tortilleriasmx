@@ -8,6 +8,7 @@ import { Buscador, SelectorFiltro } from "./Filtros";
 
 export type UsuarioAdm = {
   id: string; correo: string | null; usuario: string; nombre: string; apellidos: string; rol: string; activo: boolean; creado_en: string; capturas: number;
+  estados_alcance?: string[] | null; alcance_nacional?: boolean; programa?: string | null;
   debe_cambiar_password?: boolean;
   /** AAAA-MM-DD de su última captura y cuántas hizo en los últimos 7 días: para ver quién está trabajando */
   ultima_captura?: string | null; capturas_7d?: number;
@@ -195,7 +196,7 @@ function ListaUsuarios({ tipo, miId, esAdmin, puedeGestionarApp }: { tipo: "app"
                 valor={rol}
                 activo={!!rol}
                 alCambiar={(v) => { setRol(v); setPagina(1); }}
-                opciones={[{ valor: "", texto: "Todos los roles" }, { valor: "supervisor", texto: "Supervisores" }, { valor: "admin", texto: "Administradores" }]}
+                opciones={[{ valor: "", texto: "Todos los roles" }, { valor: "supervisor", texto: "Supervisores" }, { valor: "admin", texto: "Administradores" }, { valor: "estatal", texto: "Administradores estatales" }]}
               />
             </div>
           )}
@@ -255,9 +256,11 @@ function ListaUsuarios({ tipo, miId, esAdmin, puedeGestionarApp }: { tipo: "app"
 
                     {esPersonal && (
                       <div className="space-y-1.5">
-                        <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold ${u.rol === "admin" ? "bg-guinda text-white" : "bg-dorado/20 text-[#7a5a23]"}`}>{u.rol === "admin" ? "Administrador" : "Supervisor"}</span>
+                        <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold ${u.rol === "admin" ? "bg-guinda text-white" : u.rol === "estatal" ? "bg-verde/15 text-verde" : "bg-dorado/20 text-[#7a5a23]"}`}>{u.rol === "admin" ? "Administrador" : u.rol === "estatal" ? `Administrador estatal${u.programa ? ` · ${u.programa === "oref" ? "OREF" : "Fertilizantes"}` : ""}` : "Supervisor"}</span>
                         {u.rol === "admin" ? (
                           <p className="text-xs text-stone-500">Puede todo, incluida la gestión de usuarios y la auditoría.</p>
+                        ) : u.rol === "estatal" ? (
+                          <p className="text-xs leading-snug text-stone-500"><b className="text-stone-700">Estados:</b> {u.alcance_nacional ? "todos (consulta y revisión)" : (u.estados_alcance ?? []).join(", ") || "ninguno"}<br /><b className="text-stone-700">Puede:</b> gestionar usuarios de la app, revisar tortillerías nuevas y precios atípicos, y ver Mi equipo.</p>
                         ) : (
                           <p className="text-xs leading-snug text-stone-500">
                             <b className="text-stone-700">Ve:</b> {vistas.length ? vistas.map(textoPermiso).join(", ") : "nada"}
@@ -269,7 +272,7 @@ function ListaUsuarios({ tipo, miId, esAdmin, puedeGestionarApp }: { tipo: "app"
                     )}
 
                     <div className="flex items-center gap-2">
-                      {esPersonal && puedeEditar && !yo && (
+                      {esPersonal && puedeEditar && !yo && u.rol !== "estatal" && (
                         <button onClick={() => setFormulario(u)} className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-white text-sm font-semibold text-guinda ring-1 ring-stone-200 hover:ring-guinda/40">
                           <Pencil className="h-4 w-4" aria-hidden /> Editar rol y permisos
                         </button>

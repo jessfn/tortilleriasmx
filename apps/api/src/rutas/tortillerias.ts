@@ -6,6 +6,7 @@ import { cifrar, descifrar, enmascarar, hashBusqueda } from "../crypto.js";
 import { domicilioDe, type Fila } from "../denue.js";
 import { MAX_CELDAS, tamanoCelda, zoomSchema } from "../celdas.js";
 import { MAX_DIAS_ATRASO, TOLERANCIA_FUTURO_MS } from "./precios.js";
+import { alcanceDe, tortilleriaVisible } from "../alcance.js";
 
 const busquedaSchema = z.object({
   municipio: z.string().optional(),
@@ -108,7 +109,7 @@ export function rutasTortillerias(app: FastifyInstance) {
   });
 
   // Alta de tortillería nueva por un usuario registrado (queda pendiente de validación; la foto es obligatoria para validarla)
-  app.post("/tortillerias", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
+  app.post("/tortillerias", { preHandler: app.autenticarCaptura, config: LIMITE_ESCRITURA }, async (req, reply) => {
     const p = nuevaTortilleriaSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
     const d = p.data;
@@ -177,7 +178,7 @@ export function rutasTortillerias(app: FastifyInstance) {
   });
 
   // "No se pudo tomar la foto" de una tortillería que ya existe: queda el motivo (una fila por intento). Nunca bloquea el precio.
-  app.post<{ Params: { id: string } }>("/tortillerias/:id/foto/negativa", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
+  app.post<{ Params: { id: string } }>("/tortillerias/:id/foto/negativa", { preHandler: app.autenticarCaptura, config: LIMITE_ESCRITURA }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const p = sinFotoSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
@@ -215,7 +216,7 @@ export function rutasTortillerias(app: FastifyInstance) {
 
   // Se envía ANTES que los precios del paquete (así la comparación del precio atípico ya usa el tipo correcto). Queda el historial;
   // el valor vigente solo cambia si este registro es más reciente que el vigente (un paquete sin conexión enviado tarde no pisa algo más nuevo).
-  app.post<{ Params: { id: string } }>("/tortillerias/:id/elaboracion", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
+  app.post<{ Params: { id: string } }>("/tortillerias/:id/elaboracion", { preHandler: app.autenticarCaptura, config: LIMITE_ESCRITURA }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const p = elaboracionSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
@@ -255,7 +256,7 @@ export function rutasTortillerias(app: FastifyInstance) {
   /* ------------------------------------------------------------------ "ya no funciona" (C19.1) */
 
   // Un solo reporte basta: la tortillería queda inactiva en seguida (el cambio y el reporte van en la misma sentencia). No se captura precio ni se pide foto.
-  app.post<{ Params: { id: string } }>("/tortillerias/:id/baja", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
+  app.post<{ Params: { id: string } }>("/tortillerias/:id/baja", { preHandler: app.autenticarCaptura, config: LIMITE_ESCRITURA }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const p = bajaSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
@@ -293,7 +294,7 @@ export function rutasTortillerias(app: FastifyInstance) {
   });
 
   // "No se obtuvieron los datos fiscales": queda el motivo (una fila por intento). Nunca bloquea el precio.
-  app.post<{ Params: { id: string } }>("/tortillerias/:id/fiscal/negativa", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
+  app.post<{ Params: { id: string } }>("/tortillerias/:id/fiscal/negativa", { preHandler: app.autenticarCaptura, config: LIMITE_ESCRITURA }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const p = sinFiscalSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
@@ -333,7 +334,7 @@ export function rutasTortillerias(app: FastifyInstance) {
   });
 
   // Los crea una sola vez: si ya existen, no se sobrescriben (las correcciones las hace el admin)
-  app.post<{ Params: { id: string } }>("/tortillerias/:id/fiscal", { preHandler: app.autenticar, config: LIMITE_ESCRITURA }, async (req, reply) => {
+  app.post<{ Params: { id: string } }>("/tortillerias/:id/fiscal", { preHandler: app.autenticarCaptura, config: LIMITE_ESCRITURA }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     if ((req.body as { aceptoAviso?: boolean })?.aceptoAviso !== true) return reply.code(400).send({ error: "Falta aceptar el aviso de privacidad" });
     const p = fiscalSchema.safeParse(req.body);
@@ -393,6 +394,8 @@ export function rutasTortillerias(app: FastifyInstance) {
   app.patch<{ Params: { id: string } }>("/tortillerias/:id/estatus", { preHandler: app.conPermiso("validar_tortillerias") }, async (req, reply) => {
     const p = z.object({ estatus: z.enum(["validada", "rechazada"]) }).safeParse(req.body);
     if (!p.success || !uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Datos inválidos" });
+    // un administrador estatal solo valida tortillerías de su estado (fuera de su alcance: 404)
+    if (!(await tortilleriaVisible(req, req.params.id))) return reply.code(404).send({ error: "No existe" });
     if (p.data.estatus === "validada") {
       const t = await pool.query(
         `SELECT t.origen, (SELECT count(*) FROM fotos f WHERE f.tortilleria_id = t.id)::int AS fotos FROM tortillerias t WHERE t.id = $1`,

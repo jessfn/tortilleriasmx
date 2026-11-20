@@ -6,3 +6,8 @@ dist
 *.log
 uploads/
 .DS_Store
+
+# Datos personales y credenciales: NUNCA al repositorio (C20)
+carga_administradores*
+credenciales-*
+credenciales-tortilleriasmx/

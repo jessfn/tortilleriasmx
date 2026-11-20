@@ -1,5 +1,6 @@
+import CompletaDatos from "./CompletaDatos";
 import { useCallback, useEffect, useState } from "react";
-import { ES_ADMIN, guardarSesion, leerSesion, type Sesion } from "./api";
+import { api, ES_ADMIN, guardarSesion, leerSesion, type Sesion } from "./api";
 import { borrar, borrarTodo, CLAVES, guardar, leer } from "./persist";
 import Inicio from "./Inicio";
 import Login from "./Login";
@@ -80,6 +81,23 @@ export default function App() {
     return () => window.removeEventListener("sesion-expirada", expirada);
   }, []);
 
+  // El estado de la cuenta (por autorizar, autorizado, rechazado) y los datos pendientes se piden al servidor al abrir: así una autorización llega sin volver a entrar
+  useEffect(() => {
+    if (!sesion) return;
+    let vigente = true;
+    api<Sesion["usuario"] & { creadoEn?: string }>("/auth/me")
+      .then((me) => {
+        if (!vigente) return;
+        const cambio = me.estadoCuenta !== sesion.usuario.estadoCuenta || me.datosCompletos !== sesion.usuario.datosCompletos || me.estadoClave !== sesion.usuario.estadoClave || me.rol !== sesion.usuario.rol;
+        if (!cambio) return;
+        const s = { ...sesion, usuario: { ...sesion.usuario, ...me } };
+        guardarSesion(s);
+        setSesion(s);
+      })
+      .catch(() => {});
+    return () => { vigente = false; };
+  }, [sesion?.usuario.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const entrar = (s: Sesion) => {
     setSesion(s);
     setVista("panel");
@@ -90,14 +108,19 @@ export default function App() {
     window.dispatchEvent(new Event("sesion-iniciada")); // cuenta nueva creada al enviar la captura
   };
 
+  // Una cuenta por autorizar o rechazada no inicia capturas (el servidor también lo impide)
+  const puedeCapturar = !sesion || sesion.usuario.rol !== "capturista" || (sesion.usuario.estadoCuenta ?? "autorizado") === "autorizado";
+
   // Un registro nuevo siempre empieza limpio (descarta cualquier borrador anterior)
   const nuevoRegistro = () => {
+    if (!puedeCapturar) return;
     borrar(CLAVES.borrador);
     setParaActualizar(undefined);
     setVista("captura");
   };
 
   const actualizarPrecio = (t: Punto) => {
+    if (!puedeCapturar) return;
     borrar(CLAVES.borrador);
     setParaActualizar(t);
     setVista("captura");
@@ -135,6 +158,8 @@ export default function App() {
   if (!sesion) return ES_ADMIN ? <LoginAdmin alEntrar={entrar} /> : <Login alEntrar={entrar} alVolver={() => setVista("inicio")} alIrARegistro={nuevoRegistro} />;
 
   const actualizar = (s: Sesion) => setSesion(s);
+  // Censadores que ya existían: antes de capturar completan sus datos (la bandeja sigue enviando lo que ya tenían)
+  if (sesion.usuario.rol === "capturista" && sesion.usuario.datosCompletos === false) return <CompletaDatos sesion={sesion} alListo={actualizar} alSalir={salir} />;
   if (sesion.usuario.rol === "capturista")
     return <PanelUsuario sesion={sesion} alCapturar={nuevoRegistro} alActualizarPrecio={actualizarPrecio} alActualizarSesion={actualizar} alSalir={salir} />;
   return <PanelAdmin sesion={sesion} alActualizarSesion={actualizar} alSalir={salir} />;

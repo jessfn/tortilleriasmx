@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Banknote, Briefcase, Building2, Camera, Check, FileX, Info, CircleCheck, CloudOff, TriangleAlert, Eye, EyeOff, FileText, Hash, ImagePlus, KeyRound, Landmark, Layers, ListChecks,
-  Loader2, LocateFixed, Mail, MapPin, Minus, Phone, Plus, RotateCcw, Route, Send, ShieldCheck, Store, UserPlus, Users, Wheat, type LucideIcon,
+  Fingerprint, Loader2, LocateFixed, Mail, MapPin, Minus, Phone, Plus, RotateCcw, Route, Send, ShieldCheck, Store, UserPlus, Users, Wheat, type LucideIcon,
 } from "lucide-react";
 import {
-  fiscalSchema, MOTIVOS_SIN_FISCAL, nuevaTortilleriaSchema, ELABORACION, normalizarTexto, PASSWORD_MIN, PERSONAL_OCUPADO, PRECIO_MAX, PRECIO_MIN, registroSchema, sinFiscalSchema, textoMotivoSinFiscal, TIPOS_VIAL,
+  fiscalSchema, MOTIVOS_SIN_FISCAL, nuevaTortilleriaSchema, ELABORACION, normalizarTexto, PASSWORD_MIN, PERSONAL_OCUPADO, PRECIO_MAX, PRECIO_MIN, registroCensadorSchema, curpSchema, sinFiscalSchema, textoMotivoSinFiscal, TIPOS_VIAL,
 } from "@tortillerias/shared";
 import { api, ApiError, guardarSesion, leerSesion, type Sesion } from "./api";
 import { buscarLugar } from "./geocoder";
@@ -61,7 +61,7 @@ type Datos = {
   /** el valor que ya tenía registrada la tortillería (null = ninguno): solo se envía si cambia */
   elabPrevia?: string | null;
   /** Solo se pide si la persona aún no tiene cuenta: se crea al enviar el registro */
-  cuenta: { correo: string; password: string; confirmar: string };
+  cuenta: { nombre: string; apellidoPaterno: string; apellidoMaterno: string; curp: string; estadoClave: string; aviso: boolean; correo: string; password: string; confirmar: string };
   precioMaiz: string;
   precioMasa: string;
 };
@@ -73,7 +73,7 @@ const inicial: Datos = {
   fiscal: { tipoPersona: "fisica", rfc: "", razonSocial: "", celular: "", aviso: false },
   elaboracion: "",
   elabPrevia: undefined,
-  cuenta: { correo: "", password: "", confirmar: "" },
+  cuenta: { nombre: "", apellidoPaterno: "", apellidoMaterno: "", curp: "", estadoClave: "", aviso: false, correo: "", password: "", confirmar: "" },
   precioMaiz: "",
   precioMasa: "",
 };
@@ -160,7 +160,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   });
   const [caso, setCaso] = useState<Caso>(tortilleriaInicial ? "actualizar" : "mapa");
   const [d, setD] = useState<Datos>(() =>
-    borrador ? { ...inicial, ...borrador.d, cuenta: { ...borrador.d.cuenta, password: "", confirmar: "" } } : { ...inicial, tortilleria: tortilleriaInicial },
+    borrador ? { ...inicial, ...borrador.d, cuenta: { ...inicial.cuenta, ...borrador.d.cuenta, password: "", confirmar: "" } } : { ...inicial, tortilleria: tortilleriaInicial },
   );
   const [tieneFiscal, setTieneFiscal] = useState<boolean | undefined>(borrador?.tieneFiscal);
   /** Último intento fallido de esta tortillería (de una visita anterior): se avisa en el paso de datos fiscales */
@@ -281,6 +281,11 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
       .catch(() => {});
   }, [id, d.estado, d.pin?.lat, d.pin?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // El estado de la zona en la que está trabajando se propone como el estado del censador (puede cambiarlo)
+  useEffect(() => {
+    if (id === "cuenta" && !d.cuenta.estadoClave && d.estado?.clave) setD((x) => ({ ...x, cuenta: { ...x.cuenta, estadoClave: d.estado!.clave } }));
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* ---------------- ¿ya tiene datos fiscales? Con internet se pregunta al servidor; sin él se usa lo guardado en el teléfono ---------------- */
   async function tieneFiscalDe(tortilleriaId: string): Promise<{ tiene: boolean; elaboracion: string | null }> {
     const loc = porId(tortilleriaId);
@@ -365,7 +370,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     if (listo || preparando) return;
     const t = setTimeout(() => {
       const { foto, fotoUrl: _u, ...resto } = d;
-      const sinClave = { ...resto, cuenta: { correo: d.cuenta.correo, password: "", confirmar: "" } };
+      const sinClave = { ...resto, cuenta: { ...d.cuenta, password: "", confirmar: "" } };
       const base: Borrador = { v: 3, d: sinClave, pasoId: id, creada, caso, tieneFiscal, foto };
       void guardarBorrador(sesion?.usuario.id ?? null, base);
     }, 400);
@@ -401,9 +406,10 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     const valor = campo === "rfc" ? d.fiscal.rfc : campo === "razonSocial" ? d.fiscal.razonSocial : d.fiscal.celular;
     return valor ? (resFiscal.error.flatten().fieldErrors as Record<string, string[] | undefined>)[campo]?.[0] : undefined;
   };
-  const resCuenta = registroSchema.safeParse(d.cuenta);
-  const errCuenta = (campo: "correo" | "password" | "confirmar") =>
-    d.cuenta[campo] && !resCuenta.success ? (resCuenta.error.flatten().fieldErrors[campo] as string[] | undefined)?.[0] : undefined;
+  const resCuenta = registroCensadorSchema.safeParse({ ...d.cuenta, aceptoAviso: d.cuenta.aviso });
+  const errCuenta = (campo: "nombre" | "apellidoPaterno" | "apellidoMaterno" | "curp" | "estadoClave" | "correo" | "password" | "confirmar") =>
+    d.cuenta[campo] && !resCuenta.success ? ((resCuenta.error.flatten().fieldErrors as Record<string, string[] | undefined>)[campo])?.[0] : undefined;
+  const curpValida = curpSchema.safeParse(d.cuenta.curp).success;
 
   const bloqueado = (p: Producto) => hoy?.[p] != null; // ya lo capturó hoy
   const activo = (p: (typeof PRODUCTOS)[number]) => !bloqueado(p.id);
@@ -524,7 +530,8 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
       if (conCuenta && !creada.cuenta) {
         etapa = "cuenta";
         if (!navigator.onLine) throw new Error("Necesitas conexión para crear tu cuenta o iniciar sesión. Hazlo antes de salir a campo.");
-        const s = await api<Sesion>("/auth/registro", { json: d.cuenta });
+        const { aviso: _a, ...cuenta } = d.cuenta;
+        const s = await api<Sesion>("/auth/registro", { json: { ...cuenta, aceptoAviso: true } });
         guardarSesion(s); // desde aquí las llamadas siguientes ya van con la sesión
         alSesion(s);
         usuarioId = s.usuario.id;
@@ -559,7 +566,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
           ? { tipo: "enviado", pendientes }
           : p?.estado === "conflicto" || p?.estado === "error"
             ? { tipo: p.estado, mensaje: p.mensaje, pendientes }
-            : { tipo: "guardado", pendientes },
+            : { tipo: "guardado", pendientes, mensaje: p?.mensaje && /autorizad/i.test(p.mensaje) ? `${p.mensaje} No pierdes nada: queda guardado en tu teléfono.` : undefined },
       );
       setAvisos(p?.precios.filter((x) => x.estado === "conflicto").map((x) => `${x.mensaje ?? ""} Podrás actualizarla mañana.`) ?? []);
       setListo(true);
@@ -658,7 +665,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                   ? `${resultado.mensaje ?? "El servidor no pudo aceptarla todavía."} La encuentras en tu panel.`
                   : `${bajaHecha.nombre} dejó de aparecer para todos los censadores.`
               : resultado?.tipo === "guardado"
-              ? `Se enviará sola cuando haya señal.${resultado.pendientes > 0 ? ` Tienes ${resultado.pendientes} ${resultado.pendientes === 1 ? "captura por enviar" : "capturas por enviar"}.` : ""}`
+              ? resultado.mensaje ?? `Se enviará sola cuando haya señal.${resultado.pendientes > 0 ? ` Tienes ${resultado.pendientes} ${resultado.pendientes === 1 ? "captura por enviar" : "capturas por enviar"}.` : ""}`
               : resultado?.tipo === "conflicto" || resultado?.tipo === "error"
                 ? `${resultado.mensaje ?? "El servidor no pudo aceptarla todavía."} La encuentras en tu panel para resolverla.`
                 : conCuenta
@@ -922,6 +929,26 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
               <p className="text-sm leading-snug text-stone-600">
                 Con tu correo y contraseña entrarás a tu panel para ver tus tortillerías, actualizar precios y registrar más. Tu cuenta se crea al enviar.
               </p>
+              <Campo etiqueta="Nombre(s) *" icono={UserPlus} autoComplete="given-name" value={d.cuenta.nombre} onChange={(e) => set({ cuenta: { ...d.cuenta, nombre: e.target.value } })} error={errCuenta("nombre")} />
+              <div className="grid grid-cols-2 gap-2">
+                <Campo etiqueta="Apellido paterno *" autoComplete="family-name" value={d.cuenta.apellidoPaterno} onChange={(e) => set({ cuenta: { ...d.cuenta, apellidoPaterno: e.target.value } })} error={errCuenta("apellidoPaterno")} />
+                <Campo etiqueta="Apellido materno *" autoComplete="off" value={d.cuenta.apellidoMaterno} onChange={(e) => set({ cuenta: { ...d.cuenta, apellidoMaterno: e.target.value } })} error={errCuenta("apellidoMaterno")} />
+              </div>
+              <Campo
+                etiqueta="CURP *"
+                icono={Fingerprint}
+                value={d.cuenta.curp}
+                maxLength={18}
+                autoCapitalize="characters"
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(e) => set({ cuenta: { ...d.cuenta, curp: e.target.value.toUpperCase().replace(/\s/g, "") } })}
+                error={d.cuenta.curp && !curpValida ? "Revisa la CURP (18 caracteres)" : undefined}
+                valido={curpValida}
+                placeholder="Ej. HEGG560427MVZRRL04"
+                ayuda="Se guarda cifrada; no se muestra a nadie más"
+              />
+              <Selector etiqueta="Estado *" icono={Landmark} value={d.cuenta.estadoClave} onChange={(e) => set({ cuenta: { ...d.cuenta, estadoClave: e.target.value } })} placeholder="Elige el estado" opciones={estados.map((x) => ({ valor: x.clave, texto: x.nombre }))} />
               <Campo
                 etiqueta="Correo electrónico"
                 icono={Mail}
@@ -961,6 +988,14 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                 error={errCuenta("confirmar")}
                 placeholder="Repite tu contraseña"
               />
+              <label className="flex cursor-pointer items-start gap-3 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-stone-200">
+                <input type="checkbox" checked={d.cuenta.aviso} onChange={(e) => set({ cuenta: { ...d.cuenta, aviso: e.target.checked } })} className="mt-0.5 h-5 w-5 shrink-0 accent-guinda" />
+                <span className="text-sm leading-snug text-stone-600">
+                  <ShieldCheck className="mr-1 inline h-4 w-4 text-verde" aria-hidden />
+                  Acepto el aviso de privacidad para el tratamiento de estos datos. La CURP se guarda cifrada.
+                </span>
+              </label>
+              <p className="px-1 text-[11px] leading-snug text-stone-500">Si el registro ya cerró, tu solicitud la revisa el responsable de tu estado antes de que puedas capturar.</p>
             </>
           )}
 

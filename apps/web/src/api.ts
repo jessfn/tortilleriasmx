@@ -8,11 +8,20 @@ const KEY = ES_ADMIN ? "tmx_sesion_admin" : "tmx_sesion";
 /** ¿Esta cuenta corresponde a este acceso? Las del personal solo entran por /acceso; las de tortillerías, por el acceso normal */
 export const cuentaDeEsteAcceso = (rol: Rol) => (ES_ADMIN ? rol !== "capturista" : rol === "capturista");
 
-export type Rol = "capturista" | "supervisor" | "admin";
+export type Rol = "capturista" | "supervisor" | "admin" | "estatal";
 export type Sesion = {
   token: string;
   /** permisos: qué pantallas y acciones tiene el personal del administrador (una sesión anterior puede no traerlos) */
-  usuario: { id: string; nombre: string; apellidos: string; rol: Rol; correo: string; debeCambiarPassword?: boolean; permisos?: string[] };
+  usuario: {
+    id: string; nombre: string; apellidos: string; rol: Rol; correo: string; debeCambiarPassword?: boolean; permisos?: string[];
+    /** por_autorizar | autorizado | rechazado (una sesión anterior no lo trae: se trata como autorizada) */
+    estadoCuenta?: string;
+    /** false = el censador debe completar sus datos (CURP, estado) antes de iniciar capturas nuevas */
+    datosCompletos?: boolean;
+    estadoClave?: string | null; estadoSugerido?: boolean; apellidoPaterno?: string | null; apellidoMaterno?: string | null;
+    /** administrador estatal: sus estados (o todos, con alcance nacional) y su programa */
+    estadosAlcance?: string[] | null; alcanceNacional?: boolean; programa?: string | null;
+  };
 };
 
 export function leerSesion(): Sesion | null {

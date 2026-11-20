@@ -18,7 +18,7 @@ export const NOMBRE_PRODUCTO = { maiz: "tortilla", masa: "masa" } as const;
 
 /* ---------------- estado visible para la pantalla ---------------- */
 
-export const estadoSync = { sincronizando: false, sinSesion: false };
+export const estadoSync = { sincronizando: false, sinSesion: false, sinAutorizar: false };
 const avisar = () => {
   try {
     window.dispatchEvent(new Event("bandeja"));
@@ -318,6 +318,16 @@ async function enviarPaquete(p: Paquete): Promise<Resultado> {
         await poner({ ...p, estado: "por_enviar" }); // todo se conserva; se envía al volver a iniciar sesión
         return "parar";
       }
+      // La cuenta aún no está autorizada (o fue rechazada): NADA se pierde; se envía solo cuando la autoricen
+      if (e.status === 403 && /^cuenta_/.test(String(e.cuerpo?.error ?? ""))) {
+        estadoSync.sinAutorizar = true;
+        const rechazada = e.cuerpo.error === "cuenta_rechazada";
+        await poner({
+          ...p, estado: "por_enviar", proximoIntento: Date.now() + ESPERA_MAX_MS,
+          mensaje: rechazada ? "Tu cuenta no fue autorizada: no se puede enviar." : "Tu cuenta aún no está autorizada. Se enviará cuando la autoricen.",
+        });
+        return "parar";
+      }
       if (e.status === 429) {
         await poner({ ...p, estado: "por_enviar", proximoIntento: Date.now() + (e.reintentarEnSeg ?? 60) * 1000, mensaje: "Muchos envíos seguidos: se reintentará en un momento" });
         return "parar";
@@ -351,6 +361,7 @@ export function sincronizar(opc: { forzar?: boolean } = {}): Promise<void> {
       const s = leerSesion();
       if (!s) return;
       estadoSync.sinSesion = false;
+      estadoSync.sinAutorizar = false;
       const fila = (await listarPaquetes(s.usuario.id)).filter((p) => p.estado === "por_enviar" || p.estado === "enviando");
       for (const p of fila) {
         if (!opc.forzar && p.proximoIntento && p.proximoIntento > Date.now()) break; // se conserva el orden: no se salta al siguiente

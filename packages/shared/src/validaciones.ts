@@ -66,6 +66,67 @@ export const registroSchema = z
   .object({ correo: correoSchema, password: passwordSchema, confirmar: z.string() })
   .refine((v) => v.password === v.confirmar, { path: ["confirmar"], message: "Las contraseñas no coinciden" });
 
+/* ---------- Censadores: CURP, estado y estado de la cuenta (C20) ---------- */
+
+export const CURP_REGEX = /^[A-Z][AEIOUX][A-Z]{2}\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])[HMX](AS|BC|BS|CC|CL|CM|CS|CH|DF|DG|GT|GR|HG|JC|MC|MN|MS|NT|NL|OC|PL|QT|QR|SP|SL|SR|TC|TS|TL|VZ|YN|ZS|NE)[B-DF-HJ-NP-TV-Z]{3}[A-Z\d]\d$/;
+/** La CURP se acepta en minúsculas o con espacios, y se guarda en mayúsculas */
+export const curpSchema = z.string().trim().toUpperCase().regex(CURP_REGEX, "Revisa la CURP (18 caracteres)");
+/** Texto para mostrar la CURP en una lista: solo el inicio y el final */
+export const enmascararCurp = (c: string | null | undefined) => (c && c.length === 18 ? `${c.slice(0, 4)}**********${c.slice(-4)}` : "");
+
+const parteNombre = z.string().trim().min(2, "Escribe al menos 2 letras").max(60, "Máximo 60 caracteres");
+const claveEstado = z.string().regex(/^(0[1-9]|[12]\d|3[0-2])$/, "Elige el estado");
+
+/** Registro de un censador en la app: datos personales, estado y aviso de privacidad */
+export const registroCensadorSchema = z
+  .object({
+    nombre: parteNombre,
+    apellidoPaterno: parteNombre,
+    apellidoMaterno: parteNombre,
+    curp: curpSchema,
+    correo: correoSchema,
+    password: passwordSchema,
+    confirmar: z.string(),
+    estadoClave: claveEstado,
+    aceptoAviso: z.literal(true, { errorMap: () => ({ message: "Acepta el aviso de privacidad" }) }),
+  })
+  .refine((v) => v.password === v.confirmar, { path: ["confirmar"], message: "Las contraseñas no coinciden" });
+export type RegistroCensador = z.infer<typeof registroCensadorSchema>;
+
+/** "Completa tus datos": censadores que ya existían antes de pedir CURP y estado */
+export const completarDatosSchema = z.object({
+  nombre: parteNombre,
+  apellidoPaterno: parteNombre,
+  apellidoMaterno: parteNombre,
+  curp: curpSchema,
+  estadoClave: claveEstado,
+  aceptoAviso: z.literal(true, { errorMap: () => ({ message: "Acepta el aviso de privacidad" }) }),
+});
+
+/** Alta de un censador por un administrador estatal (la contraseña temporal la genera el sistema) */
+export const censadorNuevoSchema = z.object({
+  nombre: parteNombre,
+  apellidoPaterno: parteNombre,
+  apellidoMaterno: parteNombre,
+  curp: curpSchema,
+  correo: correoSchema,
+  estadoClave: claveEstado,
+});
+
+export const ESTADOS_CUENTA = [
+  { clave: "por_autorizar", texto: "Por autorizar" },
+  { clave: "autorizado", texto: "Autorizado" },
+  { clave: "rechazado", texto: "Rechazado" },
+] as const;
+export type EstadoCuenta = (typeof ESTADOS_CUENTA)[number]["clave"];
+export const textoEstadoCuenta = (c: string | null | undefined) => ESTADOS_CUENTA.find((e) => e.clave === c)?.texto ?? "";
+
+export const PROGRAMAS = [
+  { clave: "oref", texto: "OREF" },
+  { clave: "fertilizantes", texto: "Fertilizantes" },
+] as const;
+export const textoPrograma = (c: string | null | undefined) => PROGRAMAS.find((p) => p.clave === c)?.texto ?? "";
+
 export const perfilSchema = z.object({ nombre: nombreSchema, apellidos: nombreSchema });
 
 export const cambioPasswordSchema = z

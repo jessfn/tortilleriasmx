@@ -15,7 +15,7 @@ export const TOLERANCIA_FUTURO_MS = 10 * 60 * 1000;
 export function rutasPrecios(app: FastifyInstance) {
   // Solo usuarios registrados. Un precio normal se aprueba solo ("validada"); uno atípico queda "pendiente" hasta que un supervisor lo revise.
   // Límite: una captura por censador, tortillería, producto y día.
-  app.post("/precios", { preHandler: app.autenticar, config: { rateLimit: { max: 90, timeWindow: "1 minute" } } }, async (req, reply) => {
+  app.post("/precios", { preHandler: app.autenticarCaptura, config: { rateLimit: { max: 90, timeWindow: "1 minute" } } }, async (req, reply) => {
     const p = capturaPrecioSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: "Datos inválidos", detalle: p.error.flatten() });
     const d = p.data;

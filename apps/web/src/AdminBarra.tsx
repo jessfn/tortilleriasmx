@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Bell, ChevronDown, Home, KeyRound, LogOut, UserRound } from "lucide-react";
+import { Bell, ChevronDown, Ellipsis, Home, KeyRound, LogOut, UserRound } from "lucide-react";
 import type { Sesion } from "./api";
 import { Hoja, type PestañaNav } from "./ui";
 
-const ROLES: Record<string, string> = { capturista: "Usuario", supervisor: "Supervisor", admin: "Administrador" };
+const ROLES: Record<string, string> = { capturista: "Usuario", supervisor: "Supervisor", admin: "Administrador", estatal: "Administrador estatal" };
 
 const iniciales = (u: Sesion["usuario"]) => {
   const n = [u.nombre, u.apellidos].filter(Boolean).join(" ").trim() || u.correo || "?";
@@ -88,8 +88,10 @@ function MenuCuenta({ usuario, alPerfil, alInicio, alSalir }: { usuario: Sesion[
  * en computadora y tableta las secciones van como pestañas debajo de la barra, y en el teléfono como barra inferior.
  */
 export default function AdminBarra({
-  titulo, pestañas, activa, alCambiar, plano, usuario, pendientes = 0, vivo, alInicio, alSalir, children,
+  titulo, banda, pestañas, activa, alCambiar, plano, usuario, pendientes = 0, vivo, alInicio, alSalir, children,
 }: {
+  /** Una línea bajo la barra (solo en el teléfono): por ejemplo, los estados de un administrador estatal */
+  banda?: string;
   /** Qué panel es (Administración o Supervisión) */
   titulo: string;
   pestañas: PestañaNav[];
@@ -108,6 +110,30 @@ export default function AdminBarra({
 }) {
   const arriba = pestañas.filter((p) => p.id !== "perfil"); // el perfil vive en el menú de la cuenta
 
+  // Con muchas secciones no caben en una fila sin encimarse: las primeras van en la barra y el resto en "Más" (la sección activa siempre se ve)
+  const [ancho, setAncho] = useState(typeof window === "undefined" ? 1280 : window.innerWidth);
+  useEffect(() => {
+    const f = () => setAncho(window.innerWidth);
+    window.addEventListener("resize", f);
+    return () => window.removeEventListener("resize", f);
+  }, []);
+  const maxVisibles = ancho >= 1800 ? 10 : ancho >= 1600 ? 9 : ancho >= 1440 ? 7 : ancho >= 1280 ? 5 : 4;
+  let visibles = arriba.slice(0, maxVisibles);
+  const iActiva = arriba.findIndex((p) => p.id === activa);
+  if (iActiva >= maxVisibles && maxVisibles > 1) visibles = [...visibles.slice(0, maxVisibles - 1), arriba[iActiva]];
+  const masItems = arriba.filter((p) => !visibles.some((v) => v.id === p.id));
+  const [masAbierto, setMasAbierto] = useState(false);
+  const masCaja = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (!masAbierto) return;
+    const fuera = (e: MouseEvent | TouchEvent) => { if (masCaja.current && !masCaja.current.contains(e.target as Node)) setMasAbierto(false); };
+    const tecla = (e: KeyboardEvent) => e.key === "Escape" && setMasAbierto(false);
+    document.addEventListener("mousedown", fuera);
+    document.addEventListener("touchstart", fuera);
+    window.addEventListener("keydown", tecla);
+    return () => { document.removeEventListener("mousedown", fuera); document.removeEventListener("touchstart", fuera); window.removeEventListener("keydown", tecla); };
+  }, [masAbierto]);
+
   // La pastilla de la sección activa se desliza de una pestaña a otra
   const lista = useRef<HTMLUListElement>(null);
   const [pastilla, setPastilla] = useState<{ x: number; w: number }>();
@@ -120,7 +146,7 @@ export default function AdminBarra({
     const ro = new ResizeObserver(medir);
     if (lista.current) ro.observe(lista.current);
     return () => ro.disconnect();
-  }, [activa, arriba.length, pestañas.map((p) => p.insignia).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activa, visibles.map((p) => p.id).join(","), pestañas.map((p) => p.insignia).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-guinda-oscuro">
@@ -138,14 +164,14 @@ export default function AdminBarra({
           <nav className="hidden min-w-0 flex-1 lg:block" aria-label="Secciones">
             <ul ref={lista} className="relative flex items-center gap-1">
               <li aria-hidden className={`pointer-events-none absolute left-0 top-0 h-full rounded-lg bg-white/12 ring-1 ring-white/10 transition-[transform,width,opacity] duration-300 ease-[cubic-bezier(.34,1.3,.5,1)] ${pastilla ? "opacity-100" : "opacity-0"}`} style={{ width: pastilla?.w ?? 0, transform: `translateX(${pastilla?.x ?? 0}px)` }} />
-              {arriba.map((p) => {
+              {visibles.map((p) => {
                 const on = p.id === activa;
                 return (
                   <li key={p.id}>
                     <button
                       onClick={() => alCambiar(p.id)}
                       aria-current={on ? "page" : undefined}
-                      className={`relative z-10 flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors duration-200 ${on ? "text-white" : "text-white/60 hover:bg-white/6 hover:text-white"}`}
+                      className={`relative z-10 flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[13px] font-medium transition-colors duration-200 ${on ? "text-white" : "text-white/60 hover:bg-white/6 hover:text-white"}`}
                     >
                       <p.icono className="h-4 w-4" aria-hidden />
                       {p.texto}
@@ -154,13 +180,34 @@ export default function AdminBarra({
                   </li>
                 );
               })}
+              {masItems.length > 0 && (
+                <li ref={masCaja} className="relative">
+                  <button onClick={() => setMasAbierto((v) => !v)} aria-expanded={masAbierto} aria-haspopup="menu" className="relative z-10 flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-[13px] font-medium text-white/60 transition-colors hover:bg-white/6 hover:text-white">
+                    <Ellipsis className="h-4 w-4" aria-hidden /> Más
+                    {masItems.some((p) => p.insignia) && <span className="h-1.5 w-1.5 rounded-full bg-dorado" aria-hidden />}
+                  </button>
+                  {masAbierto && (
+                    <ul role="menu" className="absolute left-0 top-full z-50 mt-2 min-w-[13rem] overflow-hidden rounded-2xl bg-white p-1.5 text-stone-800 shadow-2xl ring-1 ring-black/10">
+                      {masItems.map((p) => (
+                        <li key={p.id} role="none">
+                          <button role="menuitem" onClick={() => { setMasAbierto(false); alCambiar(p.id); }} className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-medium hover:bg-stone-100">
+                            <p.icono className="h-4 w-4 text-guinda" aria-hidden />
+                            <span className="flex-1">{p.texto}</span>
+                            {!!p.insignia && <span className="rounded-full bg-dorado px-1.5 text-[10px] font-bold leading-4 text-guinda-oscuro">{p.insignia}</span>}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              )}
             </ul>
           </nav>
           <div className="flex-1 lg:hidden" />
 
           {/* Estado, avisos y cuenta */}
           {vivo && (
-            <span className="hidden items-center gap-1.5 text-xs text-white/55 xl:flex" title="Los datos se actualizan solos">
+            <span className="hidden items-center gap-1.5 text-xs text-white/55 2xl:flex" title="Los datos se actualizan solos">
               <span className={`h-1.5 w-1.5 rounded-full ${vivo.fallo ? "bg-red-400" : vivo.ultima ? "bg-emerald-400" : "bg-white/40"}`} />
               {vivo.fallo ? "Sin conexión" : "En vivo"}
             </span>
@@ -181,6 +228,8 @@ export default function AdminBarra({
           <MenuCuenta usuario={usuario} alPerfil={() => alCambiar("perfil")} alInicio={alInicio} alSalir={alSalir} />
         </div>
       </header>
+
+      {banda && <div className="shrink-0 truncate bg-guinda px-3 py-1.5 text-center text-xs font-medium text-white/90 sm:hidden">{banda}</div>}
 
       <Hoja className="!mt-0 !rounded-none !shadow-none">
         <div key={activa} className={`paso min-h-0 flex-1 ${plano ? "relative overflow-hidden" : "overflow-y-auto overscroll-contain px-3 pb-3 pt-4 lg:px-6 lg:pb-5 lg:pt-4"}`}>

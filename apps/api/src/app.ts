@@ -13,6 +13,7 @@ import { rutasAdmin } from "./rutas/admin.js";
 import { rutasAdminMapa } from "./rutas/admin-mapa.js";
 import { rutasAdminReportes } from "./rutas/admin-reportes.js";
 import { rutasAdminBajas } from "./rutas/admin-bajas.js";
+import { rutasAdminEquipo } from "./rutas/admin-equipo.js";
 import { rutasCatalogoEstado } from "./rutas/catalogo-estado.js";
 
 export async function crearApp() {
@@ -33,7 +34,7 @@ export async function crearApp() {
   // Sin nginx delante (el balanceador entrega directo a la app) las respuestas grandes, como el catálogo de un estado
   // (~3 MB de JSON), se comprimen aquí: pasan a ~0.5 MB en el teléfono del censador.
   await app.register(compress, { threshold: 1024, encodings: ["gzip", "deflate"] });
-  await app.register(rateLimit, { max: 300, timeWindow: "1 minute" });
+  await app.register(rateLimit, { max: process.env.NODE_ENV === "test" ? 100000 : 300, timeWindow: "1 minute" });
   await app.register(jwt, { secret: secreto });
 
   // El balanceador revisa la salud de la app pidiendo "/" (o "/health")
@@ -49,6 +50,7 @@ export async function crearApp() {
   rutasAdminMapa(app);
   rutasAdminReportes(app);
   rutasAdminBajas(app);
+  rutasAdminEquipo(app);
   rutasCatalogoEstado(app);
   return app;
 }

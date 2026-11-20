@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Permiso } from "@tortillerias/shared";
 import { pool } from "../db.js";
 import { MAX_CELDAS, tamanoCelda, zoomSchema } from "../celdas.js";
+import { tortilleriaVisible } from "../alcance.js";
 
 /** Cada ruta pide al menos uno de estos permisos (un administrador los tiene todos) */
 const con = (app: FastifyInstance, ...permisos: Permiso[]) => app.conPermiso(...permisos);
@@ -76,6 +77,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
              FROM capturas_precio c
             WHERE c.tortilleria_id = t.id AND c.estatus <> 'rechazada' AND c.producto IN ('maiz','masa')
               AND c.fecha >= ${HOY_MX} - $6::int
+              AND NOT EXISTS (SELECT 1 FROM usuarios ur WHERE ur.id = c.capturista_id AND ur.estado_cuenta = 'rechazado')
          ) s ON true
         WHERE t.geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND t.estatus <> 'rechazada'
           AND ($7::boolean IS NOT TRUE OR COALESCE(s.n, 0) > 0)
@@ -275,6 +277,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
   // Historial de "no se obtuvieron los datos fiscales" de una tortillería (con el motivo escrito y quién lo registró)
   app.get<{ Params: { id: string } }>("/admin/tortillerias/:id/negativas", { preHandler: con(app, "ver_revision", "ver_mapa") }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+    if (!(await tortilleriaVisible(req, req.params.id))) return reply.code(404).send({ error: "No existe" });
     const { rows } = await pool.query(
       `SELECT n.id, n.motivo, n.motivo_otro, to_char(coalesce(n.capturado_en, n.creado_en) AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD') AS fecha, u.correo AS censador
          FROM fiscal_negativas n LEFT JOIN usuarios u ON u.id = n.capturista_id
@@ -287,6 +290,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
   // Veces que no se pudo tomar la foto de una tortillería (con el motivo escrito y quién lo registró)
   app.get<{ Params: { id: string } }>("/admin/tortillerias/:id/negativas-foto", { preHandler: con(app, "ver_revision", "ver_mapa") }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+    if (!(await tortilleriaVisible(req, req.params.id))) return reply.code(404).send({ error: "No existe" });
     const { rows } = await pool.query(
       `SELECT n.id, n.motivo, n.motivo_otro, to_char(coalesce(n.capturado_en, n.creado_en) AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD') AS fecha, u.correo AS censador
          FROM foto_negativas n LEFT JOIN usuarios u ON u.id = n.capturista_id
@@ -352,6 +356,7 @@ export function rutasAdminMapa(app: FastifyInstance) {
   // Una tortillería (para abrir su detalle desde el mapa)
   app.get<{ Params: { id: string } }>("/admin/tortillerias/:id", { preHandler: con(app, "ver_revision", "ver_mapa") }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
+    if (!(await tortilleriaVisible(req, req.params.id))) return reply.code(404).send({ error: "No existe" });
     const { rows } = await pool.query(
       `SELECT t.id, t.nombre, t.domicilio, t.estatus, t.origen, t.creado_en, ST_Y(t.geom) AS lat, ST_X(t.geom) AS lng,
               m.nombre AS municipio, e.nombre AS estado, u.correo AS creador,

@@ -2,8 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   telefonoSchema, precioSchema, normalizarTexto, registroSchema, nombreSchema, capturaPrecioSchema, fiscalSchema,
   nuevaTortilleriaSchema, TIPOS_VIAL, PERSONAL_OCUPADO, rfcFechaValida, elaboracionSchema, bajaSchema, textoElaboracion, textoMotivoBaja,
+  curpSchema, enmascararCurp, registroCensadorSchema, completarDatosSchema, censadorNuevoSchema, textoEstadoCuenta,
 } from "./validaciones.js";
-import { permisosEfectivos } from "./permisos.js";
+import { PERMISOS_ESTATAL, permisosEfectivos } from "./permisos.js";
 
 const ID = "00000000-0000-4000-8000-000000000000";
 
@@ -184,5 +185,42 @@ describe("C19: tipo de elaboración y baja", () => {
     expect(permisosEfectivos("admin", null)).toContain("gestionar_bajas");
     expect(permisosEfectivos("supervisor", ["ver_resumen"])).not.toContain("gestionar_bajas");
     expect(permisosEfectivos("capturista", null)).toEqual([]);
+  });
+});
+
+describe("C20: CURP, registro de censadores y administradores estatales", () => {
+  const ok = { nombre: "Laura", apellidoPaterno: "Pérez", apellidoMaterno: "Gómez", curp: "HEGG560427MVZRRL04", correo: "Laura@Correo.com", password: "Contra123", confirmar: "Contra123", estadoClave: "14", aceptoAviso: true };
+  it("la CURP se acepta en minúsculas y con espacios, y se guarda en mayúsculas; rechaza las mal formadas", () => {
+    expect(curpSchema.parse("  hegg560427mvzrrl04 ")).toBe("HEGG560427MVZRRL04");
+    for (const mala of ["", "HEGG560427MVZRRL0", "HEGG561327MVZRRL04", "HEGG560427MXXRRL04", "1EGG560427MVZRRL04", "HEGG560427MVZRRL0A"]) expect(curpSchema.safeParse(mala).success, mala).toBe(false);
+    expect(enmascararCurp("HEGG560427MVZRRL04")).toBe("HEGG**********RL04");
+    expect(enmascararCurp(null)).toBe("");
+  });
+  it("el registro pide nombre, ambos apellidos, CURP, correo, contraseña, estado y el aviso de privacidad", () => {
+    const r = registroCensadorSchema.safeParse(ok);
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.correo).toBe("laura@correo.com");
+    for (const [campo, valor] of [["nombre", ""], ["apellidoPaterno", "P"], ["apellidoMaterno", ""], ["curp", "X"], ["estadoClave", "33"], ["estadoClave", ""], ["aceptoAviso", false], ["confirmar", "otra"], ["password", "123"]])
+      expect(registroCensadorSchema.safeParse({ ...ok, [campo]: valor }).success, `${campo}=${valor}`).toBe(false);
+  });
+  it("completar datos y alta de un censador por un administrador estatal", () => {
+    const { correo: _c, password: _p, confirmar: _f, ...datos } = ok;
+    expect(completarDatosSchema.safeParse(datos).success).toBe(true);
+    expect(completarDatosSchema.safeParse({ ...datos, aceptoAviso: false }).success).toBe(false);
+    const { aceptoAviso: _a, ...alta } = datos;
+    expect(censadorNuevoSchema.safeParse({ ...alta, correo: "a@b.com" }).success).toBe(true);
+    expect(censadorNuevoSchema.safeParse({ ...alta, correo: "no" }).success).toBe(false);
+    expect(textoEstadoCuenta("por_autorizar")).toBe("Por autorizar");
+  });
+  it("administrador estatal: permisos fijos, sin RFC, descargas, reportes, bitácora, mapa ni estadísticas; el nacional suma solo el Resumen", () => {
+    const e = permisosEfectivos("estatal", ["exportar_capturas", "ver_extras"]); // lo "marcado" no cuenta: sus permisos no se editan
+    expect(e).toEqual([...PERMISOS_ESTATAL]);
+    for (const no of ["ver_datos_fiscales", "exportar_capturas", "ver_extras", "ver_mapa", "ver_estadisticas", "ver_resumen", "gestionar_bajas"]) expect(e).not.toContain(no);
+    for (const si of ["ver_usuarios_app", "gestionar_usuarios_app", "ver_revision", "validar_tortillerias", "revisar_precios", "ver_mi_equipo"]) expect(e).toContain(si);
+    const nacional = permisosEfectivos("estatal", null, true);
+    expect(nacional).toContain("ver_resumen");
+    expect(nacional).not.toContain("exportar_capturas");
+    expect(nacional).not.toContain("ver_extras");
+    expect(permisosEfectivos("supervisor", null)).toContain("ver_mi_equipo");
   });
 });
