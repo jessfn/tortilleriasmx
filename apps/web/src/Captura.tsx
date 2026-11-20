@@ -8,6 +8,7 @@ import {
 } from "@tortillerias/shared";
 import { api, ApiError, guardarSesion, leerSesion, type Sesion } from "./api";
 import { buscarLugar } from "./geocoder";
+import { estadoPorUbicacion } from "./estadoCensador";
 import { comprimirFoto } from "./imagen";
 import { borrarBorrador, guardarBorrador } from "./borrador";
 import { diaMexico, nuevoId, type Paquete } from "./bd";
@@ -173,6 +174,14 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   const [pasoId, setPasoId] = useState<string>(() => borrador?.pasoId ?? (tortilleriaInicial ? "precio" : "tortilleria"));
   const [preparando, setPreparando] = useState(!!tortilleriaInicial && !borrador); // caso C: se averigua si faltan los datos fiscales
   const [estados, setEstados] = useState<Item[]>([]);
+  /** la lista de estados no se pudo cargar (sin señal y sin copia guardada): se avisa y se puede reintentar */
+  const [falloEstados, setFalloEstados] = useState(false);
+  const [cargandoEstados, setCargandoEstados] = useState(false);
+  const cargarEstados = () => {
+    setFalloEstados(false);
+    setCargandoEstados(true);
+    listaEstados().then((e) => { setEstados(e); setFalloEstados(false); }).catch(() => setFalloEstados(true)).finally(() => setCargandoEstados(false));
+  };
   const [resultado, setResultado] = useState<Resultado>();
   const [parecidasLocal, setParecidasLocal] = useState<Local[] | null>(null);
   const [municipios, setMunicipios] = useState<Item[]>([]);
@@ -231,10 +240,8 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
 
   /* ---------------- catálogos ---------------- */
   useEffect(() => {
-    if (id !== "estado" && id !== "nueva") return;
-    if (estados.length) return;
-    listaEstados().then(setEstados).catch((e) => setError(e.message));
-  }, [id, estados.length]);
+    cargarEstados();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!d.estado) return setMunicipios([]);
@@ -281,10 +288,18 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
       .catch(() => {});
   }, [id, d.estado, d.pin?.lat, d.pin?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // El estado de la zona en la que está trabajando se propone como el estado del censador (puede cambiarlo)
+  // El estado del censador se sugiere por SU ubicación (GPS), nunca por la tortillería que captura. Sin GPS no se propone nada. Siempre se puede cambiar.
+  const [estadoSugerido, setEstadoSugerido] = useState("");
   useEffect(() => {
-    if (id === "cuenta" && !d.cuenta.estadoClave && d.estado?.clave) setD((x) => ({ ...x, cuenta: { ...x.cuenta, estadoClave: d.estado!.clave } }));
-  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (id !== "cuenta" || d.cuenta.estadoClave || !gps.pos) return;
+    let vigente = true;
+    estadoPorUbicacion(gps.pos).then((clave) => {
+      if (!vigente || !clave) return;
+      setEstadoSugerido(clave);
+      setD((x) => (x.cuenta.estadoClave ? x : { ...x, cuenta: { ...x.cuenta, estadoClave: clave } }));
+    });
+    return () => { vigente = false; };
+  }, [id, gps.pos?.lat, gps.pos?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---------------- ¿ya tiene datos fiscales? Con internet se pregunta al servidor; sin él se usa lo guardado en el teléfono ---------------- */
   async function tieneFiscalDe(tortilleriaId: string): Promise<{ tiene: boolean; elaboracion: string | null }> {
@@ -738,6 +753,12 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
           key={id}
           className={`paso min-h-0 flex-1 overscroll-contain px-3 pb-2 pt-5 ${llena ? "flex flex-col gap-2 overflow-hidden" : "space-y-2 overflow-y-auto [mask-image:linear-gradient(to_bottom,transparent,#000_20px,#000_calc(100%-8px),transparent)]"}`}
         >
+          {id === "estado" && falloEstados && !estados.length && (
+            <div role="alert" className="flex items-center justify-between gap-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-800 ring-1 ring-red-200">
+              <span>No pudimos cargar los estados. Revisa tu conexión.</span>
+              <button type="button" onClick={cargarEstados} disabled={cargandoEstados} className="shrink-0 rounded-lg bg-white px-3 py-1.5 text-sm font-semibold text-guinda ring-1 ring-red-200 disabled:opacity-50">{cargandoEstados ? "Cargando…" : "Reintentar"}</button>
+            </div>
+          )}
           {id === "estado" &&
             filtrar(estados).map((e) => (
               <Opcion key={e.clave} icono={Landmark} activo={d.estado?.clave === e.clave} onClick={() => set({ estado: e, municipio: undefined })}>
@@ -948,7 +969,21 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                 placeholder="Ej. HEGG560427MVZRRL04"
                 ayuda="Se guarda cifrada; no se muestra a nadie más"
               />
-              <Selector etiqueta="Estado *" icono={Landmark} value={d.cuenta.estadoClave} onChange={(e) => set({ cuenta: { ...d.cuenta, estadoClave: e.target.value } })} placeholder="Elige el estado" opciones={estados.map((x) => ({ valor: x.clave, texto: x.nombre }))} />
+              <Selector
+                etiqueta="Estado donde trabajas *"
+                icono={Landmark}
+                value={d.cuenta.estadoClave}
+                onChange={(e) => set({ cuenta: { ...d.cuenta, estadoClave: e.target.value } })}
+                placeholder={cargandoEstados && !estados.length ? "Cargando estados…" : "Elige el estado"}
+                opciones={estados.map((x) => ({ valor: x.clave, texto: x.nombre }))}
+                ayuda={!falloEstados || estados.length ? (d.cuenta.estadoClave && d.cuenta.estadoClave === estadoSugerido ? "Lo sugerimos por tu ubicación. Elige el estado donde trabajas." : "Elige el estado donde trabajas.") : undefined}
+              />
+              {falloEstados && !estados.length && (
+                <div role="alert" className="flex items-center justify-between gap-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-800 ring-1 ring-red-200">
+                  <span>No pudimos cargar los estados. Revisa tu conexión.</span>
+                  <button type="button" onClick={cargarEstados} disabled={cargandoEstados} className="shrink-0 rounded-lg bg-white px-3 py-1.5 text-sm font-semibold text-guinda ring-1 ring-red-200 disabled:opacity-50">{cargandoEstados ? "Cargando…" : "Reintentar"}</button>
+                </div>
+              )}
               <Campo
                 etiqueta="Correo electrónico"
                 icono={Mail}

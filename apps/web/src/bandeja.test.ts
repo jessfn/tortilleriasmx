@@ -28,7 +28,8 @@ import {
   borrarBandejaDe, borrarTodoLocal, capturadoHoyLocal, contarPendientes, descartar, enviarDeTodosModos, estadoSync, guardarPaquete, idTemporal, listarPaquetes,
   sincronizar, usarExistente,
 } from "./bandeja";
-import { cercanas, descargarEstado, delMunicipio, distanciaM, masCercana, parecidas, buscar, cubre, quitarEstado, enCaja, porId, quitarLocal } from "./catalogo";
+import { cercanas, descargarEstado, delMunicipio, distanciaM, masCercana, parecidas, buscar, cubre, quitarEstado, enCaja, porId, quitarLocal, listaEstados } from "./catalogo";
+import { estadoPorUbicacion } from "./estadoCensador";
 
 const REAL = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 let reloj = 0;
@@ -518,5 +519,53 @@ describe("C20: cuenta por autorizar y datos incompletos", () => {
     await sincronizar();
     expect((await listarPaquetes("u1"))[0].estado).toBe("enviado");
     expect(rutas()).toEqual(["/precios"]);
+  });
+});
+
+describe("C20.1: estado del censador en el registro", () => {
+  const ESTADOS = Array.from({ length: 32 }, (_, i) => ({ clave: String(i + 1).padStart(2, "0"), nombre: `ESTADO ${i + 1}` }));
+  const columnas = ["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal"];
+  const CDMX = { lat: 19.4326, lng: -99.1332 };
+
+  it("la lista trae los 32 estados, y sin señal se usa la última copia guardada (sin copia, avisa con un error)", async () => {
+    h.respuesta = (ruta) => (ruta === "/estados" ? ESTADOS : {});
+    expect(await listaEstados()).toHaveLength(32);
+    h.respuesta = () => new ApiError(0, "Sin conexión con el servidor"); // se fue la señal
+    expect(await listaEstados()).toHaveLength(32);
+    (await abrir()).delete("kv", "estados"); // y no hay copia
+    await expect(listaEstados()).rejects.toThrow(/Sin conexión/);
+  });
+
+  it("la sugerencia sale de la posición del TELÉFONO, no de la tortillería: GPS en la CDMX + tortillería de Aguascalientes → Ciudad de México", async () => {
+    // el catálogo del teléfono tiene una tortillería de Aguascalientes (la que el técnico eligió en el mapa) y una de la CDMX
+    h.respuesta = (ruta) => (ruta.startsWith("/catalogo/estado/01") ? { version: "a", columnas, filas: [["ags1", "AGS UNO", "X", 21.88, -102.29, 0, "01001", null, 1]] } : ruta.startsWith("/catalogo/estado/09") ? { version: "b", columnas, filas: [["cdmx1", "CDMX UNO", "X", 19.43, -99.13, 0, "09015", null, 1]] } : {});
+    await descargarEstado("01", "AGUASCALIENTES");
+    await descargarEstado("09", "CIUDAD DE MEXICO");
+    expect(porId("ags1")?.estado_clave).toBe("01"); // la tortillería elegida es de Aguascalientes…
+    h.llamadas = [];
+    h.respuesta = (ruta) => (ruta.startsWith("/ubicacion/cercana") ? { estado: { clave: "09", nombre: "CIUDAD DE MEXICO" }, municipio: null } : {});
+    expect(await estadoPorUbicacion(CDMX, true)).toBe("09"); // …pero se sugiere donde está la persona
+    expect(h.llamadas[0].ruta).toContain(`lat=${CDMX.lat}`);
+    expect(h.llamadas[0].ruta).toContain(`lng=${CDMX.lng}`);
+  });
+
+  it("con GPS y sin señal se usa el catálogo guardado en el teléfono (el punto más cercano a la persona)", async () => {
+    h.respuesta = (ruta) => (ruta.startsWith("/catalogo/estado/01") ? { version: "a", columnas, filas: [["ags1", "AGS UNO", "X", 21.88, -102.29, 0, "01001", null, 1]] } : ruta.startsWith("/catalogo/estado/09") ? { version: "b", columnas, filas: [["cdmx1", "CDMX UNO", "X", 19.43, -99.13, 0, "09015", null, 1]] } : {});
+    await descargarEstado("01", "AGUASCALIENTES");
+    await descargarEstado("09", "CIUDAD DE MEXICO");
+    h.llamadas = [];
+    expect(await estadoPorUbicacion(CDMX, false)).toBe("09"); // sin conexión ni siquiera lo intenta
+    expect(h.llamadas).toHaveLength(0);
+    h.respuesta = () => new ApiError(0, "Sin conexión con el servidor"); // dice que hay señal, pero el servidor no responde
+    expect(await estadoPorUbicacion(CDMX, true)).toBe("09");
+  });
+
+  it("sin GPS no se sugiere nada (y no se pregunta al servidor); si no hay catálogo cerca, tampoco", async () => {
+    h.llamadas = [];
+    expect(await estadoPorUbicacion(undefined, true)).toBeNull();
+    expect(await estadoPorUbicacion(null, false)).toBeNull();
+    expect(h.llamadas).toHaveLength(0);
+    h.respuesta = () => new ApiError(0, "Sin conexión con el servidor");
+    expect(await estadoPorUbicacion({ lat: 10, lng: -80 }, true)).toBeNull(); // en medio del mar, sin catálogo: que lo elija
   });
 });

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Fingerprint, Landmark, Loader2, LogOut, ShieldCheck, User } from "lucide-react";
 import { completarDatosSchema, curpSchema } from "@tortillerias/shared";
 import { api, guardarSesion, type Sesion } from "./api";
+import { listaEstados } from "./catalogo";
 import { Aviso, Boton, Campo, Selector } from "./ui";
 
 type Estado = { clave: string; nombre: string };
@@ -23,9 +24,14 @@ export default function CompletaDatos({ sesion, alListo, alSalir }: { sesion: Se
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    api<Estado[]>("/estados").then(setEstados).catch(() => {});
-  }, []);
+  const [falloEstados, setFalloEstados] = useState(false);
+  const [cargandoEstados, setCargandoEstados] = useState(false);
+  const cargarEstados = () => {
+    setFalloEstados(false);
+    setCargandoEstados(true);
+    listaEstados().then((e) => setEstados(e)).catch(() => setFalloEstados(true)).finally(() => setCargandoEstados(false));
+  };
+  useEffect(cargarEstados, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const r = completarDatosSchema.safeParse({ nombre, apellidoPaterno: paterno, apellidoMaterno: materno, curp, estadoClave: estado, aceptoAviso: aviso });
   const errCampo = (c: string, valor: string) => (valor && !r.success ? (r.error.flatten().fieldErrors as Record<string, string[] | undefined>)[c]?.[0] : undefined);
@@ -80,10 +86,16 @@ export default function CompletaDatos({ sesion, alListo, alSalir }: { sesion: Se
           icono={Landmark}
           value={estado}
           onChange={(e) => setEstado(e.target.value)}
-          placeholder="Elige el estado"
+          placeholder={cargandoEstados && !estados.length ? "Cargando estados…" : "Elige el estado"}
           opciones={estados.map((x) => ({ valor: x.clave, texto: x.nombre }))}
-          ayuda={u.estadoSugerido && u.estadoClave ? "Lo elegimos por donde más has capturado. Cámbialo si no es el correcto." : undefined}
+          ayuda={falloEstados && !estados.length ? undefined : u.estadoSugerido && u.estadoClave && estado === u.estadoClave ? "Lo elegimos por donde más has capturado. Cámbialo si no es el correcto." : "Elige el estado donde trabajas."}
         />
+        {falloEstados && !estados.length && (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-800 ring-1 ring-red-200">
+            <span>No pudimos cargar los estados. Revisa tu conexión.</span>
+            <button type="button" onClick={cargarEstados} disabled={cargandoEstados} className="shrink-0 rounded-lg bg-white px-3 py-1.5 text-sm font-semibold text-guinda ring-1 ring-red-200 disabled:opacity-50">{cargandoEstados ? "Cargando…" : "Reintentar"}</button>
+          </div>
+        )}
         <label className="flex cursor-pointer items-start gap-3 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-stone-200">
           <input type="checkbox" checked={aviso} onChange={(e) => setAviso(e.target.checked)} className="mt-0.5 h-5 w-5 shrink-0 accent-guinda" />
           <span className="text-sm leading-snug text-stone-600">
