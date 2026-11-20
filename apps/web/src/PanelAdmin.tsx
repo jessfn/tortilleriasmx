@@ -60,6 +60,18 @@ export default function PanelAdmin({
 
   // Qué pantallas y acciones tiene esta cuenta (un administrador, todas). Es lo que muestra la pantalla; el servidor lo exige en cada petición.
   const permisos = new Set<string>(sesion.usuario.permisos ?? permisosEfectivos(sesion.usuario.rol, null));
+  // La sesión guarda los permisos del momento de entrar: al abrir el panel se piden los vigentes (así una pantalla nueva o un cambio de permisos aparece sin volver a iniciar sesión)
+  useEffect(() => {
+    let vigente = true;
+    api<{ permisos?: Permiso[] }>("/auth/me")
+      .then((m) => {
+        const nuevos = m.permisos;
+        const viejos = sesion.usuario.permisos ?? [];
+        if (vigente && nuevos && (nuevos.length !== viejos.length || nuevos.some((c) => !viejos.includes(c)))) alActualizarSesion({ ...sesion, usuario: { ...sesion.usuario, permisos: nuevos } });
+      })
+      .catch(() => {});
+    return () => { vigente = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const puede = (c: Permiso) => permisos.has(c);
   const pestañasDisponibles = [
     ...(puede("ver_resumen") ? [{ id: "resumen", texto: "Resumen", icono: BarChart3 }] : []),
