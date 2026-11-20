@@ -213,7 +213,8 @@ export async function reunirReporte(rango: Rango): Promise<Reporte> {
   );
   const nombres = new Map<string, string>((await pool.query("SELECT clave, nombre FROM estados")).rows.map((e: any) => [e.clave, e.nombre]));
   const nuevasPor = new Map<string, number>(nuevasEstado.rows.map((r: any) => [r.clave, r.n]));
-  const claves = new Set<string>([...porEstado.rows.map((r: any) => r.clave), ...nuevasEstado.rows.map((r: any) => r.clave)]);
+  // Siempre salen todos los estados, aunque no tengan capturas en el periodo
+  const claves = new Set<string>([...nombres.keys()]);
   const estados: FilaEstado[] = [...claves].map((clave) => {
     const b = porEstado.rows.find((r: any) => r.clave === clave);
     return {
