@@ -122,6 +122,16 @@ export default function AdminBarra({
   const iActiva = arriba.findIndex((p) => p.id === activa);
   if (iActiva >= maxVisibles && maxVisibles > 1) visibles = [...visibles.slice(0, maxVisibles - 1), arriba[iActiva]];
   const masItems = arriba.filter((p) => !visibles.some((v) => v.id === p.id));
+  // Barra inferior (teléfono y tableta vertical): las que caben a 64 px mínimo, contando el botón "Más"
+  const espacios = Math.max(4, Math.min(8, Math.floor(ancho / 64)));
+  const [inferiorAbierta, setInferiorAbierta] = useState(false);
+  const cabenTodas = pestañas.length <= espacios;
+  const cupo = cabenTodas ? pestañas.length : espacios - 1;
+  let inferiorVisibles = pestañas.slice(0, cupo);
+  const iAct = pestañas.findIndex((p) => p.id === activa);
+  if (!cabenTodas && iAct >= cupo) inferiorVisibles = [...inferiorVisibles.slice(0, cupo - 1), pestañas[iAct]];
+  const inferiorMas = pestañas.filter((p) => !inferiorVisibles.some((v) => v.id === p.id));
+  useEffect(() => setInferiorAbierta(false), [activa]);
   const [masAbierto, setMasAbierto] = useState(false);
   const masCaja = useRef<HTMLLIElement>(null);
   useEffect(() => {
@@ -237,26 +247,53 @@ export default function AdminBarra({
         </div>
       </Hoja>
 
-      <nav className="shrink-0 bg-stone-50 pb-[max(.125rem,calc(var(--sb)*.3))] shadow-[0_-10px_20px_-14px_rgba(0,0,0,.3)] lg:hidden" aria-label="Secciones">
-        <ul className="mx-auto flex max-w-xl">
-          {pestañas.map((p) => {
+      {/* Barra inferior: cuantas pestañas caben según el ancho (mín. 64 px cada una); el resto va en "Más". La sección activa siempre se ve. */}
+      {inferiorAbierta && <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px] lg:hidden" onClick={() => setInferiorAbierta(false)} aria-hidden />}
+      {inferiorAbierta && (
+        <div role="menu" className="paso fixed inset-x-0 bottom-0 z-50 rounded-t-3xl bg-stone-50 px-3 pb-[max(1rem,calc(var(--sb)*.5))] pt-2 shadow-2xl lg:hidden">
+          <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-stone-300" aria-hidden />
+          <ul className="mx-auto grid max-w-xl grid-cols-3 gap-2 sm:grid-cols-4">
+            {inferiorMas.map((p) => (
+              <li key={p.id} role="none">
+                <button role="menuitem" onClick={() => { setInferiorAbierta(false); alCambiar(p.id); }} className="relative flex w-full flex-col items-center gap-1 rounded-2xl bg-white px-1 py-3 text-center text-[12px] font-semibold leading-tight text-stone-700 shadow-sm ring-1 ring-stone-200 transition active:scale-95">
+                  <span className="grid h-9 w-9 place-items-center rounded-full bg-guinda/10 text-guinda"><p.icono className="h-5 w-5" aria-hidden /></span>
+                  {p.texto}
+                  {!!p.insignia && <span className="absolute right-2 top-2 grid h-4 min-w-4 place-items-center rounded-full bg-guinda px-1 text-[10px] text-white">{p.insignia}</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <nav className="relative z-40 shrink-0 bg-stone-50 pb-[max(.125rem,calc(var(--sb)*.3))] shadow-[0_-10px_20px_-14px_rgba(0,0,0,.3)] lg:hidden" aria-label="Secciones">
+        <ul className="mx-auto flex max-w-3xl">
+          {inferiorVisibles.map((p) => {
             const on = p.id === activa;
             return (
-              <li key={p.id} className="flex-1">
+              <li key={p.id} className="min-w-0 flex-1">
                 <button
                   onClick={() => alCambiar(p.id)}
                   aria-current={on ? "page" : undefined}
                   className={`relative flex w-full flex-col items-center py-1.5 text-[11px] font-semibold transition ${on ? "text-guinda" : "text-stone-400"}`}
                 >
-                  <span className={`grid h-8 w-14 place-items-center rounded-full transition-all ${on ? "bg-guinda/10" : ""}`}>
+                  <span className={`grid h-8 w-12 place-items-center rounded-full transition-all ${on ? "bg-guinda/10" : ""}`}>
                     <p.icono className="h-5 w-5" aria-hidden />
                   </span>
-                  {p.texto}
-                  {!!p.insignia && <span className="absolute right-[calc(50%-1.6rem)] top-1 grid h-4 min-w-4 place-items-center rounded-full bg-guinda px-1 text-[10px] text-white">{p.insignia}</span>}
+                  <span className="w-full truncate px-0.5 text-center">{p.texto}</span>
+                  {!!p.insignia && <span className="absolute right-[calc(50%-1.5rem)] top-1 grid h-4 min-w-4 place-items-center rounded-full bg-guinda px-1 text-[10px] text-white">{p.insignia}</span>}
                 </button>
               </li>
             );
           })}
+          {inferiorMas.length > 0 && (
+            <li className="min-w-0 flex-1">
+              <button onClick={() => setInferiorAbierta((v) => !v)} aria-expanded={inferiorAbierta} aria-haspopup="menu" className={`relative flex w-full flex-col items-center py-1.5 text-[11px] font-semibold transition ${inferiorAbierta ? "text-guinda" : "text-stone-400"}`}>
+                <span className={`grid h-8 w-12 place-items-center rounded-full transition-all ${inferiorAbierta ? "bg-guinda/10" : ""}`}><Ellipsis className="h-5 w-5" aria-hidden /></span>
+                Más
+                {inferiorMas.some((p) => p.insignia) && <span className="absolute right-[calc(50%-1rem)] top-1.5 h-2 w-2 rounded-full bg-guinda" aria-hidden />}
+              </button>
+            </li>
+          )}
         </ul>
       </nav>
     </div>
