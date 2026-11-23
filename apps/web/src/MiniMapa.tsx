@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { ESTILO } from "./estiloMapa";
+import { ESTILO, repararEstilo } from "./estiloMapa";
 
 export type PuntoMini = { lat: number; lng: number };
 
@@ -24,6 +24,7 @@ export default function MiniMapa({ tortilleria, captura, alto = 220 }: { tortill
         attributionControl: { compact: true },
         cooperativeGestures: true, // en el celular, un dedo desplaza la hoja y dos mueven el mapa
       });
+      repararEstilo(mapa);
       mapa.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
       new maplibregl.Marker({ color: "#7a1b3f" }).setLngLat([tortilleria.lng, tortilleria.lat]).addTo(mapa);
       if (captura) {

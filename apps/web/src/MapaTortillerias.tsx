@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import maplibregl, { type GeoJSONSource, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { api } from "./api";
-import { ESTILO } from "./estiloMapa";
+import { ESTILO, repararEstilo } from "./estiloMapa";
 import { alCambiarCatalogo, cubre, enCaja } from "./catalogo";
 
 export type Punto = { id: string; nombre: string; domicilio: string | null; estatus: string; lat: number; lng: number; razon_social: string | null };
@@ -233,6 +233,7 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
       zoom: props.pos ? 16 : props.centro ? 13 : 4.5,
       attributionControl: { compact: true },
     });
+    repararEstilo(m);
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     mapa.current = m;
 

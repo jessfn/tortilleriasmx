@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import maplibregl, { type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { api } from "./api";
-import { ESTILO } from "./estiloMapa";
+import { ESTILO, repararEstilo } from "./estiloMapa";
 import { COLOR_ALTO, COLOR_BAJO, COLOR_MEDIO, rangoPrecios } from "./AdminVivo";
 
 export type Precio = { precio: number; fecha: string } | null;
@@ -223,6 +223,7 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
       zoom: 4.6,
       attributionControl: { compact: true },
     });
+    repararEstilo(m);
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     // Mi ubicación: centra el mapa donde está quien lo usa y la va siguiendo (punto azul)
     m.addControl(
