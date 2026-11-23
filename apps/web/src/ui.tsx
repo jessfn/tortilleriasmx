@@ -300,7 +300,7 @@ export function PanelShell({
 }
 
 export function Tarjeta({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`rounded-2xl bg-white p-3 shadow-sm ring-1 ring-stone-200 ${className}`}>{children}</div>;
+  return <div className={`min-w-0 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-stone-200 ${className}`}>{children}</div>;
 }
 
 export function Dato({ icono: Icono, etiqueta, valor, tono = "guinda" }: { icono: LucideIcon; etiqueta: string; valor: ReactNode; tono?: "guinda" | "verde" | "dorado" | "gris" }) {

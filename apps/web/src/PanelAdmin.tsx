@@ -444,14 +444,14 @@ function VistaRevision({ solo, alCambio, puedeRevisar, puedeValidar }: { solo?: 
       )}
 
       {/* El recuadro ocupa lo que queda de la pantalla: la lista se desplaza dentro de él y la paginación queda siempre a la vista */}
-      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200" aria-label={seccion === "tortillerias" ? "Tortillerías nuevas" : estatus === "pendiente" ? "Precios atípicos por revisar" : "Precios capturados"}>
-        <div ref={zona} className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-stone-50/70 p-2.5">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200" aria-label={seccion === "tortillerias" ? "Tortillerías nuevas" : estatus === "pendiente" ? "Precios atípicos por revisar" : "Precios capturados"}>
+        <div ref={zona} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-stone-50/70 p-2.5">
           {!actual ? (
             <div className="grid place-items-center py-16 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
           ) : actual.filas.length === 0 ? (
             vacio(seccion === "tortillerias" ? "No hay tortillerías nuevas por revisar." : "No hay precios atípicos por revisar: los demás se aprueban solos.")
           ) : seccion === "tortillerias" ? (
-            <div className="grid content-start gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid grid-cols-1 content-start gap-2.5 md:grid-cols-2 xl:grid-cols-3">
               {(tortillerias?.filas ?? []).map((t) => (
                 <Tarjeta key={t.id} className="flex h-full flex-col gap-2">
                   <div className="flex items-start gap-3">
@@ -462,11 +462,11 @@ function VistaRevision({ solo, alCambio, puedeRevisar, puedeValidar }: { solo?: 
                         <Insignia estatus={t.estatus} />
                       </div>
                       <p className="truncate text-xs text-stone-500">{[t.municipio, t.estado].filter(Boolean).join(", ") || "Sin ubicación"}</p>
-                      <p className="mt-1 flex items-center gap-3 text-xs text-stone-400">
+                      <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-stone-400">
                         <span className="flex items-center gap-1"><Camera className="h-3 w-3" aria-hidden /> {t.n_fotos}</span>
-                        <span className="truncate">{t.creador ?? "DENUE"}</span>
+                        <span className="min-w-0 max-w-full truncate">{t.creador ?? "DENUE"}</span>
                         {t.creador_rechazado && <span className="shrink-0 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 ring-1 ring-red-200">Registrada por un usuario rechazado</span>}
-                        <span className="ml-auto shrink-0">{fecha(t.creado_en)}</span>
+                        <span className="shrink-0 sm:ml-auto">{fecha(t.creado_en)}</span>
                       </p>
                     </div>
                   </div>
@@ -484,7 +484,7 @@ function VistaRevision({ solo, alCambio, puedeRevisar, puedeValidar }: { solo?: 
               ))}
             </div>
           ) : (
-            <div className="grid content-start gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid grid-cols-1 content-start gap-2.5 md:grid-cols-2 xl:grid-cols-3">
               {(capturas?.filas ?? []).map((c) => {
                 const P = PRODUCTO[c.producto];
                 return (

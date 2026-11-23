@@ -242,8 +242,8 @@ export default function AdminBarra({
       {banda && <div className="shrink-0 truncate bg-guinda px-3 py-1.5 text-center text-xs font-medium text-white/90 sm:hidden">{banda}</div>}
 
       <Hoja className="!mt-0 !rounded-none !shadow-none">
-        <div key={activa} className={`paso min-h-0 flex-1 ${plano ? "relative overflow-hidden" : "overflow-y-auto overscroll-contain px-3 pb-3 pt-4 lg:px-6 lg:pb-5 lg:pt-4"}`}>
-          <div className={plano ? "h-full w-full" : "mx-auto w-full max-w-[92rem] space-y-2.5"}>{children}</div>
+        <div key={activa} className={`paso min-h-0 flex-1 ${plano ? "relative overflow-hidden" : "overflow-y-auto overflow-x-hidden overscroll-contain px-3 pb-3 pt-4 lg:px-6 lg:pb-5 lg:pt-4"}`}>
+          <div className={plano ? "h-full w-full" : "mx-auto w-full min-w-0 max-w-[92rem] space-y-2.5"}>{children}</div>
         </div>
       </Hoja>
 
