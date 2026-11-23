@@ -256,6 +256,18 @@ function VistaRevision({ solo, alCambio, puedeRevisar, puedeValidar }: { solo?: 
   };
   const cambiarEstatus = (e: typeof estatus) => { setEstatus(e); setPagina(1); };
 
+  /** mini modal: nada se aprueba ni se rechaza sin confirmar */
+  const [confirmar, setConfirmar] = useState<{ tipo: "tortilleria" | "captura"; id: string; nombre: string; nuevo: "validada" | "rechazada" }>();
+  async function confirmarAccion() {
+    const c = confirmar;
+    if (!c) return;
+    setConfirmar(undefined);
+    if (c.tipo === "captura") {
+      await resolverCaptura(c.id, c.nuevo);
+      setDetalleCaptura(undefined);
+    } else await resolverTortilleria(c.id, c.nuevo);
+  }
+
   async function resolverCaptura(id: string, nuevo: "validada" | "rechazada") {
     setTrabajando(id);
     try {
@@ -441,8 +453,8 @@ function VistaRevision({ solo, alCambio, puedeRevisar, puedeValidar }: { solo?: 
           ) : seccion === "tortillerias" ? (
             <div className="grid content-start gap-2.5 md:grid-cols-2 xl:grid-cols-3">
               {(tortillerias?.filas ?? []).map((t) => (
-                <button key={t.id} onClick={() => setDetalle(t)} className="block w-full text-left">
-                  <Tarjeta className="flex h-full items-start gap-3 transition active:scale-[.98]">
+                <Tarjeta key={t.id} className="flex h-full flex-col gap-2">
+                  <div className="flex items-start gap-3">
                     <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-guinda/10 text-guinda"><Store className="h-5 w-5" aria-hidden /></span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
@@ -457,8 +469,18 @@ function VistaRevision({ solo, alCambio, puedeRevisar, puedeValidar }: { solo?: 
                         <span className="ml-auto shrink-0">{fecha(t.creado_en)}</span>
                       </p>
                     </div>
-                  </Tarjeta>
-                </button>
+                  </div>
+                  <Boton variante="secundario" className="!min-h-10 !text-sm" icono={Eye} onClick={() => setDetalle(t)}>Ver más detalles</Boton>
+                  {puedeValidar && t.estatus === "pendiente" && (
+                    <>
+                      <div className="mt-auto grid grid-cols-2 gap-2">
+                        <Boton variante="peligro" className="!min-h-10" disabled={trabajando === t.id} icono={X} onClick={() => setConfirmar({ tipo: "tortilleria", id: t.id, nombre: t.nombre, nuevo: "rechazada" })}>Rechazar</Boton>
+                        <Boton className="!min-h-10" disabled={trabajando === t.id || t.n_fotos === 0} icono={trabajando === t.id ? Loader2 : Check} onClick={() => setConfirmar({ tipo: "tortilleria", id: t.id, nombre: t.nombre, nuevo: "validada" })}>Aprobar</Boton>
+                      </div>
+                      {t.n_fotos === 0 && <p className="text-[11px] text-amber-700">Sin foto no se puede aprobar.</p>}
+                    </>
+                  )}
+                </Tarjeta>
               ))}
             </div>
           ) : (
@@ -488,8 +510,8 @@ function VistaRevision({ solo, alCambio, puedeRevisar, puedeValidar }: { solo?: 
                     </Boton>
                     {puedeRevisar && c.estatus === "pendiente" && (
                       <div className="grid grid-cols-2 gap-2">
-                        <Boton variante="peligro" className="!min-h-10" disabled={trabajando === c.id} icono={X} onClick={() => resolverCaptura(c.id, "rechazada")}>Rechazar</Boton>
-                        <Boton className="!min-h-10" disabled={trabajando === c.id} icono={trabajando === c.id ? Loader2 : Check} onClick={() => resolverCaptura(c.id, "validada")}>Aprobar</Boton>
+                        <Boton variante="peligro" className="!min-h-10" disabled={trabajando === c.id} icono={X} onClick={() => setConfirmar({ tipo: "captura", id: c.id, nombre: c.nombre, nuevo: "rechazada" })}>Rechazar</Boton>
+                        <Boton className="!min-h-10" disabled={trabajando === c.id} icono={trabajando === c.id ? Loader2 : Check} onClick={() => setConfirmar({ tipo: "captura", id: c.id, nombre: c.nombre, nuevo: "validada" })}>Aprobar</Boton>
                       </div>
                     )}
                   </Tarjeta>
@@ -529,14 +551,25 @@ function VistaRevision({ solo, alCambio, puedeRevisar, puedeValidar }: { solo?: 
           puedeValidar={puedeValidar}
           trabajando={trabajando === detalleCaptura.c.id}
           alCerrar={() => setDetalleCaptura(undefined)}
-          alResolver={resolverTortilleria}
-          alResolverCaptura={async (id, nuevo) => {
-            await resolverCaptura(id, nuevo);
-            setDetalleCaptura(undefined);
-          }}
+          alResolver={(id, nuevo) => setConfirmar({ tipo: "tortilleria", id, nombre: detalleCaptura.t.nombre, nuevo })}
+          alResolverCaptura={(id, nuevo) => setConfirmar({ tipo: "captura", id, nombre: detalleCaptura.t.nombre, nuevo })}
         />
       )}
-      {detalle && <DetalleTortilleria t={detalle} puedeRevisar={puedeRevisar} puedeValidar={puedeValidar} trabajando={trabajando === detalle.id} alCerrar={() => setDetalle(undefined)} alResolver={resolverTortilleria} />}
+      {detalle && <DetalleTortilleria t={detalle} puedeRevisar={puedeRevisar} puedeValidar={puedeValidar} trabajando={trabajando === detalle.id} alCerrar={() => setDetalle(undefined)} alResolver={(id, nuevo) => setConfirmar({ tipo: "tortilleria", id, nombre: detalle.nombre, nuevo })} />}
+
+      {confirmar && (
+        <HojaModal titulo={confirmar.nuevo === "validada" ? "Confirmar aprobación" : "Confirmar rechazo"} alCerrar={() => setConfirmar(undefined)}>
+          <p className="text-sm text-stone-700">
+            {confirmar.nuevo === "validada" ? "¿Aprobar " : "¿Rechazar "}
+            {confirmar.tipo === "captura" ? "el precio de " : "la tortillería "}
+            <b>{confirmar.nombre}</b>?
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <Boton variante="secundario" onClick={() => setConfirmar(undefined)}>Cancelar</Boton>
+            <Boton variante={confirmar.nuevo === "validada" ? undefined : "peligro"} icono={confirmar.nuevo === "validada" ? Check : X} onClick={confirmarAccion}>{confirmar.nuevo === "validada" ? "Aprobar" : "Rechazar"}</Boton>
+          </div>
+        </HojaModal>
+      )}
     </div>
   );
 }
