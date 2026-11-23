@@ -71,19 +71,48 @@ interface Esquema extends DBSchema {
   kv: { key: string; value: unknown };
 }
 
-let conexion: Promise<IDBPDatabase<Esquema>> | null = null;
-
-export function abrir() {
-  conexion ??= openDB<Esquema>("tortilleriasmx", 1, {
-    upgrade(db) {
-      db.createObjectStore("catalogo", { keyPath: "clave" });
-      db.createObjectStore("bandeja", { keyPath: "id" });
-      db.createObjectStore("kv");
+/**
+ * Algunos navegadores no dejan usar IndexedDB (modo privado, cookies o datos del sitio bloqueados, página abierta dentro de otra app o sin https):
+ * "IDBFactory.open() called in an invalid security context". En ese caso la app NO se detiene: se guarda en la memoria de la pestaña.
+ * Con señal todo sale igual (la captura se envía de inmediato); lo único que se pierde es el trabajo sin conexión y las copias del teléfono,
+ * y lo guardado solo dura mientras la pestaña esté abierta.
+ */
+export let almacenamientoEnMemoria = false;
+type Base = IDBPDatabase<Esquema>;
+function baseEnMemoria(): Base {
+  const t: Record<string, Map<unknown, unknown>> = { catalogo: new Map(), bandeja: new Map(), kv: new Map() };
+  const llave = (tabla: string, valor: any, k?: unknown) => (k !== undefined ? k : tabla === "catalogo" ? valor.clave : valor.id);
+  const copia = <T,>(v: T): T => (typeof structuredClone === "function" ? structuredClone(v) : v);
+  return {
+    get: async (tabla: string, k: unknown) => copia(t[tabla].get(k)),
+    getAll: async (tabla: string) => [...t[tabla].values()].map(copia),
+    put: async (tabla: string, valor: unknown, k?: unknown) => {
+      const clave = llave(tabla, valor, k);
+      t[tabla].set(clave, copia(valor));
+      return clave;
     },
-  }).catch((e) => {
-    conexion = null; // si falla (p. ej. modo privado) se puede reintentar
-    throw e;
-  });
+    delete: async (tabla: string, k: unknown) => void t[tabla].delete(k),
+    clear: async (tabla: string) => void t[tabla].clear(),
+  } as unknown as Base;
+}
+
+let conexion: Promise<Base> | null = null;
+
+export function abrir(): Promise<Base> {
+  conexion ??= Promise.resolve()
+    .then(() =>
+      openDB<Esquema>("tortilleriasmx", 1, {
+        upgrade(db) {
+          db.createObjectStore("catalogo", { keyPath: "clave" });
+          db.createObjectStore("bandeja", { keyPath: "id" });
+          db.createObjectStore("kv");
+        },
+      }),
+    )
+    .catch(() => {
+      almacenamientoEnMemoria = true;
+      return baseEnMemoria();
+    });
   return conexion;
 }
 
