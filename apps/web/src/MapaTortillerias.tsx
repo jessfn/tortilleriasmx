@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import maplibregl, { type GeoJSONSource, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { api } from "./api";
-import { ESTILO, repararEstilo } from "./estiloMapa";
+import { ESTILO, OPCIONES_ESTILO, repararEstilo } from "./estiloMapa";
 import { alCambiarCatalogo, cubre, enCaja } from "./catalogo";
 
 export type Punto = { id: string; nombre: string; domicilio: string | null; estatus: string; lat: number; lng: number; razon_social: string | null };
@@ -228,12 +228,11 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
     const inicio = props.pos ?? props.centro ?? MEXICO;
     const m = new maplibregl.Map({
       container: cont.current!,
-      style: estilo,
       center: [inicio.lng, inicio.lat],
       zoom: props.pos ? 16 : props.centro ? 13 : 4.5,
       attributionControl: { compact: true },
     });
-    repararEstilo(m);
+    repararEstilo(m, estilo);
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     mapa.current = m;
 
@@ -341,7 +340,7 @@ const MapaTortillerias = forwardRef<MapaRef, Props>(function MapaTortillerias(pr
       listo.current = false;
       p.current.onRespaldo?.(false);
       m.once("style.load", iniciar);
-      m.setStyle(ESTILO);
+      m.setStyle(ESTILO, OPCIONES_ESTILO);
     };
     window.addEventListener("online", alVolver);
     // Cuando termina una descarga o se agrega una tortillería nueva del teléfono, se redibuja

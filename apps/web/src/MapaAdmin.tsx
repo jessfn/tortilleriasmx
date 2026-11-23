@@ -218,7 +218,6 @@ const MapaAdmin = forwardRef<MapaAdminRef, Props>(function MapaAdmin(props, ref)
   useEffect(() => {
     const m = new maplibregl.Map({
       container: cont.current!,
-      style: ESTILO,
       center: [MEXICO.lng, MEXICO.lat],
       zoom: 4.6,
       attributionControl: { compact: true },

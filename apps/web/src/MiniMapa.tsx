@@ -18,7 +18,6 @@ export default function MiniMapa({ tortilleria, captura, alto = 220 }: { tortill
     try {
       mapa = new maplibregl.Map({
         container: caja.current,
-        style: ESTILO,
         center: [tortilleria.lng, tortilleria.lat],
         zoom: 16,
         attributionControl: { compact: true },
