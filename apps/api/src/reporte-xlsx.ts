@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { fileURLToPath } from "node:url";
 import { capturasDelPeriodo, MAX_FILAS_DETALLE, textosRango, type Reporte } from "./reportes.js";
 
 /** Reporte en Excel: resumen, por estado, por periodo y el detalle de capturas (sin datos personales ni nombres de tortillerías) */
@@ -12,6 +13,7 @@ function encabezado(h: ExcelJS.Row) {
     c.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
   });
 }
+const logoDgtic = fileURLToPath(new URL("../assets/logo-dgtic-blanco.png", import.meta.url));
 const dinero = '"$"#,##0.00';
 
 export async function reporteXlsx(r: Reporte): Promise<Buffer> {
@@ -27,7 +29,10 @@ export async function reporteXlsx(r: Reporte): Promise<Buffer> {
   s1.getCell("A1").value = "TortilleríasMX · Secretaría de Agricultura y Desarrollo Rural";
   s1.getCell("A1").font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
   s1.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: GUINDA } };
-  s1.getRow(1).height = 26;
+  s1.getRow(1).height = 40;
+  // logotipo blanco de la DGTIC a la derecha de la franja guinda
+  const logo = wb.addImage({ filename: logoDgtic, extension: "png" });
+  s1.addImage(logo, { tl: { col: 2.35, row: 0.1 }, ext: { width: 119, height: 34 } });
   s1.getCell("A1").alignment = { vertical: "middle", indent: 1 };
   s1.mergeCells("A2:D2");
   s1.getCell("A2").value = `${t.tipo}: ${t.titulo}`;

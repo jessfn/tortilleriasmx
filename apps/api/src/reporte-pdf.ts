@@ -67,6 +67,10 @@ function encabezado(doc: Doc) {
   doc.image(assets("logo-gobierno-blanco.png"), MX, 19, { height: 40 });
   doc.save().rect(MX + 150, 21, 1, 36).fillOpacity(0.3).fill("#ffffff").restore();
   doc.image(assets("logo-agricultura-blanco.png"), MX + 172, 22, { height: 34 });
+  // DGTIC: logotipo blanco, igual que los otros dos, directo sobre el fondo guinda
+  const fin = MX + 172 + 178; // donde termina el logo de Agricultura (178 pt de ancho)
+  doc.save().rect(fin + 22, 21, 1, 36).fillOpacity(0.3).fill("#ffffff").restore();
+  doc.image(assets("logo-dgtic-blanco.png"), fin + 44, 19, { fit: [160, 38], valign: "center" }); // casi tan alto como el de Agricultura, a la misma altura visual
   const a = ancho(doc, "Tortillerías", "Titulo", 25), b = ancho(doc, "MX", "Cuerpo-Bold", 22);
   const xt = W - MX - a - b;
   tx(doc, "Tortillerías", xt, 24, { font: "Titulo", size: 25, color: "#ffffff" });
