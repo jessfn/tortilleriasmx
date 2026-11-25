@@ -14,6 +14,7 @@ export const PERMISOS = [
   { clave: "ver_usuarios_app", tipo: "vista", texto: "Usuarios de la app", ayuda: "La lista de quienes capturan precios en la app" },
   { clave: "ver_mi_equipo", tipo: "vista", texto: "Mi equipo", ayuda: "Los censadores de un estado: capturas, última captura y avance (solo lectura)" },
   { clave: "ver_extras", tipo: "vista", texto: "Extras (reportes)", ayuda: "Descargar reportes en PDF y Excel por día, semana, mes o año" },
+  { clave: "ver_cuestionarios", tipo: "vista", texto: "Cuestionarios", ayuda: "Respuestas del cuestionario de supervisión, avance e indicadores, y su descarga (información sensible)" },
   { clave: "gestionar_bajas", tipo: "accion", texto: "Ver y reactivar tortillerías dadas de baja", ayuda: "Las que los censadores reportaron como \"ya no funciona\"" },
   { clave: "revisar_precios", tipo: "accion", texto: "Aprobar o rechazar precios atípicos", ayuda: "Uno por uno o varios a la vez" },
   { clave: "validar_tortillerias", tipo: "accion", texto: "Validar o rechazar tortillerías nuevas", ayuda: "Las dadas de alta por los censadores" },
@@ -26,8 +27,15 @@ export type Permiso = (typeof PERMISOS)[number]["clave"];
 export const CLAVES_PERMISOS = PERMISOS.map((p) => p.clave) as readonly Permiso[];
 export const esPermiso = (c: string): c is Permiso => (CLAVES_PERMISOS as readonly string[]).includes(c);
 
+/**
+ * Permisos reservados (C21): NADIE los tiene por su rol, ni siquiera un administrador. Solo los tiene la cuenta a la que se le marcan
+ * a mano (por ahora, una sola cuenta de DGTIC). Nunca son de un administrador estatal.
+ */
+export const PERMISOS_RESERVADOS: readonly Permiso[] = ["ver_cuestionarios"];
+export const esReservado = (c: string) => (PERMISOS_RESERVADOS as readonly string[]).includes(c);
+
 /** Lo que tiene un supervisor al que nunca se le han editado los permisos: todo lo de siempre, sin la gestión de usuarios de la app ni los reportes (Extras), que el administrador delega */
-export const PERMISOS_SUPERVISOR_POR_OMISION: readonly Permiso[] = CLAVES_PERMISOS.filter((c) => c !== "ver_usuarios_app" && c !== "gestionar_usuarios_app" && c !== "ver_extras");
+export const PERMISOS_SUPERVISOR_POR_OMISION: readonly Permiso[] = CLAVES_PERMISOS.filter((c) => c !== "ver_usuarios_app" && c !== "gestionar_usuarios_app" && c !== "ver_extras" && !esReservado(c));
 
 export type RolUsuario = "capturista" | "supervisor" | "admin" | "estatal";
 
@@ -41,13 +49,14 @@ export const PERMISOS_ESTATAL: readonly Permiso[] = ["ver_usuarios_app", "gestio
 /**
  * Permisos con los que de verdad cuenta una cuenta:
  *  - capturista (usuario de la app): ninguno (no entra al administrador)
- *  - admin: todos
- *  - supervisor: los marcados (si nunca se editaron, los de por omisión)
+ *  - admin: todos, menos los reservados (esos solo si se le marcaron)
+ *  - supervisor: los marcados (si nunca se editaron, los de por omisión, que no incluyen los reservados)
+ *  - estatal: los suyos, fijos (nunca los reservados)
  */
 export function permisosEfectivos(rol: RolUsuario, marcados?: readonly string[] | null, alcanceNacional = false): Permiso[] {
   if (rol === "capturista") return [];
   if (rol === "estatal") return alcanceNacional ? ["ver_resumen", ...PERMISOS_ESTATAL] : [...PERMISOS_ESTATAL];
-  if (rol === "admin") return [...CLAVES_PERMISOS];
+  if (rol === "admin") return CLAVES_PERMISOS.filter((c) => !esReservado(c) || !!marcados?.includes(c));
   if (!marcados) return [...PERMISOS_SUPERVISOR_POR_OMISION];
   return CLAVES_PERMISOS.filter((c) => marcados.includes(c));
 }

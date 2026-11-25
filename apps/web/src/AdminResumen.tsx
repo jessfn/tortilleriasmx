@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, Ban, Banknote, BarChart3, ClipboardCheck, ClipboardList, Clock, Landmark, Layers, Loader2, Map as MapaIcono, PlusCircle, Store, TriangleAlert, Users, Wheat } from "lucide-react";
+import { AlertTriangle, Ban, Banknote, BarChart3, ClipboardList, Clock, Landmark, Layers, Loader2, Map as MapaIcono, PlusCircle, Store, TriangleAlert, Users, Wheat } from "lucide-react";
 import { api } from "./api";
 import { BarraValor, dinero, entero, EnVivo, Tendencia, useVivo, type DiaPrecio } from "./AdminVivo";
 import type { FilaZona, FocoMapa } from "./AdminMapa";
@@ -30,10 +30,8 @@ const hace = (s: string) => {
 
 /** Resumen general en vivo: precios promedio, actividad de hoy, tendencia y últimas capturas */
 export default function AdminResumen({
-  r, ultima, fallo, alRevisar, alEstadisticas, alMapa, puedeEstadisticas = true, puedeMapa = true, puedeRevision = true, esAdmin = false,
+  r, ultima, fallo, alRevisar, alEstadisticas, alMapa, puedeEstadisticas = true, puedeMapa = true, puedeRevision = true,
 }: {
-  /** C21.9: el avance del cuestionario solo lo ve DGTIC (rol admin); la UOTEHA y los demás no ven nada de él aquí */
-  esAdmin?: boolean;
   r?: Resumen; ultima?: number; fallo?: boolean; alRevisar: () => void; alEstadisticas: () => void; alMapa: (f?: FocoMapa) => void;
   /** a qué otras pantallas tiene acceso esta cuenta: lo que no, no se ofrece */
   puedeEstadisticas?: boolean; puedeMapa?: boolean; puedeRevision?: boolean;
@@ -41,7 +39,6 @@ export default function AdminResumen({
   const [tendencia, setTendencia] = useState<DiaPrecio[]>([]);
   const [actividad, setActividad] = useState<Actividad[]>();
   const [estados, setEstados] = useState<FilaZona[]>([]);
-  const [cuest, setCuest] = useState<{ visitadas: number; aplicados: number; no_aplicados: number; porcentaje: number }>();
 
   useVivo(async () => {
     const [t, a, e] = await Promise.all([
@@ -52,8 +49,7 @@ export default function AdminResumen({
     setTendencia(t);
     setActividad(a);
     setEstados(e);
-    if (esAdmin) setCuest(await api<{ nacional: NonNullable<typeof cuest> }>("/admin/cuestionarios/indicadores").then((x) => x.nacional).catch(() => undefined));
-  }, 20_000, [esAdmin]);
+  }, 20_000);
 
   if (!r) return <div className="grid place-items-center py-12 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>;
   // Solo se revisan a mano los precios atípicos (los normales se aprueban solos) y las tortillerías nuevas
@@ -101,26 +97,6 @@ export default function AdminResumen({
           </div>
         </button>
       </div>
-
-      {esAdmin && cuest && (
-        <button
-          onClick={alEstadisticas}
-          disabled={!puedeEstadisticas}
-          className="flex w-full items-center gap-3 rounded-2xl bg-white p-3 text-left shadow-sm ring-1 ring-stone-200 transition enabled:active:scale-[.99]"
-        >
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-guinda/10 text-guinda"><ClipboardCheck className="h-6 w-6" aria-hidden /></span>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs text-stone-500">Cuestionario de supervisión · tortillerías visitadas con cuestionario aplicado</p>
-            <div className="mt-1 flex items-center gap-3">
-              <p className="shrink-0 text-2xl font-bold leading-none tabular-nums">{cuest.porcentaje} %</p>
-              <div className="min-w-0 flex-1"><BarraValor valor={cuest.porcentaje} max={100} /></div>
-            </div>
-            <p className="mt-1 text-[11px] text-stone-400">
-              {entero(cuest.aplicados)} de {entero(cuest.visitadas)}{cuest.no_aplicados ? ` · ${entero(cuest.no_aplicados)} no se pudieron aplicar en el último intento` : ""}
-            </p>
-          </div>
-        </button>
-      )}
 
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <Tarjeta className="space-y-2">

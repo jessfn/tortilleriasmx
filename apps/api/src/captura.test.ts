@@ -2354,7 +2354,7 @@ describe("C21: cuestionario de supervisión de tortillerías", () => {
       "INSERT INTO usuarios(usuario, rol, correo, estados_alcance, alcance_nacional, estado_clave, estado_cuenta, datos_completos, permisos) VALUES ($1,$2,$1,$3::text[],$4,$5,$6,true,$7::text[]) RETURNING id",
       [correo, rol, extra.alcance ?? null, extra.nacional ?? false, extra.estado ?? null, extra.cuenta ?? "autorizado", extra.permisos ?? null],
     ))[0].id as string;
-  let cen: string, cen2: string, est: string, uoteha: string, supTodo: string, porAut: string, rech: string;
+  let cen: string, cen2: string, est: string, uoteha: string, supTodo: string, porAut: string, rech: string, dgtic: string;
   let T1: string, T2: string, T3: string, TBaja: string, TOtro: string;
   const aplicar = (t: string, u: string, extra: object = {}) => post(`/tortillerias/${t}/cuestionario`, u, { estatus: "aplicado", respuestas: R, ...extra });
 
@@ -2365,7 +2365,9 @@ describe("C21: cuestionario de supervisión de tortillerías", () => {
     est = await crear("q-est@oref.gob.mx", "estatal", { alcance: ["31"] });
     uoteha = await crear("q-uoteha@gob.mx", "estatal", { nacional: true });
     const { CLAVES_PERMISOS } = await import("@tortillerias/shared");
-    supTodo = await crear("q-sup@gob.mx", "supervisor", { permisos: [...CLAVES_PERMISOS] });
+    supTodo = await crear("q-sup@gob.mx", "supervisor", { permisos: CLAVES_PERMISOS.filter((c) => c !== "ver_cuestionarios") });
+    // la única cuenta con la vista "Cuestionarios" (permiso reservado, marcado a mano)
+    dgtic = await crear("q-dgtic@gob.mx", "admin", { permisos: ["ver_cuestionarios"] });
     porAut = await crear("q-poraut@correo.com", "capturista", { estado: "31", cuenta: "por_autorizar" });
     rech = await crear("q-rech@correo.com", "capturista", { estado: "31", cuenta: "rechazado" });
     const tort = async (nombre: string, estado: string) =>
@@ -2402,11 +2404,11 @@ describe("C21: cuestionario de supervisión de tortillerías", () => {
     expect((await post(`/tortillerias/${T1}/cuestionario`, cen, { estatus: "no_aplicado", motivo: "INSEGURIDAD" })).status).toBe(201);
     expect((await q("SELECT estatus FROM cuestionario_ultimo WHERE tortilleria_id = $1", [T1]))[0].estatus).toBe("no_aplicado");
     expect((await q("SELECT a1_ubicacion FROM cuestionario_vigente WHERE tortilleria_id = $1", [T1]))[0].a1_ubicacion).toBe("TIENDA");
-    const csv = await (await get("/admin/exportar/cuestionarios?estado=31", adm, "admin")).text();
+    const csv = await (await get("/admin/exportar/cuestionarios?estado=31", dgtic, "admin")).text();
     expect(csv.split("\r\n").find((l) => l.startsWith(T1))).toMatch(/,aplicado,/);
     // T3: solo un intento "no se pudo aplicar" → cuenta en los motivos y no como aplicado
     expect((await post(`/tortillerias/${T3}/cuestionario`, cen, { estatus: "no_aplicado", motivo: "OTRO", motivoOtro: "Llovía muy fuerte" })).status).toBe(201);
-    const ind = await (await get("/admin/cuestionarios/indicadores?estado=31", adm, "admin")).json();
+    const ind = await (await get("/admin/cuestionarios/indicadores?estado=31", dgtic, "admin")).json();
     expect(ind.estados.find((e: any) => e.clave === "31")).toMatchObject({ visitadas: 3, aplicados: 2 });
     expect(ind.motivos).toEqual(expect.arrayContaining([{ motivo: "OTRO", n: 1 }]));
     expect(ind.municipios).not.toBeNull();
@@ -2425,9 +2427,9 @@ describe("C21: cuestionario de supervisión de tortillerías", () => {
     expect(r.ultimo).toMatchObject({ estatus: "no_aplicado", motivo: "INSEGURIDAD" });
   });
 
-  it("C21.9: estatal, UOTEHA y supervisor (con todos sus permisos) no reciben respuestas: 403 y nada en el detalle", async () => {
-    for (const [u, rol] of [[est, "estatal"], [uoteha, "estatal"], [supTodo, "supervisor"], [sup, "supervisor"]] as const) {
-      for (const ruta of [`/admin/cuestionarios/tortilleria/${T1}`, "/admin/cuestionarios/indicadores", "/admin/exportar/cuestionarios", "/admin/exportar/cuestionarios/diccionario", `/tortillerias/${T1}/cuestionario`]) {
+  it("vista Cuestionarios (permiso reservado): estatal, UOTEHA, supervisor e incluso un administrador SIN ese permiso reciben 403 y nada en el detalle", async () => {
+    for (const [u, rol] of [[est, "estatal"], [uoteha, "estatal"], [supTodo, "supervisor"], [sup, "supervisor"], [adm, "admin"]] as const) {
+      for (const ruta of [`/admin/cuestionarios/tortilleria/${T1}`, "/admin/cuestionarios", "/admin/cuestionarios/indicadores", "/admin/exportar/cuestionarios", "/admin/exportar/cuestionarios/diccionario", `/tortillerias/${T1}/cuestionario`]) {
         expect((await get(ruta, u, rol)).status, `${rol} ${ruta}`).toBe(403);
       }
       const det = await get(`/admin/tortillerias/${T1}`, u, rol);
@@ -2437,9 +2439,32 @@ describe("C21: cuestionario de supervisión de tortillerías", () => {
     if (res.status === 200) expect(JSON.stringify(await res.json())).not.toMatch(/cuestionario/i);
   });
 
+  it("la lista de la vista trae el estatus de cada visitada y filtra por estado y estatus", async () => {
+    const r = await (await get("/admin/cuestionarios?estado=31", dgtic, "admin")).json();
+    expect(r.total).toBe(3);
+    const porId = Object.fromEntries(r.filas.map((f: any) => [f.id, f]));
+    expect(porId[T1]).toMatchObject({ situacion: "aplicado", motivo: null });
+    expect(porId[T3]).toMatchObject({ situacion: "no_aplicado", motivo: "OTRO" });
+    expect((await (await get("/admin/cuestionarios?estado=31&estatus=no_aplicado", dgtic, "admin")).json()).filas.map((f: any) => f.id)).toEqual([T3]);
+    expect((await get("/admin/cuestionarios?estatus=otra", dgtic, "admin")).status).toBe(400);
+  });
+
+  it("un administrador recibe el permiso reservado solo si se le marca; editar su rol no se lo quita", async () => {
+    const yo = (await (await get("/auth/me", dgtic, "admin")).json()).permisos;
+    expect(yo).toContain("ver_cuestionarios");
+    expect((await (await get("/auth/me", adm, "admin")).json()).permisos).not.toContain("ver_cuestionarios");
+    const patch = (id: string, body: unknown) => fetch(`${base}/admin/usuarios/${id}`, { method: "PATCH", headers: auth(adm, "admin"), body: JSON.stringify(body) });
+    expect((await patch(dgtic, { rol: "admin" })).status).toBe(200);
+    expect((await q("SELECT permisos FROM usuarios WHERE id = $1", [dgtic]))[0].permisos).toEqual(["ver_cuestionarios"]);
+    expect((await patch(dgtic, { rol: "admin", permisos: ["ver_resumen"] })).status).toBe(200);
+    expect((await q("SELECT permisos FROM usuarios WHERE id = $1", [dgtic]))[0].permisos).toBeNull(); // se lo quitaron
+    expect((await patch(dgtic, { rol: "admin", permisos: ["ver_cuestionarios"] })).status).toBe(200);
+    expect((await q("SELECT permisos FROM usuarios WHERE id = $1", [dgtic]))[0].permisos).toEqual(["ver_cuestionarios"]);
+  });
+
   it("DGTIC ve el detalle completo (con el bloque C) y queda en la bitácora", async () => {
     (auditar as any).mockClear();
-    const r = await (await get(`/admin/cuestionarios/tortilleria/${T1}`, adm, "admin")).json();
+    const r = await (await get(`/admin/cuestionarios/tortilleria/${T1}`, dgtic, "admin")).json();
     expect(r.vigente.respuestas).toMatchObject({ a1: "TIENDA", c1: "SI_VISIBLE", c3: "NO_RESPONDE" });
     expect(r.ultimo.estatus).toBe("no_aplicado");
     expect(r.historial).toHaveLength(3);
@@ -2458,7 +2483,7 @@ describe("C21: cuestionario de supervisión de tortillerías", () => {
   });
 
   it("la descarga trae una columna por punto de higiene y una Sí/No por opción de B6 y B8, sin datos personales", async () => {
-    const r = await get("/admin/exportar/cuestionarios", adm, "admin");
+    const r = await get("/admin/exportar/cuestionarios", dgtic, "admin");
     expect(r.status).toBe(200);
     const [cab, ...filas] = (await r.text()).replace(/^﻿/, "").split("\r\n").filter(Boolean);
     const cols = cab.split(",");
@@ -2473,7 +2498,7 @@ describe("C21: cuestionario de supervisión de tortillerías", () => {
     const f3 = filas.find((l) => l.startsWith(T3))!.split(",");
     expect(f3[cols.indexOf("a1_ubicacion")]).toBe("");
     expect(f3[cols.indexOf("estatus")]).toBe("no_aplicado");
-    expect(await (await get("/admin/exportar/cuestionarios/diccionario", adm, "admin")).text()).toMatch(/b8_ninguno/);
+    expect(await (await get("/admin/exportar/cuestionarios/diccionario", dgtic, "admin")).text()).toMatch(/b8_ninguno/);
   });
 
   it("Mis tortillerías, el catálogo del teléfono y /fiscal/existe traen solo el estatus", async () => {

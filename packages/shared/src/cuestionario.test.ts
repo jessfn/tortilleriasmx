@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { alternarApoyo, cuestionarioSchema, diccionarioCuestionario, limpiarCondicionales, respuestasSchema, textoB2, type Respuestas } from "./cuestionario.js";
-import { PERMISOS, PERMISOS_ESTATAL, PERMISOS_SUPERVISOR_POR_OMISION } from "./permisos.js";
+import { PERMISOS_ESTATAL, PERMISOS_SUPERVISOR_POR_OMISION, permisosEfectivos } from "./permisos.js";
 
 export const completo: Respuestas = {
   a1: "MERCADO",
@@ -81,7 +81,15 @@ describe("C21 · cuestionarioSchema", () => {
     const cols = new Set(diccionarioCuestionario().map((d) => d.columna));
     for (const c of ["a2_h_limpieza", "a2_h_basura", "b6_precio", "b6_otro", "b8_jcf", "b8_ninguno", "c3_declaracion"]) expect(cols.has(c)).toBe(true);
   });
-  it("C21.9: ver el cuestionario NO es un permiso delegable", () => {
-    for (const l of [PERMISOS.map((p) => p.clave ?? p), PERMISOS_SUPERVISOR_POR_OMISION, PERMISOS_ESTATAL]) expect(JSON.stringify(l)).not.toMatch(/cuestionario/i);
+  it("'Cuestionarios' es un permiso reservado: nadie lo tiene por su rol, solo si se le marca a mano", () => {
+    expect(PERMISOS_SUPERVISOR_POR_OMISION).not.toContain("ver_cuestionarios");
+    expect(PERMISOS_ESTATAL).not.toContain("ver_cuestionarios");
+    expect(permisosEfectivos("admin", null)).not.toContain("ver_cuestionarios");
+    expect(permisosEfectivos("admin", null)).toContain("ver_extras"); // un administrador sigue teniendo todo lo demás
+    expect(permisosEfectivos("admin", ["ver_cuestionarios"])).toContain("ver_cuestionarios");
+    expect(permisosEfectivos("admin", ["ver_cuestionarios"])).toContain("ver_resumen");
+    expect(permisosEfectivos("supervisor", null)).not.toContain("ver_cuestionarios");
+    expect(permisosEfectivos("supervisor", ["ver_cuestionarios"])).toEqual(["ver_cuestionarios"]);
+    expect(permisosEfectivos("estatal", ["ver_cuestionarios"], true)).not.toContain("ver_cuestionarios");
   });
 });

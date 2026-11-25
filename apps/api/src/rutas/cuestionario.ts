@@ -8,8 +8,8 @@ import { MAX_DIAS_ATRASO, TOLERANCIA_FUTURO_MS } from "./precios.js";
 /**
  * C21 · Cuestionario de supervisión de tortillerías.
  *  - El censador lo guarda (con historial: nunca se sobrescribe) y, al actualizar, recibe SOLO los bloques A y B para prellenar.
- *  - Las respuestas, los indicadores por respuesta y la descarga son SOLO del rol `admin` (DGTIC). No es un permiso delegable:
- *    supervisores, administradores estatales y la UOTEHA reciben 403 aquí (C21.9).
+ *  - Las respuestas, los indicadores por respuesta y la descarga son de la vista "Cuestionarios": un permiso RESERVADO que nadie tiene
+ *    por su rol (ni un administrador); solo la cuenta a la que se le marca a mano. Los administradores estatales nunca (C21.9).
  */
 
 const uuid = z.string().uuid();
@@ -61,8 +61,8 @@ const celda = (v: unknown) => {
 };
 
 export function rutasCuestionario(app: FastifyInstance) {
-  /** Solo DGTIC (rol admin). Revisión explícita del rol, a propósito fuera del sistema de permisos. */
-  const soloDgtic = app.soloRoles("admin");
+  /** Vista "Cuestionarios": permiso reservado (se marca a mano); un administrador estatal nunca pasa (no está en sus roles) */
+  const soloDgtic = app.conPermisoNacional("ver_cuestionarios");
 
   /* ------------------------------------------------------------------ censador */
 
@@ -116,8 +116,8 @@ export function rutasCuestionario(app: FastifyInstance) {
     return reply.code(201).send({ id });
   });
 
-  // Para prellenar al actualizar: el vigente (solo bloques A y B, NUNCA el C) y el último intento. Solo para quien captura (y DGTIC).
-  app.get<{ Params: { id: string } }>("/tortillerias/:id/cuestionario", { preHandler: app.soloRoles("capturista", "admin") }, async (req, reply) => {
+  // Para prellenar al actualizar: el vigente (solo bloques A y B, NUNCA el C) y el último intento. Solo para quien captura.
+  app.get<{ Params: { id: string } }>("/tortillerias/:id/cuestionario", { preHandler: app.soloRoles("capturista") }, async (req, reply) => {
     if (!uuid.safeParse(req.params.id).success) return reply.code(400).send({ error: "Id inválido" });
     const v = await pool.query(`SELECT ${COLS}, to_char(coalesce(capturado_en, creado_en) AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD') AS fecha FROM cuestionario_vigente WHERE tortilleria_id = $1`, [req.params.id]);
     const u = await pool.query(
@@ -152,6 +152,45 @@ export function rutasCuestionario(app: FastifyInstance) {
     return { vigente: historial.find((h) => h.estatus === "aplicado") ?? null, ultimo: historial[0] ?? null, historial };
   });
 
+  // Lista de la vista "Cuestionarios": una fila por tortillería visitada con su estatus (aplicado, no se pudo aplicar o falta), filtrable y por páginas
+  app.get("/admin/cuestionarios", { preHandler: soloDgtic }, async (req, reply) => {
+    const q = req.query as Record<string, string | undefined>;
+    if (q.estado && !/^\d{2}$/.test(q.estado)) return reply.code(400).send({ error: "Estado inválido" });
+    const estatus = z.enum(["", "aplicado", "no_aplicado", "falta"]).safeParse(q.estatus ?? "");
+    if (!estatus.success) return reply.code(400).send({ error: "Estatus inválido" });
+    const texto = (q.q ?? "").trim().slice(0, 80);
+    const pagina = Math.max(1, Number(q.pagina) || 1);
+    const limite = Math.min(100, Math.max(10, Number(q.limite) || 25));
+    const base = `WITH v AS (${SQL_VISITADAS}),
+      x AS (SELECT t.id, t.nombre, t.domicilio, t.estado_clave, e.nombre AS estado, m.nombre AS municipio,
+                   k.id AS k_id, coalesce(k.capturado_en, k.creado_en) AS k_fecha, k.capturista_id AS k_cens,
+                   u.estatus AS u_estatus, u.motivo_no_aplica AS u_motivo, u.fecha AS u_fecha, u.capturista_id AS u_cens,
+                   CASE WHEN k.id IS NOT NULL THEN 'aplicado' WHEN u.estatus = 'no_aplicado' THEN 'no_aplicado' ELSE 'falta' END AS situacion
+              FROM tortillerias t JOIN v ON v.id = t.id
+              LEFT JOIN estados e ON e.clave = t.estado_clave
+              LEFT JOIN municipios m ON m.clave = t.municipio_clave
+              LEFT JOIN cuestionario_vigente k ON k.tortilleria_id = t.id
+              LEFT JOIN cuestionario_ultimo u ON u.tortilleria_id = t.id)
+      SELECT * FROM x WHERE ($1::text IS NULL OR x.estado_clave = $1) AND ($2::text = '' OR x.situacion = $2)
+        AND ($3::text = '' OR translate(lower(x.nombre || ' ' || coalesce(x.municipio,'') || ' ' || coalesce(x.domicilio,'')), 'áéíóúüñ', 'aeiouun') LIKE '%' || translate(lower($3), 'áéíóúüñ', 'aeiouun') || '%')`;
+    const params = [q.estado ?? null, estatus.data, texto];
+    const { rows: [{ total }] } = await pool.query(`SELECT count(*)::int AS total FROM (${base}) z`, params);
+    const { rows } = await pool.query(
+      `SELECT z.*, uc.nombre AS c_nombre, uc.apellidos AS c_apellidos, uc.correo AS c_correo FROM (${base}) z
+         LEFT JOIN usuarios uc ON uc.id = coalesce(z.k_cens, z.u_cens)
+        ORDER BY coalesce(z.k_fecha, z.u_fecha) DESC NULLS LAST, z.nombre, z.id LIMIT $4 OFFSET $5`,
+      [...params, limite, (pagina - 1) * limite],
+    );
+    return {
+      total, pagina, limite, paginas: Math.max(1, Math.ceil(total / limite)),
+      filas: rows.map((r: any) => ({
+        id: r.id, nombre: r.nombre, domicilio: r.domicilio, estado: r.estado, municipio: r.municipio, situacion: r.situacion,
+        fecha: r.k_fecha ?? r.u_fecha ?? null, motivo: r.situacion === "no_aplicado" ? r.u_motivo : null,
+        censador: [r.c_nombre, r.c_apellidos].filter(Boolean).join(" ").trim() || r.c_correo || null,
+      })),
+    };
+  });
+
   // Indicadores: % de visitadas con cuestionario aplicado (nacional, por estado y, con ?estado=, por municipio) y "no se pudo aplicar" por motivo
   app.get("/admin/cuestionarios/indicadores", { preHandler: soloDgtic }, async (req, reply) => {
     const q = req.query as { estado?: string };
@@ -176,9 +215,11 @@ export function rutasCuestionario(app: FastifyInstance) {
     // motivos del último intento de las que siguen sin cuestionario aplicado
     const mot = await pool.query(
       `WITH v AS (${SQL_VISITADAS})
-       SELECT u.motivo_no_aplica AS motivo, count(*)::int AS n FROM cuestionario_ultimo u JOIN v ON v.id = u.tortilleria_id
+       SELECT u.motivo_no_aplica AS motivo, count(*)::int AS n FROM cuestionario_ultimo u JOIN v ON v.id = u.tortilleria_id JOIN tortillerias t ON t.id = u.tortilleria_id
         WHERE u.estatus = 'no_aplicado' AND NOT EXISTS (SELECT 1 FROM cuestionario_vigente k WHERE k.tortilleria_id = u.tortilleria_id)
+          AND ($1::text IS NULL OR t.estado_clave = $1)
         GROUP BY 1 ORDER BY 2 DESC`,
+      [q.estado ?? null],
     );
     const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : 0);
     const conPct = (r: any) => ({ ...r, porcentaje: pct(r.aplicados, r.visitadas) });

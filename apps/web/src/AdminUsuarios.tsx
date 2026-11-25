@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Activity, ArrowUpDown, Check, Copy, KeyRound, Loader2, Pencil, ShieldCheck, Smartphone, UserPlus, Users } from "lucide-react";
-import { CLAVES_PERMISOS, PERMISOS, personalNuevoSchema, type Permiso } from "@tortillerias/shared";
+import { CLAVES_PERMISOS, esReservado, PERMISOS, personalNuevoSchema, type Permiso } from "@tortillerias/shared";
 import { api } from "./api";
 import { Aviso, Boton, Campo, HojaModal, Tarjeta, Vacio } from "./ui";
 import { Paginacion, type Pagina } from "./Paginacion";
@@ -258,7 +258,10 @@ function ListaUsuarios({ tipo, miId, esAdmin, puedeGestionarApp }: { tipo: "app"
                       <div className="space-y-1.5">
                         <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold ${u.rol === "admin" ? "bg-guinda text-white" : u.rol === "estatal" ? "bg-verde/15 text-verde" : "bg-dorado/20 text-[#7a5a23]"}`}>{u.rol === "admin" ? "Administrador" : u.rol === "estatal" ? `Administrador estatal${u.programa ? ` · ${u.programa === "oref" ? "OREF" : "Fertilizantes"}` : ""}` : "Supervisor"}</span>
                         {u.rol === "admin" ? (
-                          <p className="text-xs text-stone-500">Puede todo, incluida la gestión de usuarios y la auditoría.</p>
+                          <p className="text-xs text-stone-500">
+                            Puede todo, incluida la gestión de usuarios y la auditoría.
+                            {efectivos.some(esReservado) && <><br /><b className="text-stone-700">Además:</b> {efectivos.filter(esReservado).map(textoPermiso).join(", ")}</>}
+                          </p>
                         ) : u.rol === "estatal" ? (
                           <p className="text-xs leading-snug text-stone-500"><b className="text-stone-700">Estados:</b> {u.alcance_nacional ? "todos (consulta y revisión)" : (u.estados_alcance ?? []).join(", ") || "ninguno"}<br /><b className="text-stone-700">Puede:</b> gestionar usuarios de la app, revisar tortillerías nuevas y precios atípicos, y ver Mi equipo.</p>
                         ) : (
@@ -362,7 +365,7 @@ function SelectorPermisos({ valor, alCambiar, deshabilitado }: { valor: Set<stri
   const grupo = (tipo: "vista" | "accion", titulo: string) => (
     <fieldset className="space-y-1.5" disabled={deshabilitado}>
       <legend className="mb-1 text-xs font-bold uppercase tracking-wide text-stone-400">{titulo}</legend>
-      {PERMISOS.filter((p) => p.tipo === tipo).map((p) => (
+      {PERMISOS.filter((p) => p.tipo === tipo && !esReservado(p.clave)).map((p) => (
         <label key={p.clave} className={`flex cursor-pointer items-start gap-3 rounded-xl bg-white p-2.5 ring-1 transition ${valor.has(p.clave) ? "ring-guinda/40" : "ring-stone-200"} ${deshabilitado ? "opacity-60" : ""}`}>
           <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0 accent-guinda" checked={valor.has(p.clave)} onChange={() => alternar(p.clave)} />
           <span className="min-w-0 leading-tight">
@@ -376,12 +379,37 @@ function SelectorPermisos({ valor, alCambiar, deshabilitado }: { valor: Set<stri
   return (
     <div className="space-y-3">
       <div className="flex gap-3 text-xs font-semibold text-guinda">
-        <button type="button" disabled={deshabilitado} onClick={() => alCambiar(new Set(CLAVES_PERMISOS))} className="hover:underline disabled:opacity-50">Marcar todo</button>
+        {/* "Marcar todo" nunca marca los reservados: esos se marcan uno por uno */}
+        <button type="button" disabled={deshabilitado} onClick={() => alCambiar(new Set([...CLAVES_PERMISOS.filter((c) => !esReservado(c)), ...[...valor].filter(esReservado)]))} className="hover:underline disabled:opacity-50">Marcar todo</button>
         <button type="button" disabled={deshabilitado} onClick={() => alCambiar(new Set())} className="hover:underline disabled:opacity-50">Quitar todo</button>
       </div>
       {grupo("vista", "Qué pantallas ve")}
       {grupo("accion", "Qué puede hacer")}
+      <Reservados valor={valor} alCambiar={alCambiar} deshabilitado={deshabilitado} />
     </div>
+  );
+}
+
+/** Permisos reservados (p. ej. Cuestionarios): nadie los tiene por su rol, ni un administrador; se marcan a mano, uno por uno */
+function Reservados({ valor, alCambiar, deshabilitado }: { valor: Set<string>; alCambiar: (v: Set<string>) => void; deshabilitado?: boolean }) {
+  const alternar = (c: string) => {
+    const n = new Set(valor);
+    n.has(c) ? n.delete(c) : n.add(c);
+    alCambiar(n);
+  };
+  return (
+    <fieldset className="space-y-1.5" disabled={deshabilitado}>
+      <legend className="mb-1 text-xs font-bold uppercase tracking-wide text-stone-400">Acceso restringido</legend>
+      {PERMISOS.filter((p) => esReservado(p.clave)).map((p) => (
+        <label key={p.clave} className={`flex cursor-pointer items-start gap-3 rounded-xl bg-amber-50/60 p-2.5 ring-1 transition ${valor.has(p.clave) ? "ring-guinda/50" : "ring-amber-200"} ${deshabilitado ? "opacity-60" : ""}`}>
+          <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0 accent-guinda" checked={valor.has(p.clave)} onChange={() => alternar(p.clave)} />
+          <span className="min-w-0 leading-tight">
+            <span className="block text-sm font-semibold">{p.texto}</span>
+            <span className="block text-xs text-stone-500">{p.ayuda}. Ni un administrador lo tiene si no se le marca.</span>
+          </span>
+        </label>
+      ))}
+    </fieldset>
   );
 }
 
@@ -405,10 +433,11 @@ function FormularioPersonal({ usuario, alCerrar, alGuardar }: { usuario?: Usuari
     setError("");
     try {
       if (editando) {
-        await api(`/admin/usuarios/${usuario!.id}`, { metodo: "PATCH", json: { rol, ...(rol === "supervisor" ? { permisos: lista } : {}) } });
+        // a un administrador solo se le guardan los reservados que se marquen (lo demás lo tiene por su rol)
+        await api(`/admin/usuarios/${usuario!.id}`, { metodo: "PATCH", json: { rol, permisos: rol === "supervisor" ? lista : lista.filter(esReservado) } });
         alGuardar();
       } else {
-        const r = await api<{ correo: string; password: string }>("/admin/personal", { json: { correo, nombre, apellidos, rol, permisos: lista } });
+        const r = await api<{ correo: string; password: string }>("/admin/personal", { json: { correo, nombre, apellidos, rol, permisos: rol === "supervisor" ? lista : lista.filter(esReservado) } });
         alGuardar({ correo: r.correo, password: r.password });
       }
     } catch (e: any) {
@@ -449,7 +478,10 @@ function FormularioPersonal({ usuario, alCerrar, alGuardar }: { usuario?: Usuari
       </div>
 
       {rol === "admin" ? (
-        <Aviso tipo="info">Un administrador entra a todas las pantallas, puede hacer todas las acciones, gestiona los usuarios y ve la auditoría.</Aviso>
+        <>
+          <Aviso tipo="info">Un administrador entra a todas las pantallas, puede hacer todas las acciones, gestiona los usuarios y ve la auditoría (menos las de acceso restringido, que se marcan aquí).</Aviso>
+          <Reservados valor={permisos} alCambiar={setPermisos} />
+        </>
       ) : (
         <SelectorPermisos valor={permisos} alCambiar={setPermisos} />
       )}

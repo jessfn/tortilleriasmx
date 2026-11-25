@@ -26,6 +26,7 @@ import AdminBajas from "./AdminBajas";
 import AdminCensadores from "./AdminCensadores";
 import AdminEquipo from "./AdminEquipo";
 import AdminAjustes from "./AdminAjustes";
+import AdminCuestionarios from "./AdminCuestionarios";
 import { useVivo } from "./AdminVivo";
 
 export type TortilleriaAdm = {
@@ -106,6 +107,8 @@ export default function PanelAdmin({
     ...(!esEstatal && puede("ver_usuarios_app") ? [{ id: "censadores", texto: "Autorizaciones", icono: UserCog }] : []),
     ...(!esEstatal && (puede("gestionar_bajas") || puede("ver_revision")) ? [{ id: "bajas", texto: "Bajas", icono: Ban }] : []),
     ...(puede("ver_extras") ? [{ id: "extras", texto: "Extras", icono: Sparkles }] : []),
+    // C21: permiso reservado (se marca a mano a una sola cuenta); un administrador estatal nunca lo tiene
+    ...(!esEstatal && puede("ver_cuestionarios") ? [{ id: "cuestionarios", texto: "Cuestionarios", icono: ClipboardList }] : []),
     ...(!esEstatal && (puede("ver_usuarios_app") || esAdmin) ? [{ id: "usuarios", texto: "Usuarios", icono: Users }] : []),
     ...(esAdmin ? [{ id: "auditoria", texto: "Auditoría", icono: History }, { id: "ajustes", texto: "Ajustes", icono: Settings }] : []),
     { id: "perfil", texto: "Perfil", icono: UserRound },
@@ -150,11 +153,10 @@ export default function PanelAdmin({
           puedeEstadisticas={puede("ver_estadisticas")}
           puedeMapa={puede("ver_mapa")}
           puedeRevision={puede("ver_revision")}
-          esAdmin={esAdmin}
         />
       )}
       {tab === "mapa" && <AdminMapa foco={foco} alCambio={cargarResumen} puedeValidar={puede("validar_tortillerias")} />}
-      {tab === "estadisticas" && <AdminEstadisticas alMapa={(f) => puede("ver_mapa") && alMapa(f)} puedeExportar={puede("exportar_capturas")} esAdmin={esAdmin} />}
+      {tab === "estadisticas" && <AdminEstadisticas alMapa={(f) => puede("ver_mapa") && alMapa(f)} puedeExportar={puede("exportar_capturas")} />}
       {tab === "revision" && <VistaRevision alCambio={cargarResumen} puedeRevisar={puede("revisar_precios")} puedeValidar={puede("validar_tortillerias")} />}
       {tab === "nuevas" && <VistaRevision solo="tortillerias" alCambio={cargarResumen} puedeRevisar={puede("revisar_precios")} puedeValidar={puede("validar_tortillerias")} />}
       {tab === "atipicos" && <VistaRevision solo="precios" alCambio={cargarResumen} puedeRevisar={puede("revisar_precios")} puedeValidar={puede("validar_tortillerias")} />}
@@ -166,6 +168,7 @@ export default function PanelAdmin({
       )}
       {tab === "bajas" && (puede("gestionar_bajas") || puede("ver_revision")) && <AdminBajas puedeReactivar={puede("gestionar_bajas")} alCambio={cargarResumen} />}
       {tab === "extras" && puede("ver_extras") && <AdminExtras />}
+      {tab === "cuestionarios" && !esEstatal && puede("ver_cuestionarios") && <AdminCuestionarios />}
       {tab === "auditoria" && esAdmin && <AdminAuditoria />}
       {tab === "perfil" && <Perfil sesion={sesion} alActualizar={alActualizarSesion} alSalir={alSalir} />}
     </AdminBarra>

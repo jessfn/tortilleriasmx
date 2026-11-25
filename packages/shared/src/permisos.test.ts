@@ -7,9 +7,10 @@ describe("permisos del personal del administrador", () => {
     expect(permisosEfectivos("capturista", ["ver_resumen"])).toEqual([]);
   });
 
-  it("un administrador puede todo, marque lo que marque", () => {
-    expect(permisosEfectivos("admin")).toEqual([...CLAVES_PERMISOS]);
-    expect(permisosEfectivos("admin", ["ver_resumen"])).toHaveLength(PERMISOS.length);
+  it("un administrador puede todo, marque lo que marque (menos los reservados, que solo tiene si se le marcan)", () => {
+    expect(permisosEfectivos("admin")).toEqual(CLAVES_PERMISOS.filter((c) => c !== "ver_cuestionarios"));
+    expect(permisosEfectivos("admin", ["ver_resumen"])).toHaveLength(PERMISOS.length - 1);
+    expect(permisosEfectivos("admin", ["ver_cuestionarios"])).toHaveLength(PERMISOS.length);
   });
 
   it("un supervisor sin permisos editados conserva lo de siempre (sin gestionar usuarios de la app)", () => {

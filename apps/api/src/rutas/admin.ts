@@ -3,7 +3,7 @@ import { randomInt } from "node:crypto";
 import { hash } from "@node-rs/argon2";
 import { z } from "zod";
 import { Readable } from "node:stream";
-import { censadorNuevoSchema, curpSchema, enmascararCurp, esPermiso, permisosEfectivos, personalNuevoSchema, type Permiso } from "@tortillerias/shared";
+import { censadorNuevoSchema, curpSchema, enmascararCurp, esPermiso, esReservado, permisosEfectivos, personalNuevoSchema, type Permiso } from "@tortillerias/shared";
 import { auditar, pool } from "../db.js";
 import { cifrar, descifrar, hashBusqueda } from "../crypto.js";
 import { alcanceDe, censadorVisible, enAlcanceSql, estadoPermitido, soloConEstado, tortilleriaVisible } from "../alcance.js";
@@ -501,11 +501,19 @@ export function rutasAdmin(app: FastifyInstance) {
       const { rows: [{ n }] } = await pool.query("SELECT count(*)::int AS n FROM usuarios WHERE rol = 'admin' AND activo AND id <> $1", [req.params.id]);
       if (!n) return reply.code(400).send({ error: "Debe quedar al menos un administrador activo" });
     }
+    // Un administrador tiene todo por su rol; de su lista solo se guardan los permisos RESERVADOS que se le marquen (p. ej. Cuestionarios).
+    // Si no se envía la lista, se conservan los reservados que ya tenía (y un supervisor que pasa a administrador conserva los suyos).
+    if (nuevoRol === "admin") {
+      const { rows: [actual] } = await pool.query("SELECT permisos FROM usuarios WHERE id = $1", [req.params.id]);
+      const base = permisos !== undefined ? (permisos ?? []) : ((actual?.permisos as string[] | null) ?? []);
+      const reservados = base.filter(esReservado);
+      permisos = reservados.length ? reservados : null;
+    }
     await pool.query(
       `UPDATE usuarios SET rol = $1, activo = COALESCE($2, activo),
-              permisos = CASE WHEN $1 = 'admin' THEN NULL WHEN $4::boolean THEN $3::text[] ELSE permisos END
+              permisos = CASE WHEN $1 = 'admin' OR $4::boolean THEN $3::text[] ELSE permisos END
         WHERE id = $5`,
-      [nuevoRol, p.data.activo ?? null, permisos ?? null, permisos !== undefined, req.params.id],
+      [nuevoRol, p.data.activo ?? null, permisos ?? null, nuevoRol === "admin" || permisos !== undefined, req.params.id],
     );
     await auditar(req.user.sub, "editar_personal", "usuarios", req.params.id);
     return { ok: true };
@@ -519,7 +527,9 @@ export function rutasAdmin(app: FastifyInstance) {
     const d = p.data;
     const invalidos = d.permisos.filter((c) => !esPermiso(c));
     if (invalidos.length) return reply.code(400).send({ error: `Permiso desconocido: ${invalidos[0]}` });
-    const permisos = d.rol === "admin" ? null : [...new Set(d.permisos)];
+    // un administrador nuevo: solo se guardan los reservados que se le marquen (todo lo demás lo tiene por su rol)
+    const reservadosAdm = [...new Set(d.permisos)].filter(esReservado);
+    const permisos = d.rol === "admin" ? (reservadosAdm.length ? reservadosAdm : null) : [...new Set(d.permisos)];
     if (permisos && !permisos.some((c) => c.startsWith("ver_"))) return reply.code(400).send({ error: "Elige al menos una vista para que pueda entrar" });
     const existe = await pool.query("SELECT 1 FROM usuarios WHERE lower(correo) = $1 OR lower(usuario) = $1", [d.correo]);
     if (existe.rowCount) return reply.code(409).send({ error: "Ya existe una cuenta con ese correo" });
