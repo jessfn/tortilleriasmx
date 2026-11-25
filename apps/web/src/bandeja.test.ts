@@ -577,7 +577,7 @@ import { marcarCuestionarioLocal } from "./catalogo";
 describe("C21: cuestionario en la captura y sin conexión", () => {
   const R = {
     a1: "MERCADO", a2: { H_LIMPIEZA: true, H_PLAGAS: true, H_INSUMOS: true, H_PERSONAL: true, H_BASURA: true },
-    b1: "HARINA", b2: "V_0_250", b3: "FAMILIAR", b4: "T_1", b5: "NO_CONOCE", b7: false, b8: ["NINGUNO"], c1: "NO_RESPONDE", c2: "NINGUNA", c3: "NO_SABE",
+    b1: "HARINA", b2: "V_0_250", b3: "FAMILIAR", b4: "T_1", b5: "NO_CONOCE", b7: false, b8: ["NINGUNO"], c1: "NO", c2: "NINGUNA", c3: "NO",
   };
   const columnas = ["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal", "ultima_negativa", "elaboracion", "cuestionario_estatus"];
   const filas = [
@@ -594,11 +594,12 @@ describe("C21: cuestionario en la captura y sin conexión", () => {
     h.llamadas = [];
   });
 
-  it("el paso aparece después del precio si no tiene cuestionario o el último fue 'no se pudo aplicar'; no aparece si ya está aplicado", () => {
-    expect(armarPasos({ ...base, pideCuest: true })).toEqual(["tortilleria", "precio", "cuestionario", "resumen"]);
+  it("el paso va ANTES del precio si no tiene cuestionario o el último fue 'no se pudo aplicar'; no aparece si ya está aplicado", () => {
+    expect(armarPasos({ ...base, pideCuest: true })).toEqual(["tortilleria", "cuestionario", "precio", "resumen"]);
     expect(armarPasos({ ...base, pideCuest: false })).toEqual(["tortilleria", "precio", "resumen"]);
-    expect(armarPasos({ ...base, conCuenta: true, pideCuest: true })).toEqual(["tortilleria", "precio", "cuestionario", "cuenta", "resumen"]);
-    expect(armarPasos({ ...base, caso: "actualizar", faltaFiscal: true, pideCuest: true })).toEqual(["fiscal", "precio", "cuestionario", "resumen"]);
+    expect(armarPasos({ ...base, conCuenta: true, pideCuest: true })).toEqual(["tortilleria", "cuestionario", "precio", "cuenta", "resumen"]);
+    expect(armarPasos({ ...base, caso: "actualizar", faltaFiscal: true, pideCuest: true })).toEqual(["fiscal", "cuestionario", "precio", "resumen"]);
+    expect(armarPasos({ ...base, nueva: true, faltaFiscal: true, pideCuest: true })).toEqual(["tortilleria", "nueva", "foto", "fiscal", "cuestionario", "precio", "resumen"]);
     // la regla que usa la pantalla: se pide salvo que ya esté aplicado (o se vaya a actualizar)
     const pide = (estatus: string | null | undefined, actualizar = false) => actualizar || estatus !== "aplicado";
     expect(pide(porId("c1")?.cuestionario_estatus)).toBe(true);
@@ -626,7 +627,7 @@ describe("C21: cuestionario en la captura y sin conexión", () => {
     await sincronizar({ forzar: true });
     expect(rutas()).toEqual(["/tortillerias/c1/elaboracion", "/precios", "/tortillerias/c1/cuestionario"]);
     const cuerpo = h.llamadas[2].cuerpo;
-    expect(cuerpo).toMatchObject({ estatus: "aplicado", respuestas: { c1: "NO_RESPONDE" } });
+    expect(cuerpo).toMatchObject({ estatus: "aplicado", respuestas: { c1: "NO" } });
     expect(cuerpo.idCliente).toBeTruthy();
     expect(cuerpo.capturadoEn).toBeTruthy();
     const [p] = await listarPaquetes("u1");

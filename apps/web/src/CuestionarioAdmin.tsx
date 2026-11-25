@@ -92,7 +92,7 @@ function Respuestas({ r }: { r: Respuestas }) {
   return (
     <div className="space-y-2">
       <Bloque titulo="A · Lo que observó el censador">
-        <Fila p={`A1. ${PREGUNTAS.a1}`} v={textoDe(UBICACION_TIPO, r.a1)} />
+        <Fila p={`A1. ${PREGUNTAS.a1}`} v={textoDe(UBICACION_TIPO, r.a1) + (r.a1Otro ? `: ${r.a1Otro}` : "")} />
         <div className="py-1.5">
           <p className="text-[11px] font-medium text-stone-500">A2. Higiene</p>
           <ul className="mt-1 space-y-0.5">
@@ -106,16 +106,16 @@ function Respuestas({ r }: { r: Respuestas }) {
         </div>
       </Bloque>
       <Bloque titulo="B · Preguntas al encargado">
-        <Fila p={`B1. ${PREGUNTAS.b1}`} v={textoDe(INSUMO, r.b1)} />
+        <Fila p={`B1. ${PREGUNTAS.b1}`} v={textoDe(INSUMO, r.b1) + (r.b1Otro ? `: ${r.b1Otro}` : "")} />
         <Fila p={`B2. ${textoB2(r.b1)}`} v={textoDe(VOLUMEN_SEMANAL, r.b2)} />
-        <Fila p={`B3. ${PREGUNTAS.b3}`} v={textoDe(PROPIEDAD, r.b3)} />
+        <Fila p={`B3. ${PREGUNTAS.b3}`} v={textoDe(PROPIEDAD, r.b3) + (r.b3Otro ? `: ${r.b3Otro}` : "")} />
         <Fila p={`B4. ${PREGUNTAS.b4}`} v={textoDe(NUM_TRABAJADORES, r.b4)} />
         <Fila p={`B5. ${PREGUNTAS.b5}`} v={textoDe(CONOCE_ACUERDO, r.b5)} />
         {aplicaB6(r.b5) && <Fila p={`B6. ${PREGUNTAS.b6}`} v={lista(MOTIVO_NO_ADHESION, r.b6) + (r.b6Otro ? ` (${r.b6Otro})` : "")} />}
         {aplicaB7(r.b5) && <Fila p={`B7. ${PREGUNTAS.b7}`} v={r.b7 ? "Sí" : "No"} />}
-        <Fila p={`B8. ${PREGUNTAS.b8}`} v={lista(APOYOS, r.b8)} />
+        <Fila p={`B8. ${PREGUNTAS.b8}`} v={lista(APOYOS, r.b8) + (r.b8Otro ? ` (${r.b8Otro})` : "")} />
       </Bloque>
-      <Bloque titulo="C · Preguntas voluntarias" sensible>
+      <Bloque titulo="C · Licencia, IMSS y SAT" sensible>
         <Fila p={`C1. ${PREGUNTAS.c1}`} v={textoDe(LICENCIA, r.c1)} />
         <Fila p={`C2. ${PREGUNTAS.c2}`} v={textoDe(IMSS, r.c2)} />
         <Fila p={`C3. ${PREGUNTAS.c3}`} v={textoDe(DECLARACION_ANUAL, r.c3)} />

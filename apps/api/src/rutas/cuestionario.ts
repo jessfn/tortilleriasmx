@@ -24,13 +24,17 @@ export const SQL_VISITADAS = `SELECT t.id FROM tortillerias t
 export const SQL_ESTATUS = (t: string) => `CASE WHEN EXISTS (SELECT 1 FROM tortilleria_cuestionarios k WHERE k.tortilleria_id = ${t} AND k.estatus = 'aplicado') THEN 'aplicado'
   WHEN EXISTS (SELECT 1 FROM tortilleria_cuestionarios k WHERE k.tortilleria_id = ${t}) THEN 'no_aplicado' END`;
 
-const COLS = `a1_ubicacion, a2_limpieza, a2_plagas, a2_insumos, a2_personal, a2_basura, b1_insumo, b2_volumen, b3_propiedad, b4_trabajadores,
+const COLS = `a1_ubicacion, a1_otro, b1_otro, b3_otro, b8_otro, a2_limpieza, a2_plagas, a2_insumos, a2_personal, a2_basura, b1_insumo, b2_volumen, b3_propiedad, b4_trabajadores,
   b5_conoce_acuerdo, b6_motivos, b6_otro, b7_interes, b8_apoyos, c1_licencia, c2_imss, c3_declaracion`;
 
 /** Fila de la base → respuestas en el formato del esquema compartido. `conC = false` nunca incluye el bloque C. */
 function respuestasDe(r: any, conC: boolean): Partial<Respuestas> {
   const x: Partial<Respuestas> = {
     a1: r.a1_ubicacion,
+    ...(r.a1_otro ? { a1Otro: r.a1_otro } : {}),
+    ...(r.b1_otro ? { b1Otro: r.b1_otro } : {}),
+    ...(r.b3_otro ? { b3Otro: r.b3_otro } : {}),
+    ...(r.b8_otro ? { b8Otro: r.b8_otro } : {}),
     a2: Object.fromEntries(HIGIENE_PUNTOS.map((h) => [h.clave, r[`a2_${h.col}`]])) as Respuestas["a2"],
     b1: r.b1_insumo, b2: r.b2_volumen, b3: r.b3_propiedad, b4: r.b4_trabajadores, b5: r.b5_conoce_acuerdo,
     b8: r.b8_apoyos ?? [],
@@ -89,9 +93,9 @@ export function rutasCuestionario(app: FastifyInstance) {
         `INSERT INTO tortilleria_cuestionarios(tortilleria_id, capturista_id, version, estatus, motivo_no_aplica, motivo_no_aplica_otro,
            a1_ubicacion, a2_limpieza, a2_plagas, a2_insumos, a2_personal, a2_basura, b1_insumo, b2_volumen, b3_propiedad, b4_trabajadores,
            b5_conoce_acuerdo, b6_motivos, b6_otro, b7_interes, b8_apoyos, c1_licencia, c2_imss, c3_declaracion,
-           geom_captura, precision_gps, capturado_en, id_cliente)
+           geom_captura, precision_gps, capturado_en, id_cliente, a1_otro, b8_otro, b1_otro, b3_otro)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,
-           CASE WHEN $25::float8 IS NULL OR $26::float8 IS NULL THEN NULL ELSE ST_SetSRID(ST_MakePoint($25,$26),4326) END, $27, $28, $29)
+           CASE WHEN $25::float8 IS NULL OR $26::float8 IS NULL THEN NULL ELSE ST_SetSRID(ST_MakePoint($25,$26),4326) END, $27, $28, $29, $30, $31, $32, $33)
          RETURNING id`,
         [
           req.params.id, req.user.sub, CUESTIONARIO_VERSION, d.estatus,
@@ -100,6 +104,8 @@ export function rutasCuestionario(app: FastifyInstance) {
           r?.b1 ?? null, r?.b2 ?? null, r?.b3 ?? null, r?.b4 ?? null, r?.b5 ?? null, r?.b6?.length ? r.b6 : null, r?.b6Otro ?? null,
           r?.b7 ?? null, r?.b8 ?? null, r?.c1 ?? null, r?.c2 ?? null, r?.c3 ?? null,
           conGps ? d.lng : null, conGps ? d.lat : null, d.precisionGps ?? null, hora ? hora.toISOString() : null, d.idCliente ?? null,
+          r?.a1 === "OTRO" ? (r.a1Otro ?? null) : null, r?.b8.includes("OTRO") ? (r.b8Otro ?? null) : null,
+          r?.b1 === "OTRO" ? (r.b1Otro ?? null) : null, r?.b3 === "OTRO" ? (r.b3Otro ?? null) : null,
         ],
       );
       id = ins.rows[0].id;
@@ -256,8 +262,8 @@ export function rutasCuestionario(app: FastifyInstance) {
       "id_tortilleria", "id_denue", "origen", "estado", "municipio", "latitud", "longitud",
       "ultimo_precio_tortilla", "fecha_precio_tortilla", "ultimo_precio_masa", "fecha_precio_masa", "elaboracion",
       "estatus", "motivo_no_aplica", "fecha_cuestionario", "id_censador", "version",
-      "a1_ubicacion", ...HIGIENE_PUNTOS.map((h) => `a2_h_${h.col}`), "b1_insumo", "b2_volumen", "b3_propiedad", "b4_trabajadores", "b5_conoce_acuerdo",
-      ...MOTIVO_NO_ADHESION.map((m) => m.col), "b6_otro_texto", "b7_interes", ...APOYOS.map((a) => a.col), "c1_licencia", "c2_imss", "c3_declaracion",
+      "a1_ubicacion", "a1_otro_texto", ...HIGIENE_PUNTOS.map((h) => `a2_h_${h.col}`), "b1_insumo", "b1_otro_texto", "b2_volumen", "b3_propiedad", "b3_otro_texto", "b4_trabajadores", "b5_conoce_acuerdo",
+      ...MOTIVO_NO_ADHESION.map((m) => m.col), "b6_otro_texto", "b7_interes", ...APOYOS.map((a) => a.col), "b8_otro_texto", "c1_licencia", "c2_imss", "c3_declaracion",
     ];
     const marca = (lista: string[] | null, clave: string, aplicado: boolean) => (!aplicado ? null : lista?.includes(clave) ?? false);
     const filaCsv = (r: any) => {
@@ -267,8 +273,8 @@ export function rutasCuestionario(app: FastifyInstance) {
         r.id, r.id_denue, r.origen === "nueva" ? "nueva" : "DENUE", r.estado, r.municipio, r.lat, r.lng,
         r.p_maiz, r.f_maiz, r.p_masa, r.f_masa, r.elaboracion,
         r.estatus, r.motivo, r.fecha_cuestionario, r.censador, r.version,
-        r.a1_ubicacion, ...HIGIENE_PUNTOS.map((h) => r[`a2_${h.col}`]), r.b1_insumo, r.b2_volumen, r.b3_propiedad, r.b4_trabajadores, r.b5_conoce_acuerdo,
-        ...MOTIVO_NO_ADHESION.map((m) => marca(r.b6_motivos, m.clave, b6Aplica)), r.b6_otro, r.b7_interes, ...APOYOS.map((a) => marca(r.b8_apoyos, a.clave, ap)),
+        r.a1_ubicacion, r.a1_otro, ...HIGIENE_PUNTOS.map((h) => r[`a2_${h.col}`]), r.b1_insumo, r.b1_otro, r.b2_volumen, r.b3_propiedad, r.b3_otro, r.b4_trabajadores, r.b5_conoce_acuerdo,
+        ...MOTIVO_NO_ADHESION.map((m) => marca(r.b6_motivos, m.clave, b6Aplica)), r.b6_otro, r.b7_interes, ...APOYOS.map((a) => marca(r.b8_apoyos, a.clave, ap)), r.b8_otro,
         r.c1_licencia, r.c2_imss, r.c3_declaracion,
       ].map(celda).join(",");
     };

@@ -41,12 +41,29 @@ describe("C21 · cuestionarioSchema", () => {
     expect(ok({ ...completo, b5: "NO_CONOCE", b7: true, b6: ["PRECIO"] })).toBe(false); // B6 no aplica
     expect(ok({ ...completo, b7: false })).toBe(false); // adherida: B7 no aplica
   });
+  it("cada 'Otro' exige su texto (A1, B6 y B8), y el texto solo va con 'Otro'", () => {
+    expect(ok({ ...completo, a1: "OTRO" })).toBe(false);
+    expect(ok({ ...completo, a1: "OTRO", a1Otro: "En un puesto ambulante" })).toBe(true);
+    expect(ok({ ...completo, a1Otro: "x" })).toBe(false);
+    expect(ok({ ...completo, b8: ["OTRO"] })).toBe(false);
+    expect(ok({ ...completo, b8: ["OTRO", "JCF"], b8Otro: "Programa municipal" })).toBe(true);
+    expect(ok({ ...completo, b8: ["OTRO"], b8Otro: "x".repeat(101) })).toBe(false);
+    const r = limpiarCondicionales({ ...completo, a1: "MERCADO", a1Otro: "x", b8: ["NINGUNO"], b8Otro: "y" });
+    expect(r.a1Otro).toBeUndefined();
+    expect(r.b8Otro).toBeUndefined();
+  });
+
   it("rechaza NINGUNO junto con otra opción en B8", () => {
     expect(ok({ ...completo, b8: ["NINGUNO", "JCF"] })).toBe(false);
     expect(ok({ ...completo, b8: ["JCF", "CREDITO"] })).toBe(true);
   });
-  it("acepta 'Prefiere no responder' y 'No sabe'", () => {
-    expect(ok({ ...completo, b1: "NO_SABE", b2: "NO_RESPONDE", b3: "NO_SABE", c1: "NO_RESPONDE", c2: "NO_RESPONDE", c3: "NO_SABE" })).toBe(true);
+  it("ya no acepta 'No sabe' ni 'Prefiere no responder': se contesta, o se usa 'Otro' con su texto", () => {
+    expect(ok({ ...completo, b1: "NO_SABE" })).toBe(false);
+    expect(ok({ ...completo, c1: "NO_RESPONDE" })).toBe(false);
+    expect(ok({ ...completo, b1: "OTRO" })).toBe(false);
+    expect(ok({ ...completo, b1: "OTRO", b1Otro: "Maíz y trigo" })).toBe(true);
+    expect(ok({ ...completo, b3: "OTRO", b3Otro: "Cooperativa" })).toBe(true);
+    expect(ok({ ...completo, b3Otro: "x" })).toBe(false);
   });
   it("rechaza códigos que no existen y campos de más", () => {
     expect(ok({ ...completo, a1: "PLAZA" })).toBe(false);

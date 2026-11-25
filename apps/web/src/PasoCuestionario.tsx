@@ -1,11 +1,11 @@
-import { useState, type ReactNode } from "react";
-import { ClipboardX, Eye, History, Lock, MessageSquare, TriangleAlert } from "lucide-react";
+import { type ReactNode } from "react";
+import { Eye, History, Lock, MessageSquare, PencilLine, TriangleAlert } from "lucide-react";
 import {
   alternarApoyo, aplicaB6, aplicaB7, APOYOS, CONOCE_ACUERDO, DECLARACION_ANUAL, HIGIENE_PUNTOS, IMSS, INSUMO, LICENCIA, limpiarCondicionales,
-  MOTIVO_NO_ADHESION, MOTIVO_NO_APLICA, NUM_TRABAJADORES, PREGUNTAS, PROPIEDAD, respuestasSchema, textoB2, textoMotivoNoAplica, UBICACION_TIPO, VOLUMEN_SEMANAL,
+  MAX_OTRO, MOTIVO_NO_ADHESION, NUM_TRABAJADORES, PREGUNTAS, PROPIEDAD, respuestasSchema, textoB2, textoMotivoNoAplica, UBICACION_TIPO, VOLUMEN_SEMANAL,
   type Respuestas,
 } from "@tortillerias/shared";
-import { Aviso, Boton, HojaModal } from "./ui";
+import { Aviso } from "./ui";
 
 /** Respuestas a medias (el borrador del asistente las guarda así) */
 export type Borr = Partial<Omit<Respuestas, "a2">> & { a2?: Partial<Respuestas["a2"]> };
@@ -14,31 +14,43 @@ export type EstadoCuest = { estatus?: "aplicado" | "no_aplicado"; r: Borr; motiv
 /** Preguntas en el orden fijo de la pantalla (A → B → C); las condicionales solo cuando aplican */
 export function pendientes(r: Borr): string[] {
   const f: string[] = [];
-  if (!r.a1) f.push("a1");
+  if (!r.a1 || (r.a1 === "OTRO" && !r.a1Otro?.trim())) f.push("a1");
   if (HIGIENE_PUNTOS.some((h) => typeof r.a2?.[h.clave] !== "boolean")) f.push("a2");
   for (const k of ["b1", "b2", "b3", "b4", "b5"] as const) if (!r[k]) f.push(k);
+  if (r.b1 === "OTRO" && !r.b1Otro?.trim() && !f.includes("b1")) f.splice(f.indexOf("b2") >= 0 ? f.indexOf("b2") : f.length, 0, "b1");
+  if (r.b3 === "OTRO" && !r.b3Otro?.trim() && !f.includes("b3")) f.splice(f.indexOf("b4") >= 0 ? f.indexOf("b4") : f.length, 0, "b3");
   if (aplicaB6(r.b5) && (!r.b6?.length || (r.b6.includes("OTRO") && !r.b6Otro?.trim()))) f.push("b6");
   if (aplicaB7(r.b5) && r.b7 === undefined) f.push("b7");
-  if (!r.b8?.length) f.push("b8");
+  if (!r.b8?.length || (r.b8.includes("OTRO") && !r.b8Otro?.trim())) f.push("b8");
   for (const k of ["c1", "c2", "c3"] as const) if (!r[k]) f.push(k);
   return f;
 }
 
+/** Al prellenar, se quitan las respuestas que ya no se ofrecen (p. ej. "No sabe" de la primera versión): esas se vuelven a preguntar */
+export function soloVigentes(r: Record<string, unknown>): Borr {
+  const unicas: [string, readonly { clave: string }[]][] = [["a1", UBICACION_TIPO], ["b1", INSUMO], ["b2", VOLUMEN_SEMANAL], ["b3", PROPIEDAD], ["b4", NUM_TRABAJADORES], ["b5", CONOCE_ACUERDO], ["c1", LICENCIA], ["c2", IMSS], ["c3", DECLARACION_ANUAL]];
+  const x: Record<string, unknown> = { ...r };
+  for (const [k, l] of unicas) if (x[k] !== undefined && !l.some((o) => o.clave === x[k])) delete x[k];
+  if (Array.isArray(x.b6)) x.b6 = x.b6.filter((c) => MOTIVO_NO_ADHESION.some((o) => o.clave === c));
+  if (Array.isArray(x.b8)) x.b8 = x.b8.filter((c) => APOYOS.some((o) => o.clave === c));
+  return limpiarCondicionales(x as Partial<Respuestas>) as Borr;
+}
+
 /** Respuestas listas para enviar (sin condicionales que ya no aplican), o null si falta algo */
 export function respuestasListas(r: Borr): Respuestas | null {
-  const p = respuestasSchema.safeParse(limpiarCondicionales({ ...r, b6Otro: r.b6Otro?.trim() || undefined } as Respuestas));
+  const p = respuestasSchema.safeParse(limpiarCondicionales({ ...r, a1Otro: r.a1Otro?.trim() || undefined, b1Otro: r.b1Otro?.trim() || undefined, b3Otro: r.b3Otro?.trim() || undefined, b6Otro: r.b6Otro?.trim() || undefined, b8Otro: r.b8Otro?.trim() || undefined } as Respuestas));
   return p.success ? p.data : null;
 }
 
-/** ¿Se puede continuar? Con el cuestionario completo, o con "No se pudo aplicar" y su motivo */
+/** ¿Se puede continuar? Solo con el cuestionario completo: es obligatorio y no se puede saltar */
 export function cuestionarioListo(c: EstadoCuest): boolean {
-  if (c.estatus === "no_aplicado") return !!c.motivo && (c.motivo !== "OTRO" || (c.motivoOtro ?? "").trim().length >= 5);
   return !!respuestasListas(c.r);
 }
 
 /**
  * C21 · Pantalla del cuestionario. Tres bloques en orden fijo: A (lo observa el censador), B (al encargado) y C (sensibles, al final).
- * Al actualizar, A y B llegan prellenados; el C siempre se vuelve a preguntar.
+ * Al actualizar, A y B llegan prellenados; el C siempre se vuelve a preguntar. Es obligatorio: no hay forma de saltarlo.
+ * Cada opción "Otro" abre un campo para escribir cuál.
  */
 export default function PasoCuestionario({
   valor, onChange, prellenadoEl, avisoAnterior, intentoGuardar,
@@ -55,23 +67,6 @@ export default function PasoCuestionario({
   const r = valor.r;
   const setR = (p: Borr) => onChange({ ...valor, estatus: undefined, motivo: undefined, motivoOtro: undefined, r: limpiarCondicionales({ ...r, ...p } as Partial<Respuestas>) as Borr });
   const falta = new Set(intentoGuardar ? pendientes(r) : []);
-  const [hoja, setHoja] = useState(false);
-  const [motivo, setMotivo] = useState(valor.motivo ?? "");
-  const [motivoOtro, setMotivoOtro] = useState(valor.motivoOtro ?? "");
-  const otroOk = motivo !== "OTRO" || (motivoOtro.trim().length >= 5 && motivoOtro.trim().length <= 100);
-
-  if (valor.estatus === "no_aplicado")
-    return (
-      <div className="space-y-3">
-        <div className="rounded-2xl bg-amber-50 p-4 ring-1 ring-amber-200">
-          <p className="flex items-center gap-2 text-sm font-bold text-amber-900"><ClipboardX className="h-4 w-4" aria-hidden /> No se pudo aplicar</p>
-          <p className="mt-1 text-sm text-amber-900/90">Motivo: {valor.motivo === "OTRO" ? `Otro: ${valor.motivoOtro}` : textoMotivoNoAplica(valor.motivo)}</p>
-          <p className="mt-1 text-xs text-amber-800/80">El precio se guarda igual. Podrás aplicarlo en otra visita desde "Mis tortillerías".</p>
-        </div>
-        <Boton variante="secundario" onClick={() => onChange({ r: valor.r })}>Sí se puede aplicar: responder ahora</Boton>
-      </div>
-    );
-
   return (
     <div className="space-y-3">
       {avisoAnterior && (
@@ -84,18 +79,11 @@ export default function PasoCuestionario({
           <History className="h-3.5 w-3.5 shrink-0" aria-hidden /> Última actualización: {fechaCorta(prellenadoEl, true)}. Revisa y cambia lo que sea distinto.
         </p>
       )}
-      <button
-        type="button"
-        onClick={() => setHoja(true)}
-        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-3 py-2.5 text-sm font-semibold text-stone-600 ring-1 ring-stone-200 transition active:scale-[.98]"
-      >
-        <ClipboardX className="h-4 w-4 text-stone-400" aria-hidden /> No se pudo aplicar
-      </button>
-
       {/* ---------------- Bloque A ---------------- */}
-      <Bloque letra="A" titulo="Lo que observas" icono={Eye} leyenda="Responde estas preguntas con lo que ves. No es necesario preguntarlas.">
+      <Bloque letra="A" titulo="Lo que observas" icono={Eye}>
         <Pregunta id="a1" n="A1" texto={PREGUNTAS.a1} falta={falta.has("a1")}>
           <Unica opciones={UBICACION_TIPO} valor={r.a1} onChange={(v) => setR({ a1: v as Respuestas["a1"] })} />
+          {r.a1 === "OTRO" && <OtroTexto valor={r.a1Otro} onChange={(t) => setR({ a1Otro: t })} placeholder="¿Dónde está? Ej. puesto en la calle, dentro de una casa" etiqueta="Dónde está la tortillería" falta={falta.has("a1")} />}
         </Pregunta>
         <Pregunta id="a2" n="A2" texto={PREGUNTAS.a2} falta={falta.has("a2")}>
           <div className="space-y-2">
@@ -113,12 +101,14 @@ export default function PasoCuestionario({
       <Bloque letra="B" titulo="Preguntas al encargado" icono={MessageSquare}>
         <Pregunta id="b1" n="B1" texto={PREGUNTAS.b1} falta={falta.has("b1")}>
           <Unica opciones={INSUMO} valor={r.b1} onChange={(v) => setR({ b1: v as Respuestas["b1"] })} />
+          {r.b1 === "OTRO" && <OtroTexto valor={r.b1Otro} onChange={(t) => setR({ b1Otro: t })} placeholder="¿Con qué hace la tortilla?" etiqueta="Con qué hace la tortilla" falta={falta.has("b1")} />}
         </Pregunta>
         <Pregunta id="b2" n="B2" texto={textoB2(r.b1)} falta={falta.has("b2")}>
           <Unica opciones={VOLUMEN_SEMANAL} valor={r.b2} onChange={(v) => setR({ b2: v as Respuestas["b2"] })} />
         </Pregunta>
         <Pregunta id="b3" n="B3" texto={PREGUNTAS.b3} falta={falta.has("b3")}>
           <Unica opciones={PROPIEDAD} valor={r.b3} onChange={(v) => setR({ b3: v as Respuestas["b3"] })} />
+          {r.b3 === "OTRO" && <OtroTexto valor={r.b3Otro} onChange={(t) => setR({ b3Otro: t })} placeholder="¿De quién es el negocio?" etiqueta="De quién es el negocio" falta={falta.has("b3")} />}
         </Pregunta>
         <Pregunta id="b4" n="B4" texto={PREGUNTAS.b4} falta={falta.has("b4")}>
           <Unica opciones={NUM_TRABAJADORES} valor={r.b4} onChange={(v) => setR({ b4: v as Respuestas["b4"] })} columnas={4} />
@@ -133,19 +123,7 @@ export default function PasoCuestionario({
               valor={r.b6 ?? []}
               onChange={(v) => setR({ b6: v as Respuestas["b6"] })}
             />
-            {r.b6?.includes("OTRO") && (
-              <div className="mt-2">
-                <input
-                  value={r.b6Otro ?? ""}
-                  maxLength={100}
-                  onChange={(e) => setR({ b6Otro: e.target.value })}
-                  placeholder="Escribe el otro motivo"
-                  aria-label="Otro motivo por el que no se ha adherido"
-                  className="w-full rounded-xl border-0 bg-white px-3 py-2.5 text-sm ring-1 ring-stone-300 focus:ring-2 focus:ring-guinda"
-                />
-                <p className="mt-1 text-right text-[11px] text-stone-400">{(r.b6Otro ?? "").length}/100</p>
-              </div>
-            )}
+            {r.b6?.includes("OTRO") && <OtroTexto valor={r.b6Otro} onChange={(t) => setR({ b6Otro: t })} placeholder="Escribe el otro motivo" etiqueta="Otro motivo por el que no se ha adherido" falta={falta.has("b6")} />}
           </Pregunta>
         )}
         {aplicaB7(r.b5) && (
@@ -155,67 +133,23 @@ export default function PasoCuestionario({
         )}
         <Pregunta id="b8" n="B8" texto={PREGUNTAS.b8} ayuda="Marca todas las que apliquen" falta={falta.has("b8")}>
           <Multiple opciones={APOYOS} valor={r.b8 ?? []} onChange={(v) => setR({ b8: v as Respuestas["b8"] })} alternar={alternarApoyo} />
+          {r.b8?.includes("OTRO") && <OtroTexto valor={r.b8Otro} onChange={(t) => setR({ b8Otro: t })} placeholder="¿Cuál apoyo o programa?" etiqueta="Otro apoyo o programa" falta={falta.has("b8")} />}
         </Pregunta>
       </Bloque>
 
       {/* ---------------- Bloque C ---------------- */}
-      <Bloque letra="C" titulo="Preguntas voluntarias" icono={Lock} leyenda="Estas preguntas son voluntarias. Si no quiere responder, marca 'Prefiere no responder' y continúa.">
+      <Bloque letra="C" titulo="Licencia, IMSS y SAT" icono={Lock}>
         <Pregunta id="c1" n="C1" texto={PREGUNTAS.c1} falta={falta.has("c1")}>
           <Unica opciones={LICENCIA} valor={r.c1} onChange={(v) => setR({ c1: v as Respuestas["c1"] })} />
         </Pregunta>
         <Pregunta id="c2" n="C2" texto={PREGUNTAS.c2} falta={falta.has("c2")}>
-          <Unica opciones={IMSS} valor={r.c2} onChange={(v) => setR({ c2: v as Respuestas["c2"] })} columnas={2} />
+          <Unica opciones={IMSS} valor={r.c2} onChange={(v) => setR({ c2: v as Respuestas["c2"] })} />
         </Pregunta>
         <Pregunta id="c3" n="C3" texto={PREGUNTAS.c3} falta={falta.has("c3")}>
           <Unica opciones={DECLARACION_ANUAL} valor={r.c3} onChange={(v) => setR({ c3: v as Respuestas["c3"] })} columnas={2} />
         </Pregunta>
       </Bloque>
 
-      {hoja && (
-        <HojaModal titulo="No se pudo aplicar" alCerrar={() => setHoja(false)}>
-          <p className="text-sm text-stone-600">¿Por qué no se pudo aplicar el cuestionario? El precio se guarda igual.</p>
-          <div className="space-y-2" role="radiogroup" aria-label="Motivo">
-            {MOTIVO_NO_APLICA.map((m) => (
-              <button
-                key={m.clave}
-                type="button"
-                role="radio"
-                aria-checked={motivo === m.clave}
-                onClick={() => setMotivo(m.clave)}
-                className={`flex min-h-12 w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium transition ${motivo === m.clave ? "bg-guinda/10 text-guinda ring-2 ring-guinda" : "bg-white text-stone-700 ring-1 ring-stone-200"}`}
-              >
-                <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 ${motivo === m.clave ? "border-guinda" : "border-stone-300"}`}>
-                  {motivo === m.clave && <span className="h-2.5 w-2.5 rounded-full bg-guinda" />}
-                </span>
-                {m.texto}
-              </button>
-            ))}
-          </div>
-          {motivo === "OTRO" && (
-            <div>
-              <textarea
-                value={motivoOtro}
-                maxLength={100}
-                rows={2}
-                onChange={(e) => setMotivoOtro(e.target.value)}
-                placeholder="Escribe el motivo (5 a 100 caracteres)"
-                aria-label="Otro motivo"
-                className="w-full rounded-xl border-0 bg-white px-3 py-2.5 text-sm ring-1 ring-stone-300 focus:ring-2 focus:ring-guinda"
-              />
-              <p className={`mt-1 text-right text-[11px] ${motivoOtro.trim().length && motivoOtro.trim().length < 5 ? "text-red-600" : "text-stone-400"}`}>{motivoOtro.length}/100</p>
-            </div>
-          )}
-          <Boton
-            disabled={!motivo || !otroOk}
-            onClick={() => {
-              setHoja(false);
-              onChange({ r: valor.r, estatus: "no_aplicado", motivo, motivoOtro: motivo === "OTRO" ? motivoOtro.trim() : undefined });
-            }}
-          >
-            Guardar motivo y continuar
-          </Boton>
-        </HojaModal>
-      )}
     </div>
   );
 }
@@ -324,6 +258,31 @@ function SiNo({ valor, onChange, etiqueta }: { valor?: boolean; onChange: (v: bo
           {t}
         </button>
       ))}
+    </div>
+  );
+}
+
+/** Campo para escribir cuál es el "Otro" (obligatorio cuando se marca "Otro"; máximo 100 caracteres) */
+function OtroTexto({ valor, onChange, placeholder, etiqueta, falta }: { valor?: string; onChange: (t: string) => void; placeholder: string; etiqueta: string; falta?: boolean }) {
+  const vacio = !valor?.trim();
+  return (
+    <div className="mt-2">
+      <label className={`flex items-center gap-2 rounded-xl bg-white px-3 ring-1 transition focus-within:ring-2 focus-within:ring-guinda ${falta && vacio ? "ring-red-400" : "ring-stone-300"}`}>
+        <PencilLine className="h-4 w-4 shrink-0 text-guinda" aria-hidden />
+        <input
+          value={valor ?? ""}
+          maxLength={MAX_OTRO}
+          autoFocus={vacio}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          aria-label={etiqueta}
+          className="min-h-11 w-full border-0 bg-transparent py-2 text-sm outline-none focus:ring-0"
+        />
+      </label>
+      <p className="mt-1 flex justify-between gap-2 text-[11px]">
+        <span className={falta && vacio ? "font-medium text-red-600" : "text-stone-400"}>{vacio ? "Escribe cuál (obligatorio)" : ""}</span>
+        <span className="text-stone-400">{(valor ?? "").length}/{MAX_OTRO}</span>
+      </p>
     </div>
   );
 }

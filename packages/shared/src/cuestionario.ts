@@ -9,7 +9,9 @@ export const CUESTIONARIO_VERSION = "v1";
 
 type Op = { readonly clave: string; readonly texto: string };
 const claves = <T extends readonly Op[]>(l: T) => l.map((o) => o.clave) as unknown as [T[number]["clave"], ...T[number]["clave"][]];
-export const textoDe = (l: readonly Op[], c: string | null | undefined) => l.find((o) => o.clave === c)?.texto ?? c ?? "";
+/** Respuestas que se ofrecieron en la primera versión y ya no (los registros anteriores las conservan) */
+export const CODIGOS_ANTERIORES: Record<string, string> = { NO_SABE: "No sabe", NO_RESPONDE: "Prefiere no responder" };
+export const textoDe = (l: readonly Op[], c: string | null | undefined) => l.find((o) => o.clave === c)?.texto ?? (c ? CODIGOS_ANTERIORES[c] : undefined) ?? c ?? "";
 
 /* ---------------- Bloque A — lo observa el censador ---------------- */
 
@@ -37,7 +39,7 @@ export const INSUMO = [
   { clave: "MASA_COMPRADA", texto: "Compra la masa a un molino" },
   { clave: "HARINA", texto: "Usa harina de maíz" },
   { clave: "MEZCLA", texto: "Mezcla masa y harina" },
-  { clave: "NO_SABE", texto: "No sabe" },
+  { clave: "OTRO", texto: "Otro" },
 ] as const;
 
 export const VOLUMEN_SEMANAL = [
@@ -46,8 +48,6 @@ export const VOLUMEN_SEMANAL = [
   { clave: "V_500_1000", texto: "De 500 kg a 1 tonelada" },
   { clave: "V_1000_3000", texto: "De 1 a 3 toneladas" },
   { clave: "V_3000_MAS", texto: "Más de 3 toneladas" },
-  { clave: "NO_SABE", texto: "No sabe" },
-  { clave: "NO_RESPONDE", texto: "Prefiere no responder" },
 ] as const;
 
 /** El texto de B2 cambia según lo que respondió en B1 (las opciones son las mismas) */
@@ -57,6 +57,7 @@ export function textoB2(b1?: string | null): string {
     case "MASA_COMPRADA": return "¿Cuántos kilos de masa compra a la semana?";
     case "HARINA": return "¿Cuántos kilos de harina compra a la semana?";
     case "MEZCLA": return "¿Cuántos kilos de masa y harina compra a la semana, en total?";
+    case "OTRO": return "¿Cuántos kilos de insumo compra a la semana?";
     default: return "¿Cuántos kilos de insumo compra a la semana?";
   }
 }
@@ -65,7 +66,7 @@ export const PROPIEDAD = [
   { clave: "FAMILIAR", texto: "De quien atiende o de su familia" },
   { clave: "VARIAS_SUCURSALES", texto: "El dueño tiene varias tortillerías" },
   { clave: "EMPRESA", texto: "Es franquicia o de una empresa" },
-  { clave: "NO_SABE", texto: "No sabe" },
+  { clave: "OTRO", texto: "Otro" },
 ] as const;
 
 export const NUM_TRABAJADORES = [
@@ -110,21 +111,17 @@ export const LICENCIA = [
   { clave: "SI_VISIBLE", texto: "Sí, está visible o la mostró" },
   { clave: "SI_NO_MOSTRO", texto: "Dice que sí, pero no la mostró" },
   { clave: "NO", texto: "No tiene" },
-  { clave: "NO_RESPONDE", texto: "Prefiere no responder" },
 ] as const;
 
 export const IMSS = [
   { clave: "TODAS", texto: "Todas" },
   { clave: "ALGUNAS", texto: "Algunas" },
   { clave: "NINGUNA", texto: "Ninguna" },
-  { clave: "NO_RESPONDE", texto: "Prefiere no responder" },
 ] as const;
 
 export const DECLARACION_ANUAL = [
   { clave: "SI", texto: "Sí" },
   { clave: "NO", texto: "No" },
-  { clave: "NO_SABE", texto: "No sabe" },
-  { clave: "NO_RESPONDE", texto: "Prefiere no responder" },
 ] as const;
 
 /* ---------------- "No se pudo aplicar" ---------------- */
@@ -173,6 +170,12 @@ const sinRepetidos = <T>(a: T[]) => new Set(a).size === a.length;
 export const respuestasSchema = z
   .object({
     a1: unica(UBICACION_TIPO),
+    /** con A1 = "Otro": dónde está (texto libre) */
+    a1Otro: z.string().trim().max(100, "Máximo 100 caracteres").optional(),
+    /** con B1 = "Otro": con qué hace la tortilla */
+    b1Otro: z.string().trim().max(100, "Máximo 100 caracteres").optional(),
+    /** con B3 = "Otro": de quién es el negocio */
+    b3Otro: z.string().trim().max(100, "Máximo 100 caracteres").optional(),
     a2: z.object(Object.fromEntries(HIGIENE_PUNTOS.map((h) => [h.clave, z.boolean({ required_error: requerido, invalid_type_error: requerido })])) as Record<PuntoHigiene, z.ZodBoolean>),
     b1: unica(INSUMO),
     b2: unica(VOLUMEN_SEMANAL),
@@ -183,12 +186,23 @@ export const respuestasSchema = z
     b6Otro: z.string().trim().max(100, "Máximo 100 caracteres").optional(),
     b7: z.boolean().optional(),
     b8: z.array(z.enum(claves(APOYOS))).min(1, requerido).refine(sinRepetidos, "Opción repetida"),
+    /** con B8 = "Otro": cuál apoyo o programa (texto libre) */
+    b8Otro: z.string().trim().max(100, "Máximo 100 caracteres").optional(),
     c1: unica(LICENCIA),
     c2: unica(IMSS),
     c3: unica(DECLARACION_ANUAL),
   })
   .strict()
   .superRefine((r, ctx) => {
+    // Cada "Otro" lleva su texto (y el texto solo va si se marcó "Otro")
+    if (r.a1 === "OTRO" && !r.a1Otro) ctx.addIssue({ code: "custom", path: ["a1Otro"], message: "Escribe dónde está" });
+    if (r.a1 !== "OTRO" && r.a1Otro) ctx.addIssue({ code: "custom", path: ["a1Otro"], message: "Solo si marcó \"Otro\"" });
+    for (const [k, t] of [["b1", "b1Otro"], ["b3", "b3Otro"]] as const) {
+      if (r[k] === "OTRO" && !r[t]) ctx.addIssue({ code: "custom", path: [t], message: "Escribe cuál" });
+      if (r[k] !== "OTRO" && r[t]) ctx.addIssue({ code: "custom", path: [t], message: "Solo si marcó \"Otro\"" });
+    }
+    if (r.b8.includes("OTRO") && !r.b8Otro) ctx.addIssue({ code: "custom", path: ["b8Otro"], message: "Escribe cuál apoyo o programa" });
+    if (!r.b8.includes("OTRO") && r.b8Otro) ctx.addIssue({ code: "custom", path: ["b8Otro"], message: "Solo si marcó \"Otro\"" });
     // B6 solo cuando aplica; con "Otro", su texto
     if (aplicaB6(r.b5)) {
       if (!r.b6?.length) ctx.addIssue({ code: "custom", path: ["b6"], message: "Marca al menos un motivo" });
@@ -207,6 +221,8 @@ export const respuestasSchema = z
 export type Respuestas = z.infer<typeof respuestasSchema>;
 /** Lo que se prellena al actualizar: solo los bloques A y B (el C nunca sale del servidor) */
 export type RespuestasAB = Omit<Respuestas, "c1" | "c2" | "c3">;
+/** Tamaño máximo de los textos de "Otro" */
+export const MAX_OTRO = 100;
 
 export const cuestionarioSchema = z
   .discriminatedUnion("estatus", [
@@ -239,6 +255,10 @@ export function limpiarCondicionales<T extends Partial<Respuestas>>(r: T): T {
   if (!aplicaB6(x.b5)) { delete x.b6; delete x.b6Otro; }
   else if (!x.b6?.includes("OTRO")) delete x.b6Otro;
   if (!aplicaB7(x.b5)) delete x.b7;
+  if (x.a1 !== "OTRO") delete x.a1Otro;
+  if (x.b1 !== "OTRO") delete x.b1Otro;
+  if (x.b3 !== "OTRO") delete x.b3Otro;
+  if (!x.b8?.includes("OTRO")) delete x.b8Otro;
   return x as T;
 }
 
@@ -257,18 +277,23 @@ export function diccionarioCuestionario(): { columna: string; pregunta: string; 
   f.push({ columna: "estatus", pregunta: "Estatus del cuestionario vigente", codigo: "aplicado", texto: "Aplicado" }, { columna: "estatus", pregunta: "Estatus del cuestionario vigente", codigo: "no_aplicado", texto: "No se pudo aplicar" }, { columna: "estatus", pregunta: "Estatus del cuestionario vigente", codigo: "(vacío)", texto: "Visitada, sin cuestionario" });
   lista("motivo_no_aplica", "Motivo por el que no se pudo aplicar", MOTIVO_NO_APLICA);
   lista("a1_ubicacion", `A1. ${PREGUNTAS.a1}`, UBICACION_TIPO);
+  f.push({ columna: "a1_otro_texto", pregunta: "A1. Texto de \"Otro\" (dónde está)", codigo: "(texto libre)", texto: "Máximo 100 caracteres" });
   HIGIENE_PUNTOS.forEach((h) => sino(`a2_h_${h.col}`, `A2. Higiene: ${h.texto}`));
   lista("b1_insumo", `B1. ${PREGUNTAS.b1}`, INSUMO);
+  f.push({ columna: "b1_otro_texto", pregunta: "B1. Texto de \"Otro\" (con qué hace la tortilla)", codigo: "(texto libre)", texto: "Máximo 100 caracteres" });
   lista("b2_volumen", `B2. ${PREGUNTAS.b2} (el texto cambia según B1: maíz, masa, harina o ambos)`, VOLUMEN_SEMANAL);
   lista("b3_propiedad", `B3. ${PREGUNTAS.b3}`, PROPIEDAD);
+  f.push({ columna: "b3_otro_texto", pregunta: "B3. Texto de \"Otro\" (de quién es el negocio)", codigo: "(texto libre)", texto: "Máximo 100 caracteres" });
   lista("b4_trabajadores", `B4. ${PREGUNTAS.b4}`, NUM_TRABAJADORES);
   lista("b5_conoce_acuerdo", `B5. ${PREGUNTAS.b5}`, CONOCE_ACUERDO);
   MOTIVO_NO_ADHESION.forEach((m) => sino(m.col, `B6. ${PREGUNTAS.b6} (solo si B5 = CONOCE_NO_ADHERIDA): ${m.texto}`));
   f.push({ columna: "b6_otro_texto", pregunta: "B6. Texto del otro motivo", codigo: "(texto libre)", texto: "Máximo 100 caracteres" });
   sino("b7_interes", `B7. ${PREGUNTAS.b7} (solo si B5 = NO_CONOCE o CONOCE_NO_ADHERIDA)`);
   APOYOS.forEach((a) => sino(a.col, `B8. ${PREGUNTAS.b8}: ${a.texto}`));
+  f.push({ columna: "b8_otro_texto", pregunta: "B8. Texto de \"Otro\" (cuál apoyo o programa)", codigo: "(texto libre)", texto: "Máximo 100 caracteres" });
   lista("c1_licencia", `C1. ${PREGUNTAS.c1}`, LICENCIA);
   lista("c2_imss", `C2. ${PREGUNTAS.c2}`, IMSS);
   lista("c3_declaracion", `C3. ${PREGUNTAS.c3}`, DECLARACION_ANUAL);
+  for (const [c, t] of Object.entries(CODIGOS_ANTERIORES)) f.push({ columna: "(registros de la primera versión)", pregunta: "Respuesta que ya no se ofrece", codigo: c, texto: t });
   return f;
 }

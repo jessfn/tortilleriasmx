@@ -38,6 +38,7 @@ const migracion12 = readFileSync(path.join(aqui, "../../../db/migrations/012_fot
 const migracion13 = readFileSync(path.join(aqui, "../../../db/migrations/013_reportes.sql"), "utf8");
 const migracion14 = readFileSync(path.join(aqui, "../../../db/migrations/014_bajas_y_elaboracion.sql"), "utf8").replace(/geometry\(Point,4326\)/g, "geometry");
 const migracion15 = readFileSync(path.join(aqui, "../../../db/migrations/015_administradores_estatales.sql"), "utf8");
+const migracion17 = readFileSync(path.join(aqui, "../../../db/migrations/017_cuestionario_otros.sql"), "utf8");
 const migracion16 = readFileSync(path.join(aqui, "../../../db/migrations/016_cuestionario.sql"), "utf8").replace(/geometry\(Point,4326\)/g, "geometry");
 
 const PRE = `
@@ -117,6 +118,7 @@ beforeAll(async () => {
   await h.db.exec(migracion14);
   await h.db.exec(migracion15);
   await h.db.exec(migracion16);
+  await h.db.exec(migracion17);
   process.env.UPLOADS_DIR = mkdtempSync(path.join(tmpdir(), "fotos-"));
   const u = async (nombre: string, rol: string) => (await q("INSERT INTO usuarios(usuario, rol, correo) VALUES ($1,$2,$1) RETURNING id", [nombre, rol]))[0].id;
   ana = await u("ana@correo.com", "capturista");
@@ -2347,7 +2349,7 @@ describe("C21: cuestionario de supervisión de tortillerías", () => {
   const R = {
     a1: "MERCADO", a2: { H_LIMPIEZA: true, H_PLAGAS: true, H_INSUMOS: false, H_PERSONAL: true, H_BASURA: false },
     b1: "MAIZ_PROPIO", b2: "V_500_1000", b3: "FAMILIAR", b4: "T_2_3", b5: "CONOCE_NO_ADHERIDA", b6: ["PRECIO", "OTRO"], b6Otro: "No le alcanza", b7: true,
-    b8: ["JCF", "CREDITO"], c1: "SI_VISIBLE", c2: "ALGUNAS", c3: "NO_RESPONDE",
+    b8: ["JCF", "CREDITO", "OTRO"], b8Otro: "Programa municipal", c1: "SI_VISIBLE", c2: "ALGUNAS", c3: "NO",
   };
   const crear = async (correo: string, rol: string, extra: { alcance?: string[] | null; nacional?: boolean; estado?: string | null; cuenta?: string; permisos?: string[] | null } = {}) =>
     (await q(
@@ -2422,7 +2424,7 @@ describe("C21: cuestionario de supervisión de tortillerías", () => {
 
   it("GET /tortillerias/:id/cuestionario devuelve A y B para prellenar, nunca el bloque C", async () => {
     const r = await (await get(`/tortillerias/${T1}/cuestionario`, cen)).json();
-    expect(r.vigente.respuestas).toMatchObject({ a1: "TIENDA", b5: "CONOCE_NO_ADHERIDA", b6: ["PRECIO", "OTRO"], b7: true });
+    expect(r.vigente.respuestas).toMatchObject({ a1: "TIENDA", b5: "CONOCE_NO_ADHERIDA", b6: ["PRECIO", "OTRO"], b7: true, b8Otro: "Programa municipal" });
     expect(JSON.stringify(r)).not.toMatch(/"c1"|"c2"|"c3"|SI_VISIBLE|ALGUNAS|licencia|imss|declaracion/i);
     expect(r.ultimo).toMatchObject({ estatus: "no_aplicado", motivo: "INSEGURIDAD" });
   });
@@ -2465,7 +2467,7 @@ describe("C21: cuestionario de supervisión de tortillerías", () => {
   it("DGTIC ve el detalle completo (con el bloque C) y queda en la bitácora", async () => {
     (auditar as any).mockClear();
     const r = await (await get(`/admin/cuestionarios/tortilleria/${T1}`, dgtic, "admin")).json();
-    expect(r.vigente.respuestas).toMatchObject({ a1: "TIENDA", c1: "SI_VISIBLE", c3: "NO_RESPONDE" });
+    expect(r.vigente.respuestas).toMatchObject({ a1: "TIENDA", c1: "SI_VISIBLE", c3: "NO" });
     expect(r.ultimo.estatus).toBe("no_aplicado");
     expect(r.historial).toHaveLength(3);
     expect((auditar as any).mock.calls.some((c: any[]) => c[1] === "ver_cuestionario")).toBe(true);
@@ -2495,6 +2497,9 @@ describe("C21: cuestionario de supervisión de tortillerías", () => {
     expect(f1[cols.indexOf("b6_tramite")]).toBe("No");
     expect(f1[cols.indexOf("b8_ninguno")]).toBe("No");
     expect(f1[cols.indexOf("c1_licencia")]).toBe("SI_VISIBLE");
+    expect(f1[cols.indexOf("b8_otro")]).toBe("Sí");
+    expect(f1[cols.indexOf("b8_otro_texto")]).toBe("Programa municipal");
+    expect(cols).toEqual(expect.arrayContaining(["a1_otro_texto", "b1_otro_texto", "b3_otro_texto", "b8_otro_texto"]));
     const f3 = filas.find((l) => l.startsWith(T3))!.split(",");
     expect(f3[cols.indexOf("a1_ubicacion")]).toBe("");
     expect(f3[cols.indexOf("estatus")]).toBe("no_aplicado");
