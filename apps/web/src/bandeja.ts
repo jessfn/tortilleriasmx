@@ -1,6 +1,6 @@
 import { api, ApiError, leerSesion } from "./api";
 import { abrir, diaMexico, kvBorrar, kvGuardar, kvLeer, type Paquete, type Precio } from "./bd";
-import { marcarElaboracionLocal, marcarFiscalLocal, marcarFotoLocal, ponerTemporales, quitarLocal } from "./catalogo";
+import { marcarCuestionarioLocal, marcarElaboracionLocal, marcarFiscalLocal, marcarFotoLocal, ponerTemporales, quitarLocal } from "./catalogo";
 import type { Local } from "./bd";
 
 /**
@@ -162,6 +162,7 @@ export async function refrescarTemporales() {
       tiene_fiscal: !!p.fiscal,
       tiene_foto: true, // una tortillería nueva siempre lleva su foto
       elaboracion: (p.nueva.datos as { elaboracion?: string }).elaboracion ?? null,
+      cuestionario_estatus: p.cuestionario?.estatus ?? null,
     });
   }
   ponerTemporales(lista);
@@ -301,10 +302,34 @@ async function enviarPaquete(p: Paquete): Promise<Resultado> {
       await poner(p);
     }
 
-    const hayConflicto = precios.some((x) => x.estado === "conflicto");
+    // 5) cuestionario de supervisión (C21): después de los precios. Las respuestas salen del teléfono en cuanto el servidor las recibe.
+    let conflictoCuestionario: string | undefined;
+    if (p.cuestionario && !p.hecho.cuestionario) {
+      etapa = "cuestionario";
+      const k = p.cuestionario;
+      try {
+        await api(`/tortillerias/${real}/cuestionario`, {
+          json: {
+            estatus: k.estatus, idCliente: k.idCliente, capturadoEn: p.capturadoEn,
+            ...(k.estatus === "aplicado" ? { respuestas: k.respuestas } : { motivo: k.motivo, ...(k.motivoOtro ? { motivoOtro: k.motivoOtro } : {}) }),
+            ...(p.gps ? { lat: p.gps.lat, lng: p.gps.lng, precisionGps: p.gps.precision } : {}),
+          },
+        });
+        await marcarCuestionarioLocal(real, k.estatus);
+      } catch (e) {
+        // la tortillería se dio de baja mientras tanto: el cuestionario ya no aplica (nada que reintentar)
+        if (!(e instanceof ApiError && e.status === 409)) throw e;
+        await quitarLocal(real);
+        conflictoCuestionario = "Esta tortillería ya se había dado de baja: el cuestionario no se guardó.";
+      }
+      p = { ...p, hecho: { ...p.hecho, cuestionario: true }, cuestionario: { estatus: k.estatus, idCliente: k.idCliente, ...(k.motivo ? { motivo: k.motivo } : {}) } };
+      await poner(p);
+    }
+
+    const hayConflicto = precios.some((x) => x.estado === "conflicto") || !!conflictoCuestionario;
     p = {
       ...p, precios, estado: hayConflicto ? "conflicto" : "enviado", intentos: 0,
-      mensaje: hayConflicto ? precios.find((x) => x.estado === "conflicto")!.mensaje : undefined,
+      mensaje: hayConflicto ? (precios.find((x) => x.estado === "conflicto")?.mensaje ?? conflictoCuestionario) : undefined,
       enviadoEn: hayConflicto ? undefined : new Date().toISOString(),
     };
     await poner(p);

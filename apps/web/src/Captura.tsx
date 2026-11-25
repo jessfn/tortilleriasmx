@@ -11,12 +11,14 @@ import { buscarLugar } from "./geocoder";
 import { estadoPorUbicacion } from "./estadoCensador";
 import { comprimirFoto } from "./imagen";
 import { borrarBorrador, guardarBorrador } from "./borrador";
-import { diaMexico, nuevoId, type Paquete } from "./bd";
+import { diaMexico, kvGuardar, kvLeer, nuevoId, type Paquete } from "./bd";
+import PasoCuestionario, { cuestionarioListo, fechaCorta as fechaCuest, pendientes as preguntasPendientes, respuestasListas, type EstadoCuest } from "./PasoCuestionario";
 import { capturadoHoyLocal, esTemporal, guardarPaquete, idTemporal, listarPaquetes, sincronizar } from "./bandeja";
-import { delMunicipio, listaEstados, listaMunicipios, marcarElaboracionLocal, marcarFiscalLocal, masCercana, parecidas, porId, quitarLocal, type Item as ItemCat } from "./catalogo";
+import { delMunicipio, listaEstados, listaMunicipios, marcarCuestionarioLocal, marcarElaboracionLocal, marcarFiscalLocal, masCercana, parecidas, porId, quitarLocal, type Item as ItemCat } from "./catalogo";
 import type { Local } from "./bd";
 import PasoTortilleria from "./PasoTortilleria";
-import { Cog } from "lucide-react";
+import { ClipboardCheck, ClipboardX, Cog, PencilLine } from "lucide-react";
+import { textoMotivoNoAplica } from "@tortillerias/shared";
 import type { Punto } from "./MapaTortillerias";
 import { Aviso, Barra, Boton, Buscador, Cabecera, Campo, Hoja, HojaModal, Opcion, Selector } from "./ui";
 import { TelefonoCampo } from "./TelefonoCampo";
@@ -24,7 +26,9 @@ import { TelefonoCampo } from "./TelefonoCampo";
 type Item = { clave: string; nombre: string };
 type Pos = { lat: number; lng: number; precision?: number };
 type Producto = "maiz" | "masa";
-type Caso = "mapa" | "actualizar";
+import { armarPasos, type Caso } from "./pasos";
+/** C21: lo que se sabe del cuestionario de la tortillería elegida (solo el estatus; nunca respuestas) */
+type InfoCuest = { estatus: "aplicado" | "no_aplicado" | null; fecha?: string; motivo?: string | null };
 
 const PRODUCTOS: { id: Producto; clave: "precioMaiz" | "precioMasa"; texto: string; icono: LucideIcon }[] = [
   { id: "maiz", clave: "precioMaiz", texto: "Tortilla de maíz", icono: Wheat },
@@ -65,6 +69,13 @@ type Datos = {
   cuenta: { nombre: string; apellidoPaterno: string; apellidoMaterno: string; curp: string; estadoClave: string; aviso: boolean; correo: string; password: string; confirmar: string };
   precioMaiz: string;
   precioMasa: string;
+  /** C21: el cuestionario de supervisión (respuestas a medias, o "no se pudo aplicar" con su motivo) */
+  cuest: EstadoCuest;
+  cuestInfo?: InfoCuest;
+  /** ya tenía uno aplicado y el censador tocó "Actualizar" en el resumen */
+  cuestActualizar: boolean;
+  /** fecha del cuestionario con que se prellenaron A y B */
+  cuestPrellenado?: string | null;
 };
 
 const inicial: Datos = {
@@ -77,25 +88,9 @@ const inicial: Datos = {
   cuenta: { nombre: "", apellidoPaterno: "", apellidoMaterno: "", curp: "", estadoClave: "", aviso: false, correo: "", password: "", confirmar: "" },
   precioMaiz: "",
   precioMasa: "",
+  cuest: { r: {} },
+  cuestActualizar: false,
 };
-
-/**
- * Pasos del asistente según el caso:
- *  A) tortillería existente:  [estado → municipio, solo sin GPS] → tortilleria (mapa) → [fiscal, si no los tiene] → precio → [cuenta] → resumen
- *  B) tortillería nueva:      [estado → municipio] → tortilleria (mapa + pin) → nueva → foto → fiscal → precio → [cuenta] → resumen
- *  C) actualizar precio:      [fiscal, si no los tiene] → precio → resumen
- */
-function armarPasos(o: { caso: Caso; zonaManual: boolean; nueva: boolean; faltaFiscal: boolean; conCuenta: boolean }): string[] {
-  if (o.caso === "actualizar") return [...(o.faltaFiscal ? ["fiscal"] : []), "precio", "resumen"];
-  return [
-    ...(o.zonaManual ? ["estado", "municipio"] : []),
-    "tortilleria",
-    ...(o.nueva ? ["nueva", "foto", "fiscal"] : o.faltaFiscal ? ["fiscal"] : []),
-    "precio",
-    ...(o.conCuenta ? ["cuenta"] : []),
-    "resumen",
-  ];
-}
 
 const META: Record<string, { titulo: string; sub: string; icono: LucideIcon }> = {
   estado: { titulo: "Estado", sub: "¿En qué estado estás?", icono: Landmark },
@@ -106,6 +101,7 @@ const META: Record<string, { titulo: string; sub: string; icono: LucideIcon }> =
   fiscal: { titulo: "Datos fiscales", sub: "De la tortillería (la empresa)", icono: FileText },
   cuenta: { titulo: "Tu cuenta", sub: "Con ella entrarás a tu panel", icono: UserPlus },
   precio: { titulo: "Precio", sub: "Precio por kilo al público", icono: Banknote },
+  cuestionario: { titulo: "Cuestionario de la tortillería", sub: "Una sola vez por tortillería", icono: ClipboardCheck },
   resumen: { titulo: "Resumen", sub: "Revisa y envía", icono: ListChecks },
 };
 
@@ -137,6 +133,8 @@ type Props = {
   tortilleriaInicial?: Punto;
   /** Registro a medias que se guardó en el teléfono (lo carga App antes de abrir el asistente) */
   borrador?: Borrador | null;
+  /** con `tortilleriaInicial`: "cuestionario" abre solo el cuestionario (sin precio); por omisión, actualizar el precio */
+  modo?: "actualizar" | "cuestionario";
 };
 
 const precioNumero = (s: string) => Number(s.replace(",", "."));
@@ -148,18 +146,19 @@ const limpiarPrecio = (v: string) => {
 const precioValido = (s: string) => s !== "" && precioNumero(s) >= PRECIO_MIN && precioNumero(s) <= PRECIO_MAX;
 const dinero = (n: number) => `$${n.toFixed(2)}`;
 
-export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortilleriaInicial, borrador: borradorGuardado }: Props) {
+export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortilleriaInicial, borrador: borradorGuardado, modo = "actualizar" }: Props) {
+  const casoInicial: Caso = tortilleriaInicial ? modo : "mapa";
   const [conCuenta, setConCuenta] = useState(!sesion); // se fija al entrar: los pasos no cambian aunque se cree la cuenta a mitad del envío
   const [verPass, setVerPass] = useState(false);
   const [borrador] = useState(() => {
     const b = borradorGuardado;
     // El borrador de un formato anterior no se puede restaurar; el de actualizar precio no aplica a otra tortillería
     if (!b || b.v !== 3) return null;
-    if (tortilleriaInicial && (b.caso !== "actualizar" || b.d.tortilleria?.id !== tortilleriaInicial.id)) return null;
-    if (!tortilleriaInicial && b.caso === "actualizar") return null;
+    if (tortilleriaInicial && (b.caso !== casoInicial || b.d.tortilleria?.id !== tortilleriaInicial.id)) return null;
+    if (!tortilleriaInicial && b.caso !== "mapa") return null;
     return b;
   });
-  const [caso, setCaso] = useState<Caso>(tortilleriaInicial ? "actualizar" : "mapa");
+  const [caso, setCaso] = useState<Caso>(casoInicial);
   const [d, setD] = useState<Datos>(() =>
     borrador ? { ...inicial, ...borrador.d, cuenta: { ...inicial.cuenta, ...borrador.d.cuenta, password: "", confirmar: "" } } : { ...inicial, tortilleria: tortilleriaInicial },
   );
@@ -171,8 +170,10 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   const [bajaHecha, setBajaHecha] = useState<{ nombre: string } | null>(null);
   const [motivoSel, setMotivoSel] = useState("");
   const [motivoTxt, setMotivoTxt] = useState("");
-  const [pasoId, setPasoId] = useState<string>(() => borrador?.pasoId ?? (tortilleriaInicial ? "precio" : "tortilleria"));
-  const [preparando, setPreparando] = useState(!!tortilleriaInicial && !borrador); // caso C: se averigua si faltan los datos fiscales
+  const [pasoId, setPasoId] = useState<string>(() => borrador?.pasoId ?? (tortilleriaInicial ? (modo === "cuestionario" ? "cuestionario" : "precio") : "tortilleria"));
+  const [preparando, setPreparando] = useState(!!tortilleriaInicial && !borrador); // casos C y D: se averigua si faltan los datos fiscales y el estatus del cuestionario
+  /** se intentó guardar el cuestionario con algo pendiente: se marcan las preguntas sin responder */
+  const [intentoCuest, setIntentoCuest] = useState(false);
   const [estados, setEstados] = useState<Item[]>([]);
   /** la lista de estados no se pudo cargar (sin señal y sin copia guardada): se avisa y se puede reintentar */
   const [falloEstados, setFalloEstados] = useState(false);
@@ -203,14 +204,19 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   const setFiscal = (p: Partial<Datos["fiscal"]>) => setD((x) => ({ ...x, fiscal: { ...x.fiscal, ...p } }));
 
   const faltaFiscal = d.nueva ? true : tieneFiscal === false;
+  // el cuestionario se pide si la tortillería no tiene uno aplicado (nueva, sin cuestionario o el último "no se pudo aplicar"), o si se va a actualizar
+  const pideCuest = d.nueva || d.cuestActualizar || d.cuestInfo?.estatus !== "aplicado";
   const pasos = useMemo(
-    () => armarPasos({ caso, zonaManual: d.zonaManual, nueva: d.nueva, faltaFiscal, conCuenta }),
-    [caso, d.zonaManual, d.nueva, faltaFiscal, conCuenta],
+    () => armarPasos({ caso, zonaManual: d.zonaManual, nueva: d.nueva, faltaFiscal, conCuenta, pideCuest }),
+    [caso, d.zonaManual, d.nueva, faltaFiscal, conCuenta, pideCuest],
   );
   const id = pasos.includes(pasoId) ? pasoId : pasos[0];
   const paso = pasos.indexOf(id);
 
-  useEffect(() => setFiltro(""), [id]);
+  useEffect(() => {
+    setFiltro("");
+    setIntentoCuest(false);
+  }, [id]);
 
   /* ---------------- GPS: se pide al entrar; con él se brincan estado y municipio ---------------- */
   const gpsResuelto = useRef(false);
@@ -302,22 +308,28 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   }, [id, gps.pos?.lat, gps.pos?.lng]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---------------- ¿ya tiene datos fiscales? Con internet se pregunta al servidor; sin él se usa lo guardado en el teléfono ---------------- */
-  async function tieneFiscalDe(tortilleriaId: string): Promise<{ tiene: boolean; elaboracion: string | null }> {
+  async function tieneFiscalDe(tortilleriaId: string): Promise<{ tiene: boolean; elaboracion: string | null; cuest: InfoCuest }> {
     const loc = porId(tortilleriaId);
     const local = loc?.tiene_fiscal;
+    const cuestLocal: InfoCuest = { estatus: loc?.cuestionario_estatus ?? null };
     if (esTemporal(tortilleriaId)) {
       setNegativaPrev(null);
-      return { tiene: local ?? false, elaboracion: loc?.elaboracion ?? null }; // tortillería nueva de este teléfono: el servidor aún no la conoce
+      return { tiene: local ?? false, elaboracion: loc?.elaboracion ?? null, cuest: cuestLocal }; // tortillería nueva de este teléfono: el servidor aún no la conoce
     }
     if (navigator.onLine) {
       try {
-        const r = await api<{ tiene: boolean; ultimaNegativa?: { motivo: string; fecha: string } | null; elaboracion?: string | null; inactiva?: boolean }>(`/tortillerias/${tortilleriaId}/fiscal/existe`);
+        const r = await api<{
+          tiene: boolean; ultimaNegativa?: { motivo: string; fecha: string } | null; elaboracion?: string | null; inactiva?: boolean;
+          cuestionario?: { estatus: "aplicado" | "no_aplicado"; fecha?: string; motivo?: string | null } | null;
+        }>(`/tortillerias/${tortilleriaId}/fiscal/existe`);
         if (r.inactiva) {
           await quitarLocal(tortilleriaId); // otro censador ya la dio de baja: desaparece también de este teléfono
           throw new Error("Esta tortillería ya se dio de baja. Elige otra.");
         }
         setNegativaPrev(r.tiene ? null : (r.ultimaNegativa ?? null));
-        return { tiene: r.tiene, elaboracion: r.elaboracion ?? null };
+        // lo pendiente en la bandeja de este teléfono cuenta igual (aún no llega al servidor)
+        const cuest: InfoCuest = r.cuestionario ? { estatus: r.cuestionario.estatus, fecha: r.cuestionario.fecha, motivo: r.cuestionario.motivo ?? null } : { estatus: null };
+        return { tiene: r.tiene, elaboracion: r.elaboracion ?? null, cuest: cuestLocal.estatus === "aplicado" && cuest.estatus !== "aplicado" ? cuestLocal : cuest };
       } catch (e) {
         if (e instanceof ApiError && e.status > 0) throw e;
         if (!(e instanceof ApiError)) throw e;
@@ -325,16 +337,22 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     }
     // Sin señal: si estaba desactualizado no pasa nada, el servidor no sobrescribe datos fiscales ya capturados
     setNegativaPrev(!local && loc?.ultima_negativa ? { motivo: loc.ultima_negativa } : null);
-    return { tiene: local ?? false, elaboracion: loc?.elaboracion ?? null };
+    return { tiene: local ?? false, elaboracion: loc?.elaboracion ?? null, cuest: cuestLocal };
   }
 
   /* ---------------- caso C: ¿faltan los datos fiscales? ---------------- */
   useEffect(() => {
     if (!tortilleriaInicial || !preparando) return;
     tieneFiscalDe(tortilleriaInicial.id)
-      .then(({ tiene, elaboracion }) => {
+      .then(({ tiene, elaboracion, cuest }) => {
+        // caso D (solo cuestionario): no se piden datos fiscales ni precio; si ya está aplicado, se abre para actualizarlo
+        if (caso === "cuestionario") {
+          setD((x) => ({ ...x, cuestInfo: cuest, cuestActualizar: cuest.estatus === "aplicado" }));
+          setPasoId("cuestionario");
+          return;
+        }
         setTieneFiscal(tiene);
-        setD((x) => ({ ...x, elaboracion: x.elaboracion || elaboracion || "", elabPrevia: elaboracion }));
+        setD((x) => ({ ...x, elaboracion: x.elaboracion || elaboracion || "", elabPrevia: elaboracion, cuestInfo: cuest }));
         setPasoId(tiene ? "precio" : "fiscal");
       })
       .catch((e) => setError(e.message))
@@ -445,8 +463,45 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     fiscal: (resFiscal.success && d.fiscal.aviso) || sinFiscalOk, // los datos fiscales se pueden omitir si se indica el motivo
     cuenta: resCuenta.success,
     precio: hoy != null && preciosListos && !todoCapturado && !!d.elaboracion, // el tipo de elaboración es obligatorio si la tortillería todavía no lo tiene
+    cuestionario: cuestionarioListo(d.cuest),
     resumen: true,
   };
+
+  /* ---------------- cuestionario (C21) ---------------- */
+  function continuarCuestionario() {
+    if (cuestionarioListo(d.cuest)) {
+      if (d.cuest.estatus !== "no_aplicado") set({ cuest: { ...d.cuest, estatus: "aplicado" } });
+      return ir(1);
+    }
+    setIntentoCuest(true);
+    const primera = preguntasPendientes(d.cuest.r)[0];
+    if (primera) document.getElementById(`pregunta-${primera}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // Al actualizar uno ya aplicado: se prellenan A y B (del servidor; sin señal, de lo guardado en este teléfono). El bloque C nunca.
+  useEffect(() => {
+    if (id !== "cuestionario" || d.cuestInfo?.estatus !== "aplicado" || d.cuestPrellenado !== undefined || Object.keys(d.cuest.r).length) return;
+    const tid = d.tortilleria?.id;
+    if (!tid) return;
+    let vigente = true;
+    (async () => {
+      let previo: { fecha: string; respuestas: Record<string, unknown> } | null = null;
+      if (navigator.onLine && !esTemporal(tid)) {
+        try {
+          const r = await api<{ vigente: { fecha: string; respuestas: Record<string, unknown> } | null }>(`/tortillerias/${tid}/cuestionario`);
+          previo = r.vigente;
+        } catch {
+          /* se usa lo del teléfono */
+        }
+      }
+      previo ??= (await kvLeer<{ fecha: string; respuestas: Record<string, unknown> }>(`cuestAB:${tid}`)) ?? null;
+      if (!vigente) return;
+      setD((x) => (Object.keys(x.cuest.r).length ? x : { ...x, cuest: { r: (previo?.respuestas ?? {}) as EstadoCuest["r"] }, cuestPrellenado: previo?.fecha ?? null }));
+    })();
+    return () => {
+      vigente = false;
+    };
+  }, [id, d.tortilleria?.id, d.cuestInfo?.estatus, d.cuestPrellenado]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---------------- navegación ---------------- */
   function ir(delta: number) {
@@ -468,6 +523,8 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
       fiscal: x.tortilleria?.id === punto.id ? x.fiscal : { ...inicial.fiscal },
       sinFiscal: x.tortilleria?.id === punto.id ? x.sinFiscal : undefined,
       precioMaiz: x.tortilleria?.id === punto.id ? x.precioMaiz : "", precioMasa: x.tortilleria?.id === punto.id ? x.precioMasa : "",
+      cuestInfo: r.cuest,
+      ...(x.tortilleria?.id === punto.id ? {} : { cuest: { r: {} }, cuestActualizar: false, cuestPrellenado: undefined }),
     }));
     setCreada((c) => ({ cuenta: c.cuenta }));
     setModoMapa("elegir");
@@ -476,7 +533,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   }
 
   function confirmarPin() {
-    setD((x) => ({ ...x, nueva: true, tortilleria: undefined }));
+    setD((x) => ({ ...x, nueva: true, tortilleria: undefined, cuestInfo: { estatus: null }, cuestActualizar: false, cuestPrellenado: undefined }));
     setTieneFiscal(false);
     setNegativaPrev(null);
     setPasoId("nueva");
@@ -503,6 +560,16 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   const domicilioLocal = () =>
     normalizarTexto(`${d.nv.tipoVial} ${d.nv.calle} ${d.nv.sinNumero ? "SN" : d.nv.numeroExt}${d.nv.numeroInt ? ` INT. ${d.nv.numeroInt}` : ""}, COL. ${d.nv.colonia}, C.P. ${d.nv.codigoPostal}`);
 
+  /** C21: el cuestionario del paquete (solo si este recorrido lo pidió): las respuestas completas o "no se pudo aplicar" con su motivo */
+  function cuestDelPaquete(): Pick<Paquete, "cuestionario"> {
+    if (!pasos.includes("cuestionario")) return {};
+    const c = d.cuest;
+    if (c.estatus === "no_aplicado" && c.motivo)
+      return { cuestionario: { estatus: "no_aplicado", motivo: c.motivo, ...(c.motivo === "OTRO" && c.motivoOtro ? { motivoOtro: c.motivoOtro } : {}), idCliente: nuevoId() } };
+    const r = respuestasListas(c.r);
+    return r ? { cuestionario: { estatus: "aplicado", respuestas: r as unknown as Record<string, unknown>, idCliente: nuevoId() } } : {};
+  }
+
   function armarPaquete(usuarioId: string, confirmoNoDuplicado: boolean): Paquete {
     const precios = PRODUCTOS.filter((p) => activo(p) && d[p.clave] !== "").map((p) => ({
       producto: p.id, precioKg: precioNumero(d[p.clave]), idCliente: nuevoId(), estado: "pendiente" as const,
@@ -523,11 +590,13 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
         ...base,
         tortilleria: { id: idTemporal(idCliente), nombre: normalizarTexto(d.nv.nombre), domicilio: domicilioLocal(), lat: d.pin!.lat, lng: d.pin!.lng },
         nueva: { idCliente, datos: pedirNv(), fotoIdCliente: nuevoId(), foto: d.foto, ...(confirmoNoDuplicado ? { confirmoNoDuplicado: true } : {}) },
+        ...cuestDelPaquete(),
       };
     }
     const t = d.tortilleria!;
     return {
       ...base,
+      ...cuestDelPaquete(),
       tortilleria: { id: t.id, nombre: t.nombre, domicilio: t.domicilio, lat: t.lat, lng: t.lng },
       // solo se envía si la tortillería no lo tenía o el censador lo cambió
       ...(d.elaboracion && d.elaboracion !== d.elabPrevia ? { elaboracion: { valor: d.elaboracion, idCliente: nuevoId() } } : {}),
@@ -568,6 +637,14 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
       await guardarPaquete(paquete);
       if (paquete.fiscal && !esTemporal(paquete.tortilleria.id)) await marcarFiscalLocal(paquete.tortilleria.id);
       if (paquete.elaboracion && !esTemporal(paquete.tortilleria.id)) await marcarElaboracionLocal(paquete.tortilleria.id, paquete.elaboracion.valor); // ya aparece preseleccionado en la próxima visita
+      if (paquete.cuestionario) {
+        if (!esTemporal(paquete.tortilleria.id)) await marcarCuestionarioLocal(paquete.tortilleria.id, paquete.cuestionario.estatus); // deja de decir "Falta cuestionario"
+        // para prellenar sin conexión se guardan SOLO A y B (el bloque C nunca se guarda fuera del paquete)
+        if (paquete.cuestionario.respuestas) {
+          const { c1: _1, c2: _2, c3: _3, ...ab } = paquete.cuestionario.respuestas as Record<string, unknown>;
+          await kvGuardar(`cuestAB:${paquete.tortilleria.id}`, { fecha: diaMexico(), respuestas: ab });
+        }
+      }
       await borrarBorrador();
 
       // Con señal se envía en seguida; sin ella queda guardado y sale solo cuando regrese
@@ -603,6 +680,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
     setD((x) => ({
       ...x, nueva: false, tortilleria: { id: t.id, nombre: t.nombre, domicilio: t.domicilio, estatus: t.estatus, lat: t.lat, lng: t.lng, razon_social: t.razon_social },
       foto: undefined, fotoUrl: undefined, precioMaiz: "", precioMasa: "", sinFiscal: undefined,
+      cuestInfo: { estatus: t.cuestionario_estatus ?? null }, cuest: { r: {} }, cuestActualizar: false, cuestPrellenado: undefined,
     }));
     setTieneFiscal(esTemporal(t.id) ? t.tiene_fiscal : t.tiene_fiscal);
     set({ elaboracion: t.elaboracion ?? "", elabPrevia: t.elaboracion ?? null });
@@ -636,7 +714,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
   function otra() {
     setBajaHecha(null);
     if (d.fotoUrl) URL.revokeObjectURL(d.fotoUrl);
-    setD({ ...inicial, estado: d.estado, municipio: d.municipio, zonaManual: d.zonaManual });
+    setD({ ...inicial, estado: d.estado, municipio: d.municipio, zonaManual: d.zonaManual, cuest: { r: {} } });
     setCreada((c) => ({ cuenta: c.cuenta }));
     setTieneFiscal(undefined);
     setNegativaPrev(null);
@@ -670,7 +748,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
         </div>
         <div className="paso">
           <h1 className="text-2xl font-bold">
-            {bajaHecha ? (resultado?.tipo === "guardado" ? "Guardado en tu teléfono" : resultado?.tipo === "error" ? "Revisa tu reporte" : "Listo: la tortillería quedó dada de baja.") : conCuenta ? "¡Registro completo!" : resultado?.tipo === "guardado" ? "Guardado en tu teléfono" : resultado?.tipo === "conflicto" || resultado?.tipo === "error" ? "Revisa tu captura" : "¡Captura enviada!"}
+            {bajaHecha ? (resultado?.tipo === "guardado" ? "Guardado en tu teléfono" : resultado?.tipo === "error" ? "Revisa tu reporte" : "Listo: la tortillería quedó dada de baja.") : caso === "cuestionario" && resultado?.tipo === "enviado" ? "¡Cuestionario enviado!" : conCuenta ? "¡Registro completo!" : resultado?.tipo === "guardado" ? "Guardado en tu teléfono" : resultado?.tipo === "conflicto" || resultado?.tipo === "error" ? "Revisa tu captura" : "¡Captura enviada!"}
           </h1>
           <p className="mt-1.5 text-sm text-white/80">
             {bajaHecha
@@ -683,7 +761,9 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
               ? resultado.mensaje ?? `Se enviará sola cuando haya señal.${resultado.pendientes > 0 ? ` Tienes ${resultado.pendientes} ${resultado.pendientes === 1 ? "captura por enviar" : "capturas por enviar"}.` : ""}`
               : resultado?.tipo === "conflicto" || resultado?.tipo === "error"
                 ? `${resultado.mensaje ?? "El servidor no pudo aceptarla todavía."} La encuentras en tu panel para resolverla.`
-                : conCuenta
+                : caso === "cuestionario"
+              ? "Gracias. El cuestionario de la tortillería quedó registrado."
+              : conCuenta
               ? "Creamos tu cuenta, iniciaste sesión y registramos el precio. Entrando a tu panel…"
               : d.nueva
                 ? "Gracias por tu aportación. La tortillería nueva quedó por validar y los precios serán revisados."
@@ -718,7 +798,7 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
           cab={{
             paso: paso + 1,
             // marcando una tortillería nueva, el recorrido ya es el del caso B
-            total: modoMapa === "marcar" ? armarPasos({ caso, zonaManual: d.zonaManual, nueva: true, faltaFiscal: true, conCuenta }).length : pasos.length,
+            total: modoMapa === "marcar" ? armarPasos({ caso, zonaManual: d.zonaManual, nueva: true, faltaFiscal: true, conCuenta, pideCuest: true }).length : pasos.length,
             atras: paso > 0 ? () => ir(-1) : alSalir,
           }}
           zona={{ estado: d.estado, municipio: d.municipio, centro, manual: d.zonaManual }}
@@ -1113,6 +1193,16 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
             </>
           )}
 
+          {id === "cuestionario" && (
+            <PasoCuestionario
+              valor={d.cuest}
+              onChange={(c) => set({ cuest: c })}
+              prellenadoEl={d.cuestActualizar ? d.cuestPrellenado : null}
+              avisoAnterior={!d.cuestActualizar && d.cuestInfo?.estatus === "no_aplicado" ? { motivo: d.cuestInfo.motivo ?? null, fecha: d.cuestInfo.fecha } : null}
+              intentoGuardar={intentoCuest}
+            />
+          )}
+
           {id === "resumen" && (
             <div className="divide-y divide-stone-100 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200">
               <Fila icono={Store} k="Tortillería" v={d.nueva ? `${d.nv.nombre} (nueva)` : d.tortilleria?.nombre ?? ""} />
@@ -1132,6 +1222,33 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
                 </>
               )}
               {conCuenta && <Fila icono={Mail} k="Tu cuenta" v={d.cuenta.correo} />}
+              {pasos.includes("cuestionario") ? (
+                <Fila
+                  icono={d.cuest.estatus === "no_aplicado" ? ClipboardX : ClipboardCheck}
+                  k="Cuestionario"
+                  v={d.cuest.estatus === "no_aplicado" ? `No se pudo aplicar · ${d.cuest.motivo === "OTRO" ? d.cuest.motivoOtro ?? "Otro" : textoMotivoNoAplica(d.cuest.motivo)}` : d.cuestActualizar ? "Actualizado" : "Aplicado"}
+                />
+              ) : (
+                d.cuestInfo?.estatus === "aplicado" && (
+                  <div className="flex items-center gap-3 px-3 py-2.5">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-guinda/10 text-guinda"><ClipboardCheck className="h-[18px] w-[18px]" aria-hidden /></span>
+                    <div className="min-w-0 flex-1 leading-tight">
+                      <div className="text-[11px] font-medium uppercase tracking-wide text-stone-400">Cuestionario</div>
+                      <div className="truncate text-[15px] font-semibold">Aplicado{d.cuestInfo.fecha ? ` el ${fechaCuest(d.cuestInfo.fecha)}` : ""}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        set({ cuestActualizar: true, cuest: { r: {} }, cuestPrellenado: undefined });
+                        setPasoId("cuestionario");
+                      }}
+                      className="flex shrink-0 items-center gap-1 rounded-lg bg-guinda/10 px-2.5 py-1.5 text-xs font-semibold text-guinda transition active:scale-95"
+                    >
+                      <PencilLine className="h-3.5 w-3.5" aria-hidden /> Actualizar
+                    </button>
+                  </div>
+                )
+              )}
             </div>
           )}
 
@@ -1142,7 +1259,12 @@ export default function Captura({ sesion, alSesion, alSalir, alTerminar, tortill
       <Barra>
         {id === "resumen" ? (
           <Boton onClick={() => enviar()} disabled={enviando} icono={enviando ? Loader2 : Send}>
-            {enviando ? "Enviando…" : conCuenta ? "Crear cuenta y enviar" : "Enviar captura"}
+            {enviando ? "Enviando…" : conCuenta ? "Crear cuenta y enviar" : caso === "cuestionario" ? "Enviar cuestionario" : "Enviar captura"}
+          </Boton>
+        ) : id === "cuestionario" ? (
+          // no se deshabilita del todo: al tocarlo con algo pendiente se marca y se lleva a la primera pregunta sin responder
+          <Boton onClick={continuarCuestionario} icono={Check} aria-disabled={!puede.cuestionario} className={puede.cuestionario ? "" : "opacity-60"}>
+            {d.cuest.estatus === "no_aplicado" ? "Continuar" : "Guardar cuestionario"}
           </Boton>
         ) : (
           <Boton onClick={() => ir(1)} disabled={!puede[id]} icono={Check}>

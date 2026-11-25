@@ -38,6 +38,7 @@ const migracion12 = readFileSync(path.join(aqui, "../../../db/migrations/012_fot
 const migracion13 = readFileSync(path.join(aqui, "../../../db/migrations/013_reportes.sql"), "utf8");
 const migracion14 = readFileSync(path.join(aqui, "../../../db/migrations/014_bajas_y_elaboracion.sql"), "utf8").replace(/geometry\(Point,4326\)/g, "geometry");
 const migracion15 = readFileSync(path.join(aqui, "../../../db/migrations/015_administradores_estatales.sql"), "utf8");
+const migracion16 = readFileSync(path.join(aqui, "../../../db/migrations/016_cuestionario.sql"), "utf8").replace(/geometry\(Point,4326\)/g, "geometry");
 
 const PRE = `
 CREATE DOMAIN geometry AS point;
@@ -115,6 +116,7 @@ beforeAll(async () => {
   await h.db.exec(migracion13);
   await h.db.exec(migracion14);
   await h.db.exec(migracion15);
+  await h.db.exec(migracion16);
   process.env.UPLOADS_DIR = mkdtempSync(path.join(tmpdir(), "fotos-"));
   const u = async (nombre: string, rol: string) => (await q("INSERT INTO usuarios(usuario, rol, correo) VALUES ($1,$2,$1) RETURNING id", [nombre, rol]))[0].id;
   ana = await u("ana@correo.com", "capturista");
@@ -243,8 +245,8 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
   });
 
   it("al inicio no tiene datos fiscales (y se puede saber sin sesión)", async () => {
-    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, ana)).json()).toEqual({ tiene: false, ultimaNegativa: null, tieneFoto: false, elaboracion: null, inactiva: false });
-    expect(await (await fetch(`${base}/tortillerias/${tA}/fiscal/existe`)).json()).toEqual({ tiene: false, ultimaNegativa: null, tieneFoto: false, elaboracion: null, inactiva: false });
+    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, ana)).json()).toEqual({ tiene: false, ultimaNegativa: null, tieneFoto: false, elaboracion: null, inactiva: false, cuestionario: null });
+    expect(await (await fetch(`${base}/tortillerias/${tA}/fiscal/existe`)).json()).toEqual({ tiene: false, ultimaNegativa: null, tieneFoto: false, elaboracion: null, inactiva: false, cuestionario: null });
   });
 
   it("el primero los captura; el RFC se guarda cifrado", async () => {
@@ -257,7 +259,7 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
     expect(Buffer.from(f.rfc_cifrado).toString("utf8")).not.toContain("TGU100101AB1");
     expect(f.celular_cifrado).not.toBeNull();
     expect((await q("SELECT count(*)::int AS n FROM consentimientos WHERE tortilleria_id = $1", [tA]))[0].n).toBe(1);
-    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, beto)).json()).toEqual({ tiene: true, ultimaNegativa: null, tieneFoto: false, elaboracion: null, inactiva: false });
+    expect(await (await get(`/tortillerias/${tA}/fiscal/existe`, beto)).json()).toEqual({ tiene: true, ultimaNegativa: null, tieneFoto: false, elaboracion: null, inactiva: false, cuestionario: null });
   });
 
   it("la segunda vez NO sobrescribe: responde 200 con lo existente, enmascarado", async () => {
@@ -300,7 +302,7 @@ describe("datos fiscales (una sola vez por tortillería)", () => {
        VALUES ($1,'ANA','PEREZ',$2,'h',$3,'h2','fisica',$4,'h3',NULL)`,
       [t, cifrar("CURPXXXXXXXXXXXXXX"), cifrar("5511111111"), cifrar("PEPA800101AB1")],
     );
-    expect(await (await get(`/tortillerias/${t}/fiscal/existe`, ana)).json()).toEqual({ tiene: true, ultimaNegativa: null, tieneFoto: false, elaboracion: null, inactiva: false });
+    expect(await (await get(`/tortillerias/${t}/fiscal/existe`, ana)).json()).toEqual({ tiene: true, ultimaNegativa: null, tieneFoto: false, elaboracion: null, inactiva: false, cuestionario: null });
     const r = await post(`/tortillerias/${t}/fiscal`, ana, moral);
     expect(r.status).toBe(200);
     expect((await q("SELECT count(*)::int AS n FROM tortilleria_fiscal WHERE tortilleria_id = $1", [t]))[0].n).toBe(0);
@@ -601,7 +603,7 @@ describe("sin conexión: tortillería nueva y foto con idCliente", () => {
 describe("catálogo por estado para el teléfono", () => {
   it("solo trae ese estado, sin rechazadas ni sin ubicación, y con tiene_fiscal correcto", async () => {
     const r = await (await get("/catalogo/estado/09", ana)).json();
-    expect(r.columnas).toEqual(["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal", "ultima_negativa", "elaboracion"]);
+    expect(r.columnas).toEqual(["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal", "ultima_negativa", "elaboracion", "cuestionario_estatus"]);
     const nombres = r.filas.map((f: any[]) => f[1]);
     expect(nombres).toContain("LA GUERA");
     expect(nombres).not.toContain("RECHAZADA");
@@ -1603,7 +1605,7 @@ describe("C19: tortillerías que ya no funcionan y tipo de elaboración", () => 
     const r = await (await get("/catalogo/estado/09", ana)).json();
     expect(r.columnas).not.toContain("tiene_foto");
     expect(r.columnas).toContain("elaboracion");
-    expect(r.version).toMatch(/-f3$/);
+    expect(r.version).toMatch(/-f4$/);
     const t = await nuevaT("SIN FOTO C19");
     expect((await q("SELECT count(*)::int AS n FROM fotos WHERE tortilleria_id = $1", [t]))[0].n).toBe(0);
     expect((await precio(t, ana, "maiz", 22)).status).toBe(201); // nunca se exigió ni se exige foto a una tortillería existente
@@ -1771,7 +1773,7 @@ describe("C19: tortillerías que ya no funcionan y tipo de elaboración", () => 
     expect((await q("SELECT elaboracion FROM tortillerias WHERE id = $1", [t]))[0].elaboracion).toBe("ambas");
     // se devuelve para preseleccionarlo
     expect((await (await fetch(`${base}/tortillerias/${t}/fiscal/existe`)).json()).elaboracion).toBe("ambas");
-    expect((await (await get("/catalogo/estado/09", ana)).json()).filas.find((f: any[]) => f[0] === t).at(-1)).toBe("ambas");
+    expect((await (await get("/catalogo/estado/09", ana)).json()).filas.find((f: any[]) => f[0] === t)[10]).toBe("ambas");
     expect(vi.mocked(auditar)).toHaveBeenCalledWith(ana, "registrar_elaboracion", "tortilleria_elaboracion", expect.any(String));
   });
 
@@ -2337,5 +2339,155 @@ describe("C20: migración 015 y carga masiva de administradores estatales", () =
     const malo = path.join(carpeta, "malo.xlsx");
     await sinHoja.xlsx.writeFile(malo);
     await expect(leerArchivo(malo)).rejects.toThrow(/hoja "Carga"/);
+  });
+});
+
+/* ===================== C21: cuestionario de supervisión ===================== */
+describe("C21: cuestionario de supervisión de tortillerías", () => {
+  const R = {
+    a1: "MERCADO", a2: { H_LIMPIEZA: true, H_PLAGAS: true, H_INSUMOS: false, H_PERSONAL: true, H_BASURA: false },
+    b1: "MAIZ_PROPIO", b2: "V_500_1000", b3: "FAMILIAR", b4: "T_2_3", b5: "CONOCE_NO_ADHERIDA", b6: ["PRECIO", "OTRO"], b6Otro: "No le alcanza", b7: true,
+    b8: ["JCF", "CREDITO"], c1: "SI_VISIBLE", c2: "ALGUNAS", c3: "NO_RESPONDE",
+  };
+  const crear = async (correo: string, rol: string, extra: { alcance?: string[] | null; nacional?: boolean; estado?: string | null; cuenta?: string; permisos?: string[] | null } = {}) =>
+    (await q(
+      "INSERT INTO usuarios(usuario, rol, correo, estados_alcance, alcance_nacional, estado_clave, estado_cuenta, datos_completos, permisos) VALUES ($1,$2,$1,$3::text[],$4,$5,$6,true,$7::text[]) RETURNING id",
+      [correo, rol, extra.alcance ?? null, extra.nacional ?? false, extra.estado ?? null, extra.cuenta ?? "autorizado", extra.permisos ?? null],
+    ))[0].id as string;
+  let cen: string, cen2: string, est: string, uoteha: string, supTodo: string, porAut: string, rech: string;
+  let T1: string, T2: string, T3: string, TBaja: string, TOtro: string;
+  const aplicar = (t: string, u: string, extra: object = {}) => post(`/tortillerias/${t}/cuestionario`, u, { estatus: "aplicado", respuestas: R, ...extra });
+
+  beforeAll(async () => {
+    for (const [c, n] of [["31", "YUCATAN"], ["15", "MEXICO"]]) await q("INSERT INTO estados VALUES ($1,$2) ON CONFLICT DO NOTHING", [c, n]);
+    cen = await crear("q-cen@correo.com", "capturista", { estado: "31" });
+    cen2 = await crear("q-cen2@correo.com", "capturista", { estado: "31" });
+    est = await crear("q-est@oref.gob.mx", "estatal", { alcance: ["31"] });
+    uoteha = await crear("q-uoteha@gob.mx", "estatal", { nacional: true });
+    const { CLAVES_PERMISOS } = await import("@tortillerias/shared");
+    supTodo = await crear("q-sup@gob.mx", "supervisor", { permisos: [...CLAVES_PERMISOS] });
+    porAut = await crear("q-poraut@correo.com", "capturista", { estado: "31", cuenta: "por_autorizar" });
+    rech = await crear("q-rech@correo.com", "capturista", { estado: "31", cuenta: "rechazado" });
+    const tort = async (nombre: string, estado: string) =>
+      (await q("INSERT INTO tortillerias(id_denue, nombre, estado_clave, geom, origen, estatus) VALUES ($1,$1,$2, point(-103.3, 20.6),'denue','validada') RETURNING id", [nombre, estado]))[0].id as string;
+    T1 = await tort("Q-UNO", "31"); T2 = await tort("Q-DOS", "31"); T3 = await tort("Q-TRES", "31"); TBaja = await tort("Q-BAJA", "31"); TOtro = await tort("Q-OTRO", "15");
+    // visitadas: con un precio que cuenta
+    for (const [t, u] of [[T1, cen], [T2, cen2], [T3, cen], [TOtro, cen]]) await q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, capturista_id, estatus, fecha) VALUES ($1,'maiz',24,$2,'validada', current_date - 2)", [t, u]);
+    await q("UPDATE tortillerias SET operacion = 'inactiva' WHERE id = $1", [TBaja]);
+  });
+
+  it("guardar dos veces → dos registros (historial); el vigente es el más reciente", async () => {
+    expect((await aplicar(T1, cen, { capturadoEn: new Date(Date.now() - 3600_000).toISOString() })).status).toBe(201);
+    expect((await aplicar(T1, cen2, { respuestas: { ...R, a1: "TIENDA" } })).status).toBe(201);
+    expect((await q("SELECT count(*)::int AS n FROM tortilleria_cuestionarios WHERE tortilleria_id = $1", [T1]))[0].n).toBe(2);
+    expect((await q("SELECT a1_ubicacion FROM cuestionario_vigente WHERE tortilleria_id = $1", [T1]))[0].a1_ubicacion).toBe("TIENDA");
+  });
+
+  it("el mismo idCliente dos veces → un solo registro", async () => {
+    const idCliente = "5f9a7e0c-1111-4a2b-8c3d-000000000021";
+    expect((await aplicar(T2, cen2, { idCliente })).status).toBe(201);
+    expect((await aplicar(T2, cen2, { idCliente })).status).toBe(200);
+    expect((await q("SELECT count(*)::int AS n FROM tortilleria_cuestionarios WHERE tortilleria_id = $1", [T2]))[0].n).toBe(1);
+  });
+
+  it("valida en la API: obligatorias, B6/B7 condicionales y NINGUNO exclusivo", async () => {
+    const mal = (respuestas: object) => post(`/tortillerias/${T3}/cuestionario`, cen, { estatus: "aplicado", respuestas });
+    expect((await mal({ ...R, c1: undefined })).status).toBe(400);
+    expect((await mal({ ...R, b5: "ADHERIDA" })).status).toBe(400);
+    expect((await mal({ ...R, b8: ["NINGUNO", "JCF"] })).status).toBe(400);
+    expect((await post(`/tortillerias/${T3}/cuestionario`, cen, { estatus: "no_aplicado", motivo: "OTRO" })).status).toBe(400);
+  });
+
+  it("'No se pudo aplicar' no reemplaza a un cuestionario aplicado anterior (indicadores y descarga)", async () => {
+    expect((await post(`/tortillerias/${T1}/cuestionario`, cen, { estatus: "no_aplicado", motivo: "INSEGURIDAD" })).status).toBe(201);
+    expect((await q("SELECT estatus FROM cuestionario_ultimo WHERE tortilleria_id = $1", [T1]))[0].estatus).toBe("no_aplicado");
+    expect((await q("SELECT a1_ubicacion FROM cuestionario_vigente WHERE tortilleria_id = $1", [T1]))[0].a1_ubicacion).toBe("TIENDA");
+    const csv = await (await get("/admin/exportar/cuestionarios?estado=31", adm, "admin")).text();
+    expect(csv.split("\r\n").find((l) => l.startsWith(T1))).toMatch(/,aplicado,/);
+    // T3: solo un intento "no se pudo aplicar" → cuenta en los motivos y no como aplicado
+    expect((await post(`/tortillerias/${T3}/cuestionario`, cen, { estatus: "no_aplicado", motivo: "OTRO", motivoOtro: "Llovía muy fuerte" })).status).toBe(201);
+    const ind = await (await get("/admin/cuestionarios/indicadores?estado=31", adm, "admin")).json();
+    expect(ind.estados.find((e: any) => e.clave === "31")).toMatchObject({ visitadas: 3, aplicados: 2 });
+    expect(ind.motivos).toEqual(expect.arrayContaining([{ motivo: "OTRO", n: 1 }]));
+    expect(ind.municipios).not.toBeNull();
+  });
+
+  it("tortillería dada de baja → 409; censador por autorizar o rechazado → 403", async () => {
+    expect((await aplicar(TBaja, cen)).status).toBe(409);
+    expect((await aplicar(T3, porAut)).status).toBe(403);
+    expect((await aplicar(T3, rech)).status).toBe(403);
+  });
+
+  it("GET /tortillerias/:id/cuestionario devuelve A y B para prellenar, nunca el bloque C", async () => {
+    const r = await (await get(`/tortillerias/${T1}/cuestionario`, cen)).json();
+    expect(r.vigente.respuestas).toMatchObject({ a1: "TIENDA", b5: "CONOCE_NO_ADHERIDA", b6: ["PRECIO", "OTRO"], b7: true });
+    expect(JSON.stringify(r)).not.toMatch(/"c1"|"c2"|"c3"|SI_VISIBLE|ALGUNAS|licencia|imss|declaracion/i);
+    expect(r.ultimo).toMatchObject({ estatus: "no_aplicado", motivo: "INSEGURIDAD" });
+  });
+
+  it("C21.9: estatal, UOTEHA y supervisor (con todos sus permisos) no reciben respuestas: 403 y nada en el detalle", async () => {
+    for (const [u, rol] of [[est, "estatal"], [uoteha, "estatal"], [supTodo, "supervisor"], [sup, "supervisor"]] as const) {
+      for (const ruta of [`/admin/cuestionarios/tortilleria/${T1}`, "/admin/cuestionarios/indicadores", "/admin/exportar/cuestionarios", "/admin/exportar/cuestionarios/diccionario", `/tortillerias/${T1}/cuestionario`]) {
+        expect((await get(ruta, u, rol)).status, `${rol} ${ruta}`).toBe(403);
+      }
+      const det = await get(`/admin/tortillerias/${T1}`, u, rol);
+      if (det.status === 200) expect(JSON.stringify(await det.json())).not.toMatch(/cuestionario|SI_VISIBLE|CONOCE_NO_ADHERIDA/i);
+    }
+    const res = await get("/admin/resumen", uoteha, "estatal");
+    if (res.status === 200) expect(JSON.stringify(await res.json())).not.toMatch(/cuestionario/i);
+  });
+
+  it("DGTIC ve el detalle completo (con el bloque C) y queda en la bitácora", async () => {
+    (auditar as any).mockClear();
+    const r = await (await get(`/admin/cuestionarios/tortilleria/${T1}`, adm, "admin")).json();
+    expect(r.vigente.respuestas).toMatchObject({ a1: "TIENDA", c1: "SI_VISIBLE", c3: "NO_RESPONDE" });
+    expect(r.ultimo.estatus).toBe("no_aplicado");
+    expect(r.historial).toHaveLength(3);
+    expect((auditar as any).mock.calls.some((c: any[]) => c[1] === "ver_cuestionario")).toBe(true);
+  });
+
+  it("el administrador estatal recibe solo el avance de Mi equipo de su estado (sin respuestas)", async () => {
+    const r = await (await get("/admin/equipo", est, "estatal")).json();
+    expect(r.indicadores).toMatchObject({ visitadas_total: 3, con_cuestionario: 2 });
+    expect(r.censadores.find((c: any) => c.id === cen2).cuestionarios).toBe(2);
+    const sin = await (await get("/admin/equipo/sin-cuestionario", est, "estatal")).json();
+    expect(sin.filas.map((f: any) => f.id)).toEqual([T3]);
+    expect(sin.filas[0].censador).toBe("q-cen@correo.com");
+    expect(JSON.stringify(sin)).not.toMatch(/Llov|motivo|intent/i);
+    expect(JSON.stringify(r)).not.toMatch(/SI_VISIBLE|CONOCE_NO_ADHERIDA/);
+  });
+
+  it("la descarga trae una columna por punto de higiene y una Sí/No por opción de B6 y B8, sin datos personales", async () => {
+    const r = await get("/admin/exportar/cuestionarios", adm, "admin");
+    expect(r.status).toBe(200);
+    const [cab, ...filas] = (await r.text()).replace(/^﻿/, "").split("\r\n").filter(Boolean);
+    const cols = cab.split(",");
+    for (const c of ["a2_h_limpieza", "a2_h_plagas", "a2_h_insumos", "a2_h_personal", "a2_h_basura", "b6_precio", "b6_bodega_lejos", "b6_otro", "b6_otro_texto", "b8_jcf", "b8_ninguno", "ultimo_precio_tortilla", "id_denue"])
+      expect(cols, c).toContain(c);
+    expect(cab).not.toMatch(/rfc|razon|celular|curp|nombre|correo/i);
+    const f1 = filas.find((l) => l.startsWith(T1))!.split(",");
+    expect(f1[cols.indexOf("b6_precio")]).toBe("Sí");
+    expect(f1[cols.indexOf("b6_tramite")]).toBe("No");
+    expect(f1[cols.indexOf("b8_ninguno")]).toBe("No");
+    expect(f1[cols.indexOf("c1_licencia")]).toBe("SI_VISIBLE");
+    const f3 = filas.find((l) => l.startsWith(T3))!.split(",");
+    expect(f3[cols.indexOf("a1_ubicacion")]).toBe("");
+    expect(f3[cols.indexOf("estatus")]).toBe("no_aplicado");
+    expect(await (await get("/admin/exportar/cuestionarios/diccionario", adm, "admin")).text()).toMatch(/b8_ninguno/);
+  });
+
+  it("Mis tortillerías, el catálogo del teléfono y /fiscal/existe traen solo el estatus", async () => {
+    const mias = await (await get("/mis/tortillerias", cen)).json();
+    expect(mias.find((t: any) => t.id === T1).cuestionario).toMatchObject({ estatus: "aplicado" });
+    expect(mias.find((t: any) => t.id === T3).cuestionario).toMatchObject({ estatus: "no_aplicado", motivo: "OTRO" });
+    expect(JSON.stringify(mias)).not.toMatch(/SI_VISIBLE|CONOCE_NO_ADHERIDA/);
+    const cat = await (await get("/catalogo/estado/31", cen)).json();
+    const i = cat.columnas.indexOf("cuestionario_estatus");
+    const porId = Object.fromEntries(cat.filas.map((f: any[]) => [f[0], f[i]]));
+    expect(porId[T1]).toBe("aplicado");
+    expect(porId[T3]).toBe("no_aplicado");
+    expect(porId[T2]).toBe("aplicado");
+    const ex = await (await fetch(`${base}/tortillerias/${T3}/fiscal/existe`)).json();
+    expect(ex.cuestionario).toMatchObject({ estatus: "no_aplicado" });
   });
 });

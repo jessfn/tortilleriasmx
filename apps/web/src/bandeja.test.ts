@@ -569,3 +569,90 @@ describe("C20.1: estado del censador en el registro", () => {
     expect(await estadoPorUbicacion({ lat: 10, lng: -80 }, true)).toBeNull(); // en medio del mar, sin catálogo: que lo elija
   });
 });
+
+/* ===================== C21: cuestionario de supervisión ===================== */
+import { armarPasos } from "./pasos";
+import { marcarCuestionarioLocal } from "./catalogo";
+
+describe("C21: cuestionario en la captura y sin conexión", () => {
+  const R = {
+    a1: "MERCADO", a2: { H_LIMPIEZA: true, H_PLAGAS: true, H_INSUMOS: true, H_PERSONAL: true, H_BASURA: true },
+    b1: "HARINA", b2: "V_0_250", b3: "FAMILIAR", b4: "T_1", b5: "NO_CONOCE", b7: false, b8: ["NINGUNO"], c1: "NO_RESPONDE", c2: "NINGUNA", c3: "NO_SABE",
+  };
+  const columnas = ["id", "nombre", "domicilio", "lat", "lng", "estatus", "municipio_clave", "razon_social", "tiene_fiscal", "ultima_negativa", "elaboracion", "cuestionario_estatus"];
+  const filas = [
+    ["c1", "SIN CUESTIONARIO", "CALLE 1", 19.43, -99.13, 0, "09015", null, 1, null, "mano", null],
+    ["c2", "YA APLICADO", "CALLE 2", 19.44, -99.14, 0, "09015", null, 1, null, null, "aplicado"],
+    ["c3", "NO SE PUDO", "CALLE 3", 19.45, -99.15, 0, "09015", null, 1, null, null, "no_aplicado"],
+  ];
+  const de = (id: string) => ({ id, nombre: id, domicilio: null, lat: 19.43, lng: -99.13 });
+  const base = { caso: "mapa" as const, zonaManual: false, nueva: false, faltaFiscal: false, conCuenta: false };
+
+  beforeEach(async () => {
+    h.respuesta = () => ({ version: "v1", columnas, filas });
+    await descargarEstado("09", "CIUDAD DE MEXICO");
+    h.llamadas = [];
+  });
+
+  it("el paso aparece después del precio si no tiene cuestionario o el último fue 'no se pudo aplicar'; no aparece si ya está aplicado", () => {
+    expect(armarPasos({ ...base, pideCuest: true })).toEqual(["tortilleria", "precio", "cuestionario", "resumen"]);
+    expect(armarPasos({ ...base, pideCuest: false })).toEqual(["tortilleria", "precio", "resumen"]);
+    expect(armarPasos({ ...base, conCuenta: true, pideCuest: true })).toEqual(["tortilleria", "precio", "cuestionario", "cuenta", "resumen"]);
+    expect(armarPasos({ ...base, caso: "actualizar", faltaFiscal: true, pideCuest: true })).toEqual(["fiscal", "precio", "cuestionario", "resumen"]);
+    // la regla que usa la pantalla: se pide salvo que ya esté aplicado (o se vaya a actualizar)
+    const pide = (estatus: string | null | undefined, actualizar = false) => actualizar || estatus !== "aplicado";
+    expect(pide(porId("c1")?.cuestionario_estatus)).toBe(true);
+    expect(pide(porId("c3")?.cuestionario_estatus)).toBe(true);
+    expect(pide(porId("c2")?.cuestionario_estatus)).toBe(false);
+    expect(pide(porId("c2")?.cuestionario_estatus, true)).toBe(true);
+  });
+
+  it("el caso 'cuestionario' no pide precio (funciona aunque ya se haya capturado hoy) y su paquete sin precios es válido", async () => {
+    expect(armarPasos({ ...base, caso: "cuestionario", faltaFiscal: true, pideCuest: false })).toEqual(["cuestionario", "resumen"]);
+    h.respuesta = () => ({});
+    await guardarPaquete(paquete({ tortilleria: de("c3"), precios: [], cuestionario: { estatus: "aplicado", respuestas: R, idCliente: nuevoId() } }));
+    await sincronizar();
+    expect(rutas()).toEqual(["/tortillerias/c3/cuestionario"]);
+    expect((await listarPaquetes("u1"))[0].estado).toBe("enviado");
+  });
+
+  it("sin conexión: se envía después de los precios al volver la señal; el bloque C sale del teléfono y deja de decir 'Falta cuestionario'", async () => {
+    h.respuesta = () => new ApiError(0, "sin red");
+    await guardarPaquete(paquete({ tortilleria: de("c1"), elaboracion: { valor: "ambas", idCliente: nuevoId() }, cuestionario: { estatus: "aplicado", respuestas: R, idCliente: nuevoId() } }));
+    await sincronizar();
+    expect((await listarPaquetes("u1"))[0].estado).toBe("por_enviar");
+    h.llamadas = [];
+    h.respuesta = () => ({});
+    await sincronizar({ forzar: true });
+    expect(rutas()).toEqual(["/tortillerias/c1/elaboracion", "/precios", "/tortillerias/c1/cuestionario"]);
+    const cuerpo = h.llamadas[2].cuerpo;
+    expect(cuerpo).toMatchObject({ estatus: "aplicado", respuestas: { c1: "NO_RESPONDE" } });
+    expect(cuerpo.idCliente).toBeTruthy();
+    expect(cuerpo.capturadoEn).toBeTruthy();
+    const [p] = await listarPaquetes("u1");
+    expect(p.estado).toBe("enviado");
+    expect(p.cuestionario?.respuestas).toBeUndefined(); // las respuestas (con el bloque C) ya no se quedan en el teléfono
+    expect(porId("c1")?.cuestionario_estatus).toBe("aplicado");
+  });
+
+  it("'no se pudo aplicar' se envía con su motivo y nunca baja a una tortillería que ya tenía uno aplicado", async () => {
+    h.respuesta = () => ({});
+    await guardarPaquete(paquete({ tortilleria: de("c2"), cuestionario: { estatus: "no_aplicado", motivo: "INSEGURIDAD", idCliente: nuevoId() } }));
+    await sincronizar();
+    expect(h.llamadas.at(-1)!.cuerpo).toMatchObject({ estatus: "no_aplicado", motivo: "INSEGURIDAD" });
+    expect(h.llamadas.at(-1)!.cuerpo.respuestas).toBeUndefined();
+    expect(porId("c2")?.cuestionario_estatus).toBe("aplicado");
+    await marcarCuestionarioLocal("c1", "no_aplicado");
+    expect(porId("c1")?.cuestionario_estatus).toBe("no_aplicado");
+  });
+
+  it("si la tortillería se dio de baja mientras tanto (409), no se reintenta: queda en conflicto con el aviso", async () => {
+    h.respuesta = (ruta) => (ruta.endsWith("/cuestionario") ? new ApiError(409, "Esta tortillería se dio de baja") : {});
+    await guardarPaquete(paquete({ tortilleria: de("c1"), precios: [], cuestionario: { estatus: "aplicado", respuestas: R, idCliente: nuevoId() } }));
+    await sincronizar();
+    const [p] = await listarPaquetes("u1");
+    expect(p.estado).toBe("conflicto");
+    expect(p.mensaje).toMatch(/baja/);
+    expect(porId("c1")).toBeUndefined();
+  });
+});

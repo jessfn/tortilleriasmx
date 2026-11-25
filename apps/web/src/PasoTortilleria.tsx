@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Ban, Check, List, Loader2, LocateFixed, Map as MapaIcono, MapPin, Navigation, Plus, ShieldAlert, Store, WifiOff, X } from "lucide-react";
 import { api } from "./api";
-import { alCambiarCatalogo, cercanas, cubre, delMunicipio } from "./catalogo";
+import { alCambiarCatalogo, cercanas, cubre, delMunicipio, porId } from "./catalogo";
 import { Aviso, Boton, Buscador, Cabecera, Hoja, Opcion } from "./ui";
 import BuscadorLugar from "./BuscadorLugar";
 import HojaBaja from "./HojaBaja";
@@ -402,6 +402,12 @@ export default function PasoTortilleria(p: Props) {
                         )}
                         {sel.estatus === "pendiente" && <span className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700 ring-1 ring-amber-200">Por validar</span>}
                         {sel.estatus === "porenviar" && <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600 ring-1 ring-slate-300">Por enviar</span>}
+                        {/* C21: aprovechar la visita (dato del catálogo del teléfono, también sin conexión) */}
+                        {porId(sel.id) && porId(sel.id)?.cuestionario_estatus !== "aplicado" && (
+                          <span className="rounded-full bg-dorado/15 px-2 py-0.5 font-semibold text-[#7a5a1f] ring-1 ring-dorado/40">
+                            {porId(sel.id)?.cuestionario_estatus === "no_aplicado" ? "Cuestionario no aplicado" : "Falta cuestionario"}
+                          </span>
+                        )}
                       </p>
                     </div>
                     <button onClick={() => setSel(null)} aria-label="Cerrar" className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-stone-400 hover:bg-stone-100">

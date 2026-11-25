@@ -1,6 +1,7 @@
 import { AvisoCuenta } from "./AvisoCuenta";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, CheckCircle2, ClipboardList, Clock, Home, MapPin, PackageOpen, Plus, RefreshCw, Store, UserRound, Wheat, XCircle, Layers, Loader2, WifiOff } from "lucide-react";
+import { Check, CheckCircle2, ChevronRight, ClipboardCheck, ClipboardList, ClipboardPen, Clock, Home, MapPin, PackageOpen, Plus, RefreshCw, Store, UserRound, Wheat, XCircle, Layers, Loader2, WifiOff } from "lucide-react";
+import { textoMotivoNoAplica } from "@tortillerias/shared";
 import { api, ApiError, type Sesion } from "./api";
 import Perfil from "./Perfil";
 import { CLAVES, usePersistente } from "./persist";
@@ -18,7 +19,14 @@ type MiTortilleria = {
   lat: number | null; lng: number | null; ultimo_maiz: Ultimo; ultima_masa: Ultimo; maiz_hoy: boolean; masa_hoy: boolean;
   /** tiene capturas guardadas en este teléfono que todavía no llegan al servidor */
   porEnviar?: boolean;
+  /** "inactiva" = se dio de baja (ya no lleva cuestionario) */
+  operacion?: string;
+  /** C21: solo el estatus del cuestionario (nunca respuestas). null = falta */
+  cuestionario?: { estatus: "aplicado" | "no_aplicado"; fecha: string; motivo?: string | null } | null;
 };
+
+/** ¿Le falta el cuestionario? (no aplica a las dadas de baja) */
+const faltaCuest = (t: MiTortilleria) => t.operacion !== "inactiva" && t.cuestionario?.estatus !== "aplicado";
 type Registro = {
   tortilleria_id: string;
   id: string; producto: "maiz" | "harina" | "masa"; precio_kg: string; fecha: string; creado_en: string; estatus: string; alerta: boolean;
@@ -56,6 +64,8 @@ async function mezclarBandeja(filas: MiTortilleria[], paquetes: Paquete[]): Prom
     }
     f.porEnviar = true;
     const dia = diaMexico(p.capturadoEn);
+    // un cuestionario por enviar ya cuenta (un "no se pudo aplicar" no baja a uno aplicado)
+    if (p.cuestionario && f.cuestionario?.estatus !== "aplicado") f.cuestionario = { estatus: p.cuestionario.estatus, fecha: dia, motivo: p.cuestionario.motivo ?? null };
     for (const pr of p.precios) {
       if (pr.estado === "conflicto") continue;
       const campo = pr.producto === "maiz" ? "ultimo_maiz" : "ultima_masa";
@@ -69,7 +79,7 @@ async function mezclarBandeja(filas: MiTortilleria[], paquetes: Paquete[]): Prom
 }
 
 /** Una tortillería del censador, con su último precio de cada producto y el botón para actualizarlo */
-function TarjetaTortilleria({ t, alActualizar, alAbrir }: { t: MiTortilleria; alActualizar: (t: MiTortilleria) => void; alAbrir: (t: MiTortilleria) => void }) {
+function TarjetaTortilleria({ t, alActualizar, alAbrir, alCuestionario }: { t: MiTortilleria; alActualizar: (t: MiTortilleria) => void; alAbrir: (t: MiTortilleria) => void; alCuestionario: (t: MiTortilleria) => void }) {
   const hoy = t.maiz_hoy && t.masa_hoy;
   const linea = (I: typeof Wheat, texto: string, u: Ultimo, yaHoy: boolean) => (
     <span className="flex items-center gap-1.5 text-stone-600">
@@ -107,6 +117,7 @@ function TarjetaTortilleria({ t, alActualizar, alAbrir }: { t: MiTortilleria; al
         {linea(Wheat, "Tortilla", t.ultimo_maiz, t.maiz_hoy)}
         {linea(Layers, "Masa", t.ultima_masa, t.masa_hoy)}
       </div>
+      {t.operacion !== "inactiva" && <EstadoCuestionario t={t} alCuestionario={alCuestionario} />}
       <Boton onClick={() => alActualizar(t)} disabled={hoy} variante={hoy ? "secundario" : "primario"} icono={hoy ? Check : RefreshCw} className="!min-h-11">
         {hoy ? "Capturado hoy" : "Actualizar precio"}
       </Boton>
@@ -114,9 +125,39 @@ function TarjetaTortilleria({ t, alActualizar, alAbrir }: { t: MiTortilleria; al
   );
 }
 
+/** C21: estatus del cuestionario de la tortillería y el botón para aplicarlo o actualizarlo (sin pedir precio) */
+function EstadoCuestionario({ t, alCuestionario }: { t: MiTortilleria; alCuestionario: (t: MiTortilleria) => void }) {
+  const c = t.cuestionario;
+  const aplicado = c?.estatus === "aplicado";
+  return (
+    <div className={`flex items-center gap-2 rounded-xl px-2.5 py-2 ${aplicado ? "bg-emerald-50 ring-1 ring-emerald-100" : "bg-dorado/10 ring-1 ring-dorado/30"}`}>
+      {aplicado ? <ClipboardCheck className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden /> : <ClipboardPen className="h-4 w-4 shrink-0 text-[#7a5a1f]" aria-hidden />}
+      <span className="min-w-0 flex-1 text-xs leading-tight">
+        {aplicado ? (
+          <span className="font-semibold text-emerald-800">Cuestionario aplicado el {fechaDia(c!.fecha)}</span>
+        ) : c?.estatus === "no_aplicado" ? (
+          <>
+            <span className="block font-semibold text-[#7a5a1f]">No se pudo aplicar</span>
+            <span className="block truncate text-stone-500">{textoMotivoNoAplica(c.motivo)} · {fechaDia(c.fecha)}</span>
+          </>
+        ) : (
+          <span className="font-semibold text-[#7a5a1f]">Falta cuestionario</span>
+        )}
+      </span>
+      <button
+        type="button"
+        onClick={() => alCuestionario(t)}
+        className={`flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition active:scale-95 ${aplicado ? "bg-white text-emerald-700 ring-1 ring-emerald-200" : "bg-guinda text-white shadow-sm"}`}
+      >
+        {aplicado ? "Actualizar cuestionario" : "Aplicar cuestionario"}
+      </button>
+    </div>
+  );
+}
+
 export default function PanelUsuario({
-  sesion, alCapturar, alActualizarPrecio, alActualizarSesion, alSalir,
-}: { sesion: Sesion; alCapturar: () => void; alActualizarPrecio: (t: Punto) => void; alActualizarSesion: (s: Sesion) => void; alSalir: () => void }) {
+  sesion, alCapturar, alActualizarPrecio, alAplicarCuestionario, alActualizarSesion, alSalir,
+}: { sesion: Sesion; alCapturar: () => void; alActualizarPrecio: (t: Punto) => void; alAplicarCuestionario: (t: Punto) => void; alActualizarSesion: (s: Sesion) => void; alSalir: () => void }) {
   const estadoCuenta = sesion.usuario.estadoCuenta ?? "autorizado";
   const [tab, setTab] = usePersistente(CLAVES.tabUsuario, "inicio");
   const [resumen, setResumen] = useState<Resumen>();
@@ -178,6 +219,14 @@ export default function PanelUsuario({
 
   const actualizar = (t: MiTortilleria) =>
     alActualizarPrecio({ id: t.id, nombre: t.nombre, domicilio: t.domicilio, estatus: t.estatus, lat: t.lat ?? 0, lng: t.lng ?? 0, razon_social: null });
+  const cuestionario = (t: MiTortilleria) => {
+    if (estadoCuenta !== "autorizado") return;
+    alAplicarCuestionario({ id: t.id, nombre: t.nombre, domicilio: t.domicilio, estatus: t.estatus, lat: t.lat ?? 0, lng: t.lng ?? 0, razon_social: null });
+  };
+  // filtro rápido "Sin cuestionario" en Mis tortillerías
+  const [soloSinCuest, setSoloSinCuest] = useState(false);
+  const sinCuest = (tortillerias ?? []).filter(faltaCuest);
+  const lista = soloSinCuest ? sinCuest : (tortillerias ?? []);
 
   const u = sesion.usuario;
   const nombre = (u.nombre ? u.nombre.split(" ")[0] : u.correo.split("@")[0]).toLowerCase().replace(/^./, (c) => c.toUpperCase());
@@ -221,6 +270,25 @@ export default function PanelUsuario({
           </button>
           )}
 
+          {estadoCuenta === "autorizado" && sinCuest.length > 0 && (
+            <button
+              onClick={() => {
+                setSoloSinCuest(true);
+                setTab("registros");
+              }}
+              className="flex w-full items-center gap-3 rounded-2xl bg-dorado/10 p-3.5 text-left ring-1 ring-dorado/40 transition active:scale-[.98]"
+            >
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-dorado/20 text-[#7a5a1f]"><ClipboardPen className="h-5 w-5" aria-hidden /></span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold text-stone-900">
+                  Tienes {sinCuest.length} {sinCuest.length === 1 ? "tortillería" : "tortillerías"} sin cuestionario
+                </span>
+                <span className="block text-xs text-stone-600">Aplícalo en tu próxima visita; no necesitas volver a capturar el precio.</span>
+              </span>
+              <ChevronRight className="h-5 w-5 shrink-0 text-stone-400" aria-hidden />
+            </button>
+          )}
+
           <div className="grid grid-cols-3 gap-2">
             <Dato icono={ClipboardList} etiqueta="Registros" valor={resumen?.registros ?? "–"} />
             <Dato icono={Clock} etiqueta="Atípicos en revisión" valor={resumen?.pendientes ?? "–"} tono="dorado" />
@@ -241,7 +309,7 @@ export default function PanelUsuario({
           ) : tortillerias.length === 0 ? (
             <Vacio icono={Store} titulo="Aún no tienes tortillerías" texto="Registra el precio de tu primera tortillería para empezar." />
           ) : (
-            tortillerias.slice(0, 3).map((t) => <TarjetaTortilleria key={t.id} t={t} alActualizar={actualizar} alAbrir={setDetalle} />)
+            tortillerias.slice(0, 3).map((t) => <TarjetaTortilleria key={t.id} t={t} alActualizar={actualizar} alAbrir={setDetalle} alCuestionario={cuestionario} />)
           )}
         </>
       )}
@@ -253,12 +321,30 @@ export default function PanelUsuario({
               <XCircle className="h-4 w-4 shrink-0" aria-hidden /> {resumen.rechazados} registro(s) fueron rechazados por revisión.
             </Tarjeta>
           )}
+          {!!tortillerias?.length && (
+            <div className="grid grid-cols-2 gap-1 rounded-2xl bg-stone-200/70 p-1" role="tablist" aria-label="Filtrar">
+              {([[false, "Todas", tortillerias.length], [true, "Sin cuestionario", sinCuest.length]] as const).map(([v, t, n]) => (
+                <button
+                  key={t}
+                  role="tab"
+                  aria-selected={soloSinCuest === v}
+                  onClick={() => setSoloSinCuest(v)}
+                  className={`flex min-h-10 items-center justify-center gap-1.5 rounded-xl text-[13px] font-semibold transition ${soloSinCuest === v ? "bg-white text-guinda shadow" : "text-stone-500"}`}
+                >
+                  {t}
+                  <span className={`grid h-5 min-w-5 place-items-center rounded-full px-1.5 text-[11px] ${soloSinCuest === v ? "bg-guinda text-white" : "bg-stone-300/70 text-stone-600"}`}>{n}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {!tortillerias ? (
             <div className="grid place-items-center py-8 text-stone-400"><Loader2 className="h-6 w-6 animate-spin" /></div>
           ) : tortillerias.length === 0 ? (
             <Vacio icono={ClipboardList} titulo="Sin tortillerías todavía" texto="Cuando captures un precio aparecerá aquí, y podrás actualizarlo con un toque." />
+          ) : lista.length === 0 ? (
+            <Vacio icono={ClipboardCheck} titulo="¡Todas tienen cuestionario!" texto="Ninguna de tus tortillerías tiene el cuestionario pendiente." />
           ) : (
-            tortillerias.map((t) => <TarjetaTortilleria key={t.id} t={t} alActualizar={actualizar} alAbrir={setDetalle} />)
+            lista.map((t) => <TarjetaTortilleria key={t.id} t={t} alActualizar={actualizar} alAbrir={setDetalle} alCuestionario={cuestionario} />)
           )}
           <Boton onClick={alCapturar} icono={Plus} disabled={estadoCuenta !== "autorizado"}>
             Registrar otra tortillería
@@ -294,6 +380,7 @@ export default function PanelUsuario({
               );
             })}
           </div>
+          {detalle.operacion !== "inactiva" && <EstadoCuestionario t={detalle} alCuestionario={(t) => { setDetalle(undefined); cuestionario(t); }} />}
           <Boton onClick={() => { const t = detalle; setDetalle(undefined); actualizar(t); }} disabled={detalle.maiz_hoy && detalle.masa_hoy} icono={RefreshCw}>
             {detalle.maiz_hoy && detalle.masa_hoy ? "Capturado hoy" : "Actualizar precio"}
           </Boton>

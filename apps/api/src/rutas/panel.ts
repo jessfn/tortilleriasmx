@@ -36,7 +36,15 @@ export function rutasPanel(app: FastifyInstance) {
                 WHERE c.tortilleria_id = t.id AND c.capturista_id = $1 AND c.producto = 'masa'
                 ORDER BY c.fecha DESC, c.creado_en DESC LIMIT 1) AS ultima_masa,
               EXISTS (SELECT 1 FROM capturas_precio c WHERE c.tortilleria_id = t.id AND c.capturista_id = $1 AND c.producto = 'maiz' AND c.fecha = (SELECT d FROM hoy)) AS maiz_hoy,
-              EXISTS (SELECT 1 FROM capturas_precio c WHERE c.tortilleria_id = t.id AND c.capturista_id = $1 AND c.producto = 'masa' AND c.fecha = (SELECT d FROM hoy)) AS masa_hoy
+              EXISTS (SELECT 1 FROM capturas_precio c WHERE c.tortilleria_id = t.id AND c.capturista_id = $1 AND c.producto = 'masa' AND c.fecha = (SELECT d FROM hoy)) AS masa_hoy,
+              t.operacion,
+              -- C21: solo el estatus del cuestionario (aplicado, o el último intento "no se pudo aplicar"), nunca las respuestas
+              coalesce(
+                (SELECT json_build_object('estatus', 'aplicado', 'fecha', to_char(coalesce(k.capturado_en, k.creado_en) AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD'))
+                   FROM cuestionario_vigente k WHERE k.tortilleria_id = t.id),
+                (SELECT json_build_object('estatus', u.estatus, 'fecha', to_char(u.fecha AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD'), 'motivo', u.motivo_no_aplica)
+                   FROM cuestionario_ultimo u WHERE u.tortilleria_id = t.id)
+              ) AS cuestionario
          FROM mias
          JOIN tortillerias t ON t.id = mias.id
          LEFT JOIN municipios m ON m.clave = t.municipio_clave

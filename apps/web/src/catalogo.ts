@@ -74,6 +74,7 @@ function aLocales(clave: string, r: Extract<Respuesta, { filas: unknown }>): Loc
     ultima_negativa: i.ultima_negativa === undefined ? null : ((f[i.ultima_negativa] as string | null) ?? null),
     tiene_foto: i.tiene_foto === undefined ? undefined : f[i.tiene_foto] === 1,
     elaboracion: i.elaboracion === undefined ? null : ((f[i.elaboracion] as string | null) ?? null),
+    cuestionario_estatus: i.cuestionario_estatus === undefined ? null : ((f[i.cuestionario_estatus] as "aplicado" | "no_aplicado" | null) ?? null),
   }));
 }
 
@@ -152,6 +153,28 @@ export async function marcarElaboracionLocal(id: string, valor: string) {
   }
   const t = temporales.find((x) => x.id === id);
   if (t) t.elaboracion = valor;
+  recomponer();
+}
+
+/**
+ * C21: recuerda en este teléfono el estatus del cuestionario (para quitar "Falta cuestionario" en el mapa y en la lista, también sin conexión).
+ * Un "no se pudo aplicar" nunca baja a una tortillería que ya tenía uno aplicado.
+ */
+export async function marcarCuestionarioLocal(id: string, estatus: "aplicado" | "no_aplicado") {
+  const nuevo = (actual?: string | null) => (actual === "aplicado" ? "aplicado" : estatus);
+  for (const c of descargadas) {
+    const p = c.puntos.find((x) => x.id === id);
+    if (p && p.cuestionario_estatus !== nuevo(p.cuestionario_estatus)) {
+      p.cuestionario_estatus = nuevo(p.cuestionario_estatus);
+      try {
+        await (await abrir()).put("catalogo", c);
+      } catch {
+        /* se corrige en la siguiente descarga */
+      }
+    }
+  }
+  const t = temporales.find((x) => x.id === id);
+  if (t) t.cuestionario_estatus = nuevo(t.cuestionario_estatus);
   recomponer();
 }
 

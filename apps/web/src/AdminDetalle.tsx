@@ -5,15 +5,18 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, Building2, CalendarDays, Camera, Check, ChevronLeft, ChevronRight, ExternalLink, FileText, Hash, Layers, Loader2, Mail, MapPin, Phone, ShieldCheck, UserRound, Users, Wheat, X,
 } from "lucide-react";
-import { api } from "./api";
+import { api, leerSesion } from "./api";
+import CuestionarioAdmin from "./CuestionarioAdmin";
 import FotoAuth from "./FotoAuth";
 import { Aviso, Insignia } from "./ui";
 import { dinero } from "./AdminVivo";
 import type { PuntoAdm } from "./MapaAdmin";
 import type { CapturaAdm, Fiscal, TortilleriaAdm } from "./PanelAdmin";
 
-type Pestaña = "resumen" | "datos" | "fiscal" | "historial";
+type Pestaña = "resumen" | "datos" | "fiscal" | "historial" | "cuestionario";
 const PESTAÑAS: [Pestaña, string][] = [["resumen", "Resumen"], ["datos", "Datos"], ["fiscal", "Fiscal"], ["historial", "Historial"]];
+/** C21.9: la pestaña del cuestionario solo existe para el rol admin (DGTIC); la API responde 403 a cualquier otro */
+const PESTAÑA_CUEST: [Pestaña, string] = ["cuestionario", "Cuestionario"];
 
 const NOMBRE_PRODUCTO = { maiz: "Tortilla", harina: "Harina", masa: "Masa" } as const;
 const fechaLarga = (s: string) => new Date(s).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
@@ -193,7 +196,7 @@ export default function DetalleLateral({
 
         {/* Pestañas */}
         <div role="tablist" className="mt-3 flex gap-1 border-b border-stone-200">
-          {PESTAÑAS.map(([id2, texto]) => (
+          {(leerSesion()?.usuario.rol === "admin" ? [...PESTAÑAS, PESTAÑA_CUEST] : PESTAÑAS).map(([id2, texto]) => (
             <button
               key={id2}
               role="tab"
@@ -269,6 +272,8 @@ export default function DetalleLateral({
               </p>
             </div>
           )}
+
+          {tab === "cuestionario" && leerSesion()?.usuario.rol === "admin" && <CuestionarioAdmin tortilleriaId={id} />}
 
           {tab === "historial" &&
             (capturas === undefined ? (

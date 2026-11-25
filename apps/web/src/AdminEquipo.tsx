@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowUpDown, CalendarCheck, Download, Landmark, Loader2, Search, Store, UserCheck, Users } from "lucide-react";
+import { ArrowUpDown, CalendarCheck, ChevronLeft, ChevronRight, ClipboardCheck, ClipboardPen, Download, Landmark, Loader2, MapPin, Search, Store, UserCheck, Users } from "lucide-react";
 import { textoEstadoCuenta } from "@tortillerias/shared";
 import { api, apiDescargar } from "./api";
 import { Aviso, Tarjeta, Vacio } from "./ui";
@@ -8,9 +8,14 @@ import { SelectorFiltro } from "./Filtros";
 type Fila = {
   id: string; nombre: string; apellidos: string; correo: string | null; estado_cuenta: string; activo: boolean; estado: string | null;
   capturas: number; hoy: number; siete_dias: number; tortillerias: number; ultima_captura: string | null;
+  /** C21: cuántas tortillerías tienen un cuestionario aplicado por este censador (nunca las respuestas) */
+  cuestionarios: number;
 };
 type Datos = {
-  indicadores: { autorizados: number; censadores_hoy: number; capturas_hoy: number; capturas_7d: number; denue_total: number; denue_visitadas: number; avance_censo: number };
+  indicadores: {
+    autorizados: number; censadores_hoy: number; capturas_hoy: number; capturas_7d: number; denue_total: number; denue_visitadas: number; avance_censo: number;
+    visitadas_total: number; con_cuestionario: number; avance_cuestionario: number;
+  };
   censadores: Fila[];
   puedeExportar: boolean;
 };
@@ -80,13 +85,14 @@ export default function AdminEquipo({ estadosPermitidos }: { estadosPermitidos?:
       </div>
       {error && <Aviso>{error}</Aviso>}
 
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
         {[
           ["Censadores autorizados", i && num(i.autorizados), UserCheck, ""],
           ["Capturaron hoy", i && num(i.censadores_hoy), CalendarCheck, ""],
           ["Capturas de hoy", i && num(i.capturas_hoy), Store, ""],
           ["Capturas, últimos 7 días", i && num(i.capturas_7d), Store, ""],
           ["Avance del censo", i && `${i.avance_censo.toLocaleString("es-MX", { maximumFractionDigits: 2 })} %`, Landmark, i ? `${num(i.denue_visitadas)} de ${num(i.denue_total)} tortillerías` : ""],
+          ["Con cuestionario", i && `${(i.avance_cuestionario ?? 0).toLocaleString("es-MX", { maximumFractionDigits: 1 })} %`, ClipboardCheck, i ? `${num(i.con_cuestionario ?? 0)} de ${num(i.visitadas_total ?? 0)} visitadas` : ""],
         ].map(([t, v, Icono, sub]) => {
           const I = Icono as typeof Store;
           return (
@@ -129,6 +135,7 @@ export default function AdminEquipo({ estadosPermitidos }: { estadosPermitidos?:
                     <th className="px-3 py-2 text-right font-semibold">7 días</th>
                     <th className="px-3 py-2 text-right font-semibold">Totales</th>
                     <th className="px-3 py-2 text-right font-semibold">Tortillerías</th>
+                    <th className="px-3 py-2 text-right font-semibold" title="Tortillerías con cuestionario aplicado por este censador">Cuestionarios</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -141,6 +148,7 @@ export default function AdminEquipo({ estadosPermitidos }: { estadosPermitidos?:
                       <td className="px-3 py-2 text-right tabular-nums">{num(c.siete_dias)}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{num(c.capturas)}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{num(c.tortillerias)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{num(c.cuestionarios ?? 0)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -154,8 +162,8 @@ export default function AdminEquipo({ estadosPermitidos }: { estadosPermitidos?:
                     <div className="min-w-0"><p className="truncate font-semibold leading-tight">{`${c.nombre} ${c.apellidos}`.trim() || c.correo}</p><p className="truncate text-xs text-stone-500">{c.correo}</p></div>
                     <EtiquetaCuenta c={c} />
                   </div>
-                  <div className="grid grid-cols-4 gap-1 text-center text-[11px] text-stone-500">
-                    {[["Hoy", c.hoy], ["7 días", c.siete_dias], ["Totales", c.capturas], ["Tiendas", c.tortillerias]].map(([t, v]) => (
+                  <div className="grid grid-cols-5 gap-1 text-center text-[11px] text-stone-500">
+                    {[["Hoy", c.hoy], ["7 días", c.siete_dias], ["Totales", c.capturas], ["Tiendas", c.tortillerias], ["Cuestion.", c.cuestionarios ?? 0]].map(([t, v]) => (
                       <div key={t as string} className="rounded-lg bg-stone-50 py-1.5"><b className="block text-base text-stone-800">{num(v as number)}</b>{t as string}</div>
                     ))}
                   </div>
@@ -166,7 +174,75 @@ export default function AdminEquipo({ estadosPermitidos }: { estadosPermitidos?:
           </>
         )}
       </Tarjeta>
+
+      <SinCuestionario estado={estado} />
     </div>
+  );
+}
+
+type SinCuest = { total: number; pagina: number; paginas: number; filas: { id: string; nombre: string; domicilio: string | null; municipio: string | null; estado: string | null; censador: string | null; ultimaVisita: string | null }[] };
+const dia = (s: string) => {
+  const [a, m, d] = s.split("-").map(Number);
+  return new Date(a, m - 1, d).toLocaleDateString("es-MX", { day: "2-digit", month: "short" });
+};
+
+/**
+ * C21 · Tortillerías visitadas que aún no tienen cuestionario, con el censador que la visitó por última vez,
+ * para pedirle que lo complete (lo aplica desde "Mis tortillerías" sin volver a capturar precio). Solo el estatus: nunca respuestas.
+ */
+function SinCuestionario({ estado }: { estado: string }) {
+  const [d, setD] = useState<SinCuest>();
+  const [pagina, setPagina] = useState(1);
+  const [error, setError] = useState("");
+  useEffect(() => setPagina(1), [estado]);
+  useEffect(() => {
+    let vigente = true;
+    const p = new URLSearchParams({ pagina: String(pagina) });
+    if (estado) p.set("estado", estado);
+    api<SinCuest>(`/admin/equipo/sin-cuestionario?${p}`).then((r) => vigente && (setD(r), setError(""))).catch((e) => vigente && setError(e.message));
+    return () => { vigente = false; };
+  }, [estado, pagina]);
+
+  return (
+    <Tarjeta className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-dorado/15 text-[#7a5a1f]"><ClipboardPen className="h-4 w-4" aria-hidden /></span>
+        <div className="min-w-0 flex-1 leading-tight">
+          <h3 className="text-sm font-bold">Tortillerías visitadas sin cuestionario{d ? ` · ${num(d.total)}` : ""}</h3>
+          <p className="text-xs text-stone-500">Pide al censador que lo aplique desde "Mis tortillerías"; no necesita volver a capturar el precio.</p>
+        </div>
+      </div>
+      {error && <Aviso>{error}</Aviso>}
+      {!d ? (
+        <div className="grid place-items-center py-8 text-stone-400"><Loader2 className="h-5 w-5 animate-spin" /></div>
+      ) : d.filas.length === 0 ? (
+        <p className="py-4 text-center text-sm text-emerald-700">Todas las tortillerías visitadas tienen cuestionario.</p>
+      ) : (
+        <>
+          <ul className="divide-y divide-stone-100">
+            {d.filas.map((f) => (
+              <li key={f.id} className="flex flex-col gap-0.5 py-2 sm:flex-row sm:items-center sm:gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">{f.nombre}</p>
+                  <p className="flex items-center gap-1 truncate text-xs text-stone-500"><MapPin className="h-3 w-3 shrink-0" aria-hidden /> {[f.municipio, f.estado].filter(Boolean).join(", ") || f.domicilio || "Sin ubicación"}</p>
+                </div>
+                <div className="min-w-0 text-xs text-stone-600 sm:w-64 sm:text-right">
+                  <span className="block truncate font-medium">{f.censador ?? "Sin censador"}</span>
+                  {f.ultimaVisita && <span className="text-stone-400">Última visita: {dia(f.ultimaVisita)}</span>}
+                </div>
+              </li>
+            ))}
+          </ul>
+          {d.paginas > 1 && (
+            <div className="flex items-center justify-end gap-2 pt-1 text-xs text-stone-500">
+              <button onClick={() => setPagina(pagina - 1)} disabled={pagina <= 1} aria-label="Página anterior" className="grid h-8 w-8 place-items-center rounded-lg bg-stone-100 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
+              Página {d.pagina} de {d.paginas}
+              <button onClick={() => setPagina(pagina + 1)} disabled={pagina >= d.paginas} aria-label="Página siguiente" className="grid h-8 w-8 place-items-center rounded-lg bg-stone-100 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
+            </div>
+          )}
+        </>
+      )}
+    </Tarjeta>
   );
 }
 

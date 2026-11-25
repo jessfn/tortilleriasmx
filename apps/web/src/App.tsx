@@ -37,7 +37,7 @@ export default function App() {
   const [paraActualizar, setParaActualizar] = useState<Punto | undefined>(() => {
     // tras una recarga (p. ej. al actualizarse la app) se sigue donde se estaba
     const b = leer<{ caso?: string; d?: { tortilleria?: Punto } }>(CLAVES.borrador);
-    return leer<Vista>(CLAVES.vista) === "captura" && b?.caso === "actualizar" ? b.d?.tortilleria : undefined;
+    return leer<Vista>(CLAVES.vista) === "captura" && (b?.caso === "actualizar" || b?.caso === "cuestionario") ? b.d?.tortilleria : undefined;
   });
 
   useEffect(() => {
@@ -119,9 +119,23 @@ export default function App() {
     setVista("captura");
   };
 
+  // C21: abre la captura solo con el cuestionario (tortillerías ya censadas), sin pedir precio
+  const [modoCaptura, setModoCaptura] = useState<"actualizar" | "cuestionario">(() => {
+    const b = leer<{ caso?: string }>(CLAVES.borrador);
+    return leer<Vista>(CLAVES.vista) === "captura" && b?.caso === "cuestionario" ? "cuestionario" : "actualizar";
+  });
+  const aplicarCuestionario = (t: Punto) => {
+    if (!puedeCapturar) return;
+    borrar(CLAVES.borrador);
+    setModoCaptura("cuestionario");
+    setParaActualizar(t);
+    setVista("captura");
+  };
+
   const actualizarPrecio = (t: Punto) => {
     if (!puedeCapturar) return;
     borrar(CLAVES.borrador);
+    setModoCaptura("actualizar");
     setParaActualizar(t);
     setVista("captura");
   };
@@ -135,6 +149,7 @@ export default function App() {
       <Captura
         sesion={sesion}
         tortilleriaInicial={paraActualizar}
+        modo={modoCaptura}
         alSesion={alSesion}
         alSalir={() => {
           borrar(CLAVES.borrador);
@@ -161,7 +176,7 @@ export default function App() {
   // Censadores que ya existían: antes de capturar completan sus datos (la bandeja sigue enviando lo que ya tenían)
   if (sesion.usuario.rol === "capturista" && sesion.usuario.datosCompletos === false) return <CompletaDatos sesion={sesion} alListo={actualizar} alSalir={salir} />;
   if (sesion.usuario.rol === "capturista")
-    return <PanelUsuario sesion={sesion} alCapturar={nuevoRegistro} alActualizarPrecio={actualizarPrecio} alActualizarSesion={actualizar} alSalir={salir} />;
+    return <PanelUsuario sesion={sesion} alCapturar={nuevoRegistro} alActualizarPrecio={actualizarPrecio} alAplicarCuestionario={aplicarCuestionario} alActualizarSesion={actualizar} alSalir={salir} />;
   return <PanelAdmin sesion={sesion} alActualizarSesion={actualizar} alSalir={salir} />;
   })();
 

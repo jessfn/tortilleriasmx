@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { auditar, pool } from "../db.js";
 import { aHoraMexico, CLAVE_CORTE, corteDesdeHoraMexico, leerCorte } from "../ajustes.js";
 import { alcanceDe, enAlcanceSql, soloConEstado } from "../alcance.js";
+import { SQL_VISITADAS } from "./cuestionario.js";
 
 const HOY = "(now() AT TIME ZONE 'America/Mexico_City')::date";
 const sinAcentos = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -42,11 +43,13 @@ export function rutasAdminEquipo(app: FastifyInstance) {
          SELECT c.capturista_id, count(*)::int AS total, (count(*) FILTER (WHERE c.fecha = ${HOY}))::int AS hoy,
                 (count(*) FILTER (WHERE c.fecha >= ${HOY} - 6))::int AS s7, count(DISTINCT c.tortilleria_id)::int AS tiendas,
                 max(coalesce(c.capturado_en, c.creado_en)) AS ultima
-           FROM capturas_precio c WHERE c.capturista_id IN (SELECT u.id FROM usuarios u WHERE u.rol = 'capturista' AND ${enAlcanceSql("u.estado_clave", 1)}) GROUP BY c.capturista_id)
+           FROM capturas_precio c WHERE c.capturista_id IN (SELECT u.id FROM usuarios u WHERE u.rol = 'capturista' AND ${enAlcanceSql("u.estado_clave", 1)}) GROUP BY c.capturista_id),
+            kc AS (SELECT q.capturista_id, count(DISTINCT q.tortilleria_id)::int AS cuestionarios FROM tortilleria_cuestionarios q
+                    WHERE q.estatus = 'aplicado' AND q.capturista_id IN (SELECT u.id FROM usuarios u WHERE u.rol = 'capturista' AND ${enAlcanceSql("u.estado_clave", 1)}) GROUP BY q.capturista_id)
        SELECT u.id, u.nombre, u.apellidos, u.correo, u.estado_cuenta, u.activo, u.datos_completos, es.nombre AS estado,
               coalesce(k.total, 0) AS capturas, coalesce(k.hoy, 0) AS hoy, coalesce(k.s7, 0) AS siete_dias, coalesce(k.tiendas, 0) AS tortillerias,
-              to_char(k.ultima AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD HH24:MI') AS ultima_captura
-         FROM usuarios u LEFT JOIN estados es ON es.clave = u.estado_clave LEFT JOIN k ON k.capturista_id = u.id
+              to_char(k.ultima AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD HH24:MI') AS ultima_captura, coalesce(kc.cuestionarios, 0) AS cuestionarios
+         FROM usuarios u LEFT JOIN estados es ON es.clave = u.estado_clave LEFT JOIN k ON k.capturista_id = u.id LEFT JOIN kc ON kc.capturista_id = u.id
         WHERE ${donde}
         ORDER BY ${orden}, u.id LIMIT $3 OFFSET $4`,
       [lista, texto, limite, desplazar, conEstado],
@@ -69,15 +72,55 @@ export function rutasAdminEquipo(app: FastifyInstance) {
               (SELECT count(*)::int FROM capturas_precio c JOIN usuarios u ON u.id = c.capturista_id
                 WHERE u.rol = 'capturista' AND ${enAlcanceSql("u.estado_clave", 1)} AND c.fecha >= ${HOY} - 6) AS capturas_7d,
               (SELECT count(*)::int FROM tortillerias t WHERE t.origen = 'denue' AND t.operacion = 'activa' AND ${enAlcanceSql("t.estado_clave", 1)}) AS denue_total,
-              (SELECT count(DISTINCT p.tortilleria_id)::int FROM precios_que_cuentan p WHERE p.origen_tortilleria = 'denue' AND p.operacion_tortilleria = 'activa' AND ${enAlcanceSql("p.estado_clave", 1)}) AS denue_visitadas`,
+              (SELECT count(DISTINCT p.tortilleria_id)::int FROM precios_que_cuentan p WHERE p.origen_tortilleria = 'denue' AND p.operacion_tortilleria = 'activa' AND ${enAlcanceSql("p.estado_clave", 1)}) AS denue_visitadas,
+              -- C21: solo el avance (cuántas visitadas tienen cuestionario aplicado), nunca respuestas
+              (SELECT count(*)::int FROM (${SQL_VISITADAS}) v JOIN tortillerias t ON t.id = v.id WHERE ${enAlcanceSql("t.estado_clave", 1)}) AS visitadas_total,
+              (SELECT count(*)::int FROM (${SQL_VISITADAS}) v JOIN tortillerias t ON t.id = v.id WHERE ${enAlcanceSql("t.estado_clave", 1)}
+                 AND EXISTS (SELECT 1 FROM tortilleria_cuestionarios q WHERE q.tortilleria_id = t.id AND q.estatus = 'aplicado')) AS con_cuestionario`,
       [lista],
     );
     const filas = await censadores(lista, texto, orden, 500, 0, soloConEstado(req));
     return {
-      indicadores: { ...i, avance_censo: i.denue_total ? Math.round((i.denue_visitadas / i.denue_total) * 10000) / 100 : 0 },
+      indicadores: {
+        ...i,
+        avance_censo: i.denue_total ? Math.round((i.denue_visitadas / i.denue_total) * 10000) / 100 : 0,
+        avance_cuestionario: i.visitadas_total ? Math.round((i.con_cuestionario / i.visitadas_total) * 1000) / 10 : 0,
+      },
       censadores: filas,
       // el administrador estatal con alcance nacional solo consulta: sin ninguna descarga
       puedeExportar: !(req.user.rol === "estatal" && alcanceDe(req) === null),
+    };
+  });
+
+  // C21: tortillerías visitadas SIN cuestionario aplicado, con el censador que la visitó por última vez (para pedirle completarla).
+  // Solo el estatus: ni respuestas ni el motivo de "no se pudo aplicar".
+  app.get("/admin/equipo/sin-cuestionario", { preHandler: ver }, async (req, reply) => {
+    const q = req.query as Record<string, string | undefined>;
+    const { lista, fuera } = ambito(req, q.estado);
+    if (fuera) return reply.code(403).send({ error: "Ese estado está fuera de tu alcance" });
+    const pagina = Math.max(1, Number(q.pagina) || 1), limite = 50;
+    const donde = `WHERE ${enAlcanceSql("t.estado_clave", 1)} AND NOT EXISTS (SELECT 1 FROM tortilleria_cuestionarios k WHERE k.tortilleria_id = t.id AND k.estatus = 'aplicado')`;
+    const { rows: [{ total }] } = await pool.query(`SELECT count(*)::int AS total FROM (${SQL_VISITADAS}) v JOIN tortillerias t ON t.id = v.id ${donde}`, [lista]);
+    const { rows } = await pool.query(
+      `SELECT t.id, t.nombre, t.domicilio, m.nombre AS municipio, e.nombre AS estado,
+              uc.nombre AS censador_nombre, uc.apellidos AS censador_apellidos, uc.correo AS censador_correo,
+              to_char(uv.fecha, 'YYYY-MM-DD') AS ultima_visita
+         FROM (${SQL_VISITADAS}) v JOIN tortillerias t ON t.id = v.id
+         LEFT JOIN municipios m ON m.clave = t.municipio_clave
+         LEFT JOIN estados e ON e.clave = t.estado_clave
+         LEFT JOIN LATERAL (SELECT c.capturista_id, c.fecha FROM capturas_precio c WHERE c.tortilleria_id = t.id AND c.estatus <> 'rechazada'
+                             ORDER BY c.fecha DESC, c.creado_en DESC LIMIT 1) uv ON true
+         LEFT JOIN usuarios uc ON uc.id = coalesce(uv.capturista_id, t.creado_por)
+        ${donde}
+        ORDER BY uv.fecha DESC NULLS LAST, t.id LIMIT $2 OFFSET $3`,
+      [lista, limite, (pagina - 1) * limite],
+    );
+    return {
+      total, pagina, paginas: Math.max(1, Math.ceil(total / limite)),
+      filas: rows.map((r: any) => ({
+        id: r.id, nombre: r.nombre, domicilio: r.domicilio, municipio: r.municipio, estado: r.estado, ultimaVisita: r.ultima_visita,
+        censador: [r.censador_nombre, r.censador_apellidos].filter(Boolean).join(" ").trim() || r.censador_correo || null,
+      })),
     };
   });
 
@@ -95,8 +138,8 @@ export function rutasAdminEquipo(app: FastifyInstance) {
       if (typeof v === "string" && /^[=+\-@\t\r]/.test(t)) t = "'" + t;
       return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
     };
-    const cab = ["nombre", "correo", "estado", "estado_de_la_cuenta", "ultima_captura", "capturas_hoy", "capturas_7_dias", "capturas_totales", "tortillerias_distintas"];
-    const cuerpo = filas.map((f: any) => [`${f.nombre} ${f.apellidos}`.trim(), f.correo, f.estado, f.estado_cuenta, f.ultima_captura, f.hoy, f.siete_dias, f.capturas, f.tortillerias].map(celda).join(","));
+    const cab = ["nombre", "correo", "estado", "estado_de_la_cuenta", "ultima_captura", "capturas_hoy", "capturas_7_dias", "capturas_totales", "tortillerias_distintas", "cuestionarios"];
+    const cuerpo = filas.map((f: any) => [`${f.nombre} ${f.apellidos}`.trim(), f.correo, f.estado, f.estado_cuenta, f.ultima_captura, f.hoy, f.siete_dias, f.capturas, f.tortillerias, f.cuestionarios].map(celda).join(","));
     await auditar(req.user.sub, "exportar_equipo", "usuarios", JSON.stringify({ estado: q.estado ?? null }));
     return reply
       .header("content-type", "text/csv; charset=utf-8")

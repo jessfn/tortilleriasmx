@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ELABORACION, MOTIVOS_BAJA, MOTIVOS_SIN_FISCAL, textoMotivoBaja, textoMotivoSinFiscal } from "@tortillerias/shared";
-import { ArrowDown, ArrowUp, Ban, ChevronRight, Cog, Download, FileSpreadsheet, FileX, Layers, Loader2, Map as MapaIcono, Store, Wheat } from "lucide-react";
+import { CUESTIONARIO_VERSION, ELABORACION, MOTIVOS_BAJA, MOTIVOS_SIN_FISCAL, textoMotivoBaja, textoMotivoNoAplica, textoMotivoSinFiscal } from "@tortillerias/shared";
+import { ArrowDown, ArrowUp, Ban, BookOpen, ChevronRight, ClipboardCheck, Cog, Download, FileSpreadsheet, FileX, Layers, Loader2, Map as MapaIcono, Store, Wheat } from "lucide-react";
 import { api, apiDescargar } from "./api";
 import { dinero, entero, EnVivo, Tendencia, useVivo, type DiaPrecio } from "./AdminVivo";
 import { BarraValor } from "./AdminVivo";
@@ -10,8 +10,16 @@ import { Tarjeta } from "./ui";
 const PERIODOS: [number, string][] = [[7, "7 días"], [30, "30 días"], [90, "90 días"], [0, "Todo"]];
 type Orden = "nombre" | "tortillerias" | "nuevas" | "denue_visitadas" | "con_precios" | "capturas" | "promedio" | "minimo" | "maximo";
 
-/** Estadísticas por estado y municipio, con tendencia, exportación y salto al mapa */
-export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { alMapa: (f: FocoMapa) => void; puedeExportar?: boolean }) {
+type IndCuest = {
+  nacional: { visitadas: number; aplicados: number; no_aplicados: number; porcentaje: number };
+  estados: { clave: string; nombre: string; visitadas: number; aplicados: number; porcentaje: number }[];
+  municipios: { clave: string; nombre: string; visitadas: number; aplicados: number; porcentaje: number }[] | null;
+  motivos: { motivo: string; n: number }[];
+};
+
+/** Estadísticas por estado y municipio, con tendencia, exportación y salto al mapa. `esAdmin` (DGTIC) suma el avance del cuestionario (C21.9: solo DGTIC). */
+export default function AdminEstadisticas({ alMapa, puedeExportar = true, esAdmin = false }: { alMapa: (f: FocoMapa) => void; puedeExportar?: boolean; esAdmin?: boolean }) {
+  const [cuest, setCuest] = useState<IndCuest>();
   const [dias, setDias] = useState(30);
   const [producto, setProducto] = useState<"maiz" | "masa">("maiz");
   const [estado, setEstado] = useState<FilaZona>();
@@ -27,7 +35,14 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
     ]);
     setFilas(f);
     setTendencia(t);
-  }, 30_000, [dias, estado?.clave]);
+    // C21: solo DGTIC; la API responde 403 a cualquier otro rol
+    if (esAdmin) setCuest(await api<IndCuest>(`/admin/cuestionarios/indicadores${estado ? `?estado=${estado.clave}` : ""}`).catch(() => undefined));
+  }, 30_000, [dias, estado?.clave, esAdmin]);
+  /** % con cuestionario aplicado de cada zona de la tabla (estado o, con un estado elegido, municipio) */
+  const pctCuest = useMemo(() => {
+    const l = estado ? cuest?.municipios : cuest?.estados;
+    return new Map((l ?? []).map((z) => [z.clave, z]));
+  }, [cuest, estado]);
 
   const valor = (f: FilaZona, k: Orden): number | string => {
     if (k === "nombre") return f.nombre;
@@ -103,11 +118,19 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
   }
 
   function exportar() {
-    const encabezado = [estado ? "Municipio" : "Estado", "Tortillerías", "Nuevas", "DENUE visitadas", "Con precios", "Capturas", "Tortilla promedio", "Tortilla mínimo", "Tortilla máximo", "Masa promedio", "Masa mínimo", "Masa máximo"];
+    const conCuest = esAdmin && !!cuest;
+    const encabezado = [
+      estado ? "Municipio" : "Estado", "Tortillerías", "Nuevas", "DENUE visitadas", "Con precios", "Capturas", "Tortilla promedio", "Tortilla mínimo", "Tortilla máximo", "Masa promedio", "Masa mínimo", "Masa máximo",
+      ...(conCuest ? ["Visitadas (cuestionario)", "Con cuestionario", "Con cuestionario (%)"] : []),
+    ];
     const cel = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const lineas = (filas ?? []).map((f) =>
-      [f.nombre, f.tortillerias, f.nuevas ?? 0, f.denue_visitadas ?? 0, f.con_precios, f.capturas, f.maiz?.promedio, f.maiz?.minimo, f.maiz?.maximo, f.masa?.promedio, f.masa?.minimo, f.masa?.maximo].map(cel).join(","),
-    );
+    const lineas = (filas ?? []).map((f) => {
+      const z = pctCuest.get(f.clave);
+      return [
+        f.nombre, f.tortillerias, f.nuevas ?? 0, f.denue_visitadas ?? 0, f.con_precios, f.capturas, f.maiz?.promedio, f.maiz?.minimo, f.maiz?.maximo, f.masa?.promedio, f.masa?.minimo, f.masa?.maximo,
+        ...(conCuest ? [z?.visitadas ?? 0, z?.aplicados ?? 0, z?.porcentaje ?? 0] : []),
+      ].map(cel).join(",");
+    });
     const blob = new Blob(["﻿" + [encabezado.map(cel).join(","), ...lineas].join("\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -206,6 +229,7 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
                       <Th k="promedio" der>{`Promedio ${producto === "maiz" ? "tortilla" : "masa"}`}</Th>
                       <Th k="minimo" der>Mín.</Th>
                       <Th k="maximo" der>Máx.</Th>
+                      {esAdmin && cuest && <th scope="col" className="px-3 py-2.5 text-right font-semibold" title="Tortillerías visitadas con cuestionario aplicado">Cuestionario</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -228,6 +252,11 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
                           </td>
                           <td className="px-3 py-2.5 text-right tabular-nums text-emerald-700">{dinero(s?.minimo)}</td>
                           <td className="px-3 py-2.5 text-right tabular-nums text-guinda">{dinero(s?.maximo)}</td>
+                          {esAdmin && cuest && (
+                            <td className="px-3 py-2.5 text-right tabular-nums">
+                              {pctCuest.get(f.clave) ? <span className={pctCuest.get(f.clave)!.porcentaje >= 80 ? "font-semibold text-emerald-700" : "font-semibold text-stone-700"}>{pctCuest.get(f.clave)!.porcentaje} %</span> : <span className="text-stone-300">—</span>}
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
@@ -255,6 +284,7 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
                           <span>{entero(f.con_precios)} con precios</span>
                           <span>{entero(f.capturas)} capturas</span>
                           {s && <span>{dinero(s.minimo)} – {dinero(s.maximo)}</span>}
+                          {esAdmin && pctCuest.get(f.clave) && <span className="font-semibold text-stone-700">{pctCuest.get(f.clave)!.porcentaje} % con cuestionario</span>}
                         </div>
                       </button>
                     </li>
@@ -272,12 +302,72 @@ export default function AdminEstadisticas({ alMapa, puedeExportar = true }: { al
           <p className="text-[11px] text-stone-400">Promedio diario de todas las capturas (sin contar las rechazadas).</p>
         </Tarjeta>
 
+        {esAdmin && <Cuestionarios ind={cuest} estado={estado} />}
         <SinFiscal estado={estado} />
         <Bajas estado={estado} />
         <Elaboracion estado={estado} dias={dias} />
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * C21 · Avance del cuestionario (SOLO DGTIC): % de tortillerías visitadas con cuestionario aplicado, "no se pudo aplicar" por motivo
+ * y la descarga para el análisis espacial (una fila por tortillería, con su diccionario de datos).
+ */
+function Cuestionarios({ ind, estado }: { ind?: IndCuest; estado?: FilaZona }) {
+  const [bajando, setBajando] = useState<"" | "datos" | "dic">("");
+  const [error, setError] = useState("");
+  const z = estado ? ind?.estados.find((e) => e.clave === estado.clave) : ind?.nacional;
+  const noAplicados = ind?.motivos.reduce((a, m) => a + m.n, 0) ?? 0;
+  async function bajar(cual: "datos" | "dic") {
+    setBajando(cual);
+    setError("");
+    try {
+      if (cual === "dic") await apiDescargar("/admin/exportar/cuestionarios/diccionario", `cuestionarios-diccionario-${CUESTIONARIO_VERSION}.csv`);
+      else await apiDescargar(`/admin/exportar/cuestionarios${estado ? `?estado=${estado.clave}` : ""}`, "cuestionarios.csv");
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBajando("");
+    }
+  }
+  return (
+    <Tarjeta className="space-y-2.5">
+      <h2 className="flex items-center gap-2 text-sm font-bold"><ClipboardCheck className="h-4 w-4 text-guinda" aria-hidden /> Cuestionario {estado ? `· ${estado.nombre}` : "· nacional"}</h2>
+      {!ind ? (
+        <div className="grid place-items-center py-6 text-stone-400"><Loader2 className="h-5 w-5 animate-spin" /></div>
+      ) : (
+        <>
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <div className="text-3xl font-bold leading-none tabular-nums">{z ? z.porcentaje : 0} %</div>
+              <div className="mt-1 text-xs text-stone-500">{entero(z?.aplicados ?? 0)} de {entero(z?.visitadas ?? 0)} tortillerías visitadas</div>
+            </div>
+            {!estado && noAplicados > 0 && <div className="text-right text-xs text-stone-500"><b className="text-amber-700">{entero(noAplicados)}</b> sin aplicar<br />en el último intento</div>}
+          </div>
+          <BarraValor valor={z?.porcentaje ?? 0} max={100} />
+          {!estado && ind.motivos.length > 0 && (
+            <ul className="space-y-1 border-t border-stone-100 pt-2 text-xs">
+              {ind.motivos.map((m) => (
+                <li key={m.motivo} className="flex justify-between gap-2"><span className="text-stone-600">{textoMotivoNoAplica(m.motivo)}</span><b className="tabular-nums">{entero(m.n)}</b></li>
+              ))}
+            </ul>
+          )}
+          <div className="grid gap-1.5 pt-1 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+            <button onClick={() => bajar("datos")} disabled={!!bajando} className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-full bg-guinda px-3 text-xs font-semibold text-white shadow-sm active:scale-95 disabled:opacity-60">
+              {bajando === "datos" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FileSpreadsheet className="h-4 w-4" aria-hidden />} Descargar cuestionarios
+            </button>
+            <button onClick={() => bajar("dic")} disabled={!!bajando} className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-full bg-white px-3 text-xs font-semibold text-stone-700 ring-1 ring-stone-200 hover:ring-guinda/40 disabled:opacity-60">
+              {bajando === "dic" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <BookOpen className="h-4 w-4" aria-hidden />} Diccionario de datos
+            </button>
+          </div>
+          {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
+          <p className="text-[11px] text-stone-400">Solo DGTIC ve las respuestas. La descarga no incluye RFC, razón social, celular ni CURP.</p>
+        </>
+      )}
+    </Tarjeta>
   );
 }
 

@@ -26,6 +26,8 @@ export type Local = {
   tiene_foto?: boolean;
   /** cómo hacen la tortilla (maquina, mano, ambas); null = aún sin dato. Sirve para preseleccionarlo sin conexión. */
   elaboracion?: string | null;
+  /** C21: estatus del cuestionario (aplicado, no_aplicado o null = falta). Solo el estatus: nunca las respuestas. */
+  cuestionario_estatus?: "aplicado" | "no_aplicado" | null;
 };
 
 export type RegistroCatalogo = { clave: string; nombre: string; version: string; descargado: string; puntos: Local[] };
@@ -58,9 +60,14 @@ export type Paquete = {
   elaboracion?: { valor: string; idCliente: string };
   /** "Ya no funciona": paquete de baja (sin precios). La tortillería queda inactiva en cuanto llega al servidor. */
   baja?: { motivo: string; motivoOtro?: string; idCliente: string };
+  /**
+   * C21: cuestionario de supervisión. Se envía DESPUÉS de los precios. Un paquete solo de cuestionario (sin precios) es válido.
+   * Las respuestas (que incluyen el bloque C, sensible) se borran del teléfono en cuanto el servidor las recibe.
+   */
+  cuestionario?: { estatus: "aplicado" | "no_aplicado"; respuestas?: Record<string, unknown>; motivo?: string; motivoOtro?: string; idCliente: string };
   precios: Precio[];
   gps?: { lat: number; lng: number; precision?: number };
-  hecho: { tortilleria?: boolean; foto?: boolean; fiscal?: boolean; sinFiscal?: boolean; fotoExistente?: boolean; sinFoto?: boolean; elaboracion?: boolean; baja?: boolean };
+  hecho: { tortilleria?: boolean; foto?: boolean; fiscal?: boolean; sinFiscal?: boolean; fotoExistente?: boolean; sinFoto?: boolean; elaboracion?: boolean; baja?: boolean; cuestionario?: boolean };
   /** parecidas que encontró el servidor (conflicto de duplicado) */
   posibles?: { id: string; nombre: string; domicilio: string | null }[];
 };

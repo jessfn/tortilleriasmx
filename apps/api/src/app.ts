@@ -15,6 +15,7 @@ import { rutasAdminReportes } from "./rutas/admin-reportes.js";
 import { rutasAdminBajas } from "./rutas/admin-bajas.js";
 import { rutasAdminEquipo } from "./rutas/admin-equipo.js";
 import { rutasCatalogoEstado } from "./rutas/catalogo-estado.js";
+import { rutasCuestionario } from "./rutas/cuestionario.js";
 
 export async function crearApp() {
   // Detrás de nginx (y, en el servidor de la Secretaría, también del balanceador) la IP real del cliente viene en X-Forwarded-For.
@@ -52,5 +53,6 @@ export async function crearApp() {
   rutasAdminBajas(app);
   rutasAdminEquipo(app);
   rutasCatalogoEstado(app);
+  rutasCuestionario(app);
   return app;
 }

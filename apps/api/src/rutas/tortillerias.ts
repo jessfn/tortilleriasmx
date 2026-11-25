@@ -171,9 +171,17 @@ export function rutasTortillerias(app: FastifyInstance) {
     const f = await pool.query("SELECT EXISTS (SELECT 1 FROM fotos WHERE tortilleria_id = $1) AS tiene_foto", [req.params.id]);
     // el tipo de elaboración (para preseleccionarlo) y si ya se dio de baja
     const o = await pool.query("SELECT elaboracion, operacion FROM tortillerias WHERE id = $1", [req.params.id]);
+    // C21: solo el estatus del cuestionario (para decidir si el asistente lo pide), nunca respuestas
+    const k = await pool.query(
+      `SELECT coalesce(
+         (SELECT json_build_object('estatus', 'aplicado', 'fecha', to_char(coalesce(v.capturado_en, v.creado_en) AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD')) FROM cuestionario_vigente v WHERE v.tortilleria_id = $1),
+         (SELECT json_build_object('estatus', u.estatus, 'fecha', to_char(u.fecha AT TIME ZONE 'America/Mexico_City', 'YYYY-MM-DD'), 'motivo', u.motivo_no_aplica) FROM cuestionario_ultimo u WHERE u.tortilleria_id = $1)
+       ) AS c`,
+      [req.params.id],
+    );
     return {
       tiene: !!rows[0]?.tiene, ultimaNegativa: n.rows[0] ? { motivo: n.rows[0].motivo, fecha: n.rows[0].fecha } : null, tieneFoto: !!f.rows[0]?.tiene_foto,
-      elaboracion: o.rows[0]?.elaboracion ?? null, inactiva: o.rows[0]?.operacion === "inactiva",
+      elaboracion: o.rows[0]?.elaboracion ?? null, inactiva: o.rows[0]?.operacion === "inactiva", cuestionario: k.rows[0]?.c ?? null,
     };
   });
 

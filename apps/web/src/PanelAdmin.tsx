@@ -150,10 +150,11 @@ export default function PanelAdmin({
           puedeEstadisticas={puede("ver_estadisticas")}
           puedeMapa={puede("ver_mapa")}
           puedeRevision={puede("ver_revision")}
+          esAdmin={esAdmin}
         />
       )}
       {tab === "mapa" && <AdminMapa foco={foco} alCambio={cargarResumen} puedeValidar={puede("validar_tortillerias")} />}
-      {tab === "estadisticas" && <AdminEstadisticas alMapa={(f) => puede("ver_mapa") && alMapa(f)} puedeExportar={puede("exportar_capturas")} />}
+      {tab === "estadisticas" && <AdminEstadisticas alMapa={(f) => puede("ver_mapa") && alMapa(f)} puedeExportar={puede("exportar_capturas")} esAdmin={esAdmin} />}
       {tab === "revision" && <VistaRevision alCambio={cargarResumen} puedeRevisar={puede("revisar_precios")} puedeValidar={puede("validar_tortillerias")} />}
       {tab === "nuevas" && <VistaRevision solo="tortillerias" alCambio={cargarResumen} puedeRevisar={puede("revisar_precios")} puedeValidar={puede("validar_tortillerias")} />}
       {tab === "atipicos" && <VistaRevision solo="precios" alCambio={cargarResumen} puedeRevisar={puede("revisar_precios")} puedeValidar={puede("validar_tortillerias")} />}

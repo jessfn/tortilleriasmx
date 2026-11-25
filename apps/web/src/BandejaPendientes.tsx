@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Inbox, Loader2, RefreshCw, Send, Store, Trash2 } from "lucide-react";
 import type { Paquete } from "./bd";
 import { descartar, enviarDeTodosModos, estadoSync, listarPaquetes, NOMBRE_PRODUCTO, pideAtencion, reintentar, sincronizar, usarExistente } from "./bandeja";
-import { textoElaboracion, textoMotivoBaja, textoMotivoSinFiscal, textoMotivoSinFoto } from "@tortillerias/shared";
+import { textoElaboracion, textoMotivoBaja, textoMotivoNoAplica, textoMotivoSinFiscal, textoMotivoSinFoto } from "@tortillerias/shared";
 import { Boton, HojaModal, Tarjeta } from "./ui";
 
 /** Los paquetes de la bandeja del usuario; se actualizan solos cuando cambia la bandeja (`avisar()` de bandeja.ts) */
@@ -57,11 +57,16 @@ function FilaPaquete({ p }: { p: Paquete }) {
           </div>
           <p className="mt-0.5 text-xs text-stone-500">
             {p.nueva && <b className="text-guinda">Tortillería nueva · </b>}
-            {p.baja ? <b className="text-red-700">Baja: ya no funciona · {p.baja.motivo === "otro" && p.baja.motivoOtro ? `Otro: ${p.baja.motivoOtro}` : textoMotivoBaja(p.baja.motivo)}</b> : precios || "Sin precios"}
+            {p.baja ? <b className="text-red-700">Baja: ya no funciona · {p.baja.motivo === "otro" && p.baja.motivoOtro ? `Otro: ${p.baja.motivoOtro}` : textoMotivoBaja(p.baja.motivo)}</b> : precios || (p.cuestionario ? "Solo cuestionario" : "Sin precios")}
           </p>
           {p.elaboracion && <p className="mt-0.5 text-xs text-stone-500">Elaboración: {textoElaboracion(p.elaboracion.valor)}</p>}
           {p.sinFiscal && <p className="mt-0.5 text-xs text-stone-500">Sin datos fiscales: {textoMotivoSinFiscal(p.sinFiscal.motivo)}</p>}
           {p.sinFoto && <p className="mt-0.5 text-xs text-stone-500">Sin foto: {textoMotivoSinFoto(p.sinFoto.motivo)}</p>}
+          {p.cuestionario && (
+            <p className="mt-0.5 text-xs text-stone-500">
+              {p.cuestionario.estatus === "aplicado" ? "Cuestionario aplicado" : `Cuestionario: no se pudo aplicar · ${p.cuestionario.motivo === "OTRO" && p.cuestionario.motivoOtro ? p.cuestionario.motivoOtro : textoMotivoNoAplica(p.cuestionario.motivo)}`}
+            </p>
+          )}
           {p.fotoExistente && !p.nueva && <p className="mt-0.5 text-xs text-stone-500">Incluye la foto de la tortillería</p>}
           <p className="text-xs text-stone-400">Capturado el {cuando(p.capturadoEn)}</p>
         </div>
