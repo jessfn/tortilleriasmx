@@ -147,8 +147,9 @@ function EstadoCuestionario({ t, alCuestionario }: { t: MiTortilleria; alCuestio
       <button
         type="button"
         onClick={() => alCuestionario(t)}
-        className={`flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition active:scale-95 ${aplicado ? "bg-white text-emerald-700 ring-1 ring-emerald-200" : "bg-guinda text-white shadow-sm"}`}
+        className={`flex shrink-0 items-center gap-1.5 px-3 py-1.5 text-xs font-bold transition active:scale-95 ${aplicado ? "rounded-full bg-gradient-to-r from-amber-400 to-orange-500 text-white shadow-md shadow-orange-500/30" : "rounded-lg bg-guinda text-white shadow-sm"}`}
       >
+        {aplicado && <RefreshCw className="h-3.5 w-3.5" aria-hidden />}
         {aplicado ? "Actualizar cuestionario" : "Aplicar cuestionario"}
       </button>
     </div>

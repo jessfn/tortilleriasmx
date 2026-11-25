@@ -58,7 +58,8 @@ describe("C21 · cuestionarioSchema", () => {
     expect(ok({ ...completo, b8: ["JCF", "CREDITO"] })).toBe(true);
   });
   it("acepta 'No sabe' y 'Prefiere no responder', y 'Otro' exige su texto en B1 y B3", () => {
-    expect(ok({ ...completo, b1: "NO_SABE", b2: "NO_RESPONDE", b3: "NO_SABE", c1: "NO_RESPONDE", c2: "NO_RESPONDE", c3: "NO_SABE" })).toBe(true);
+    expect(ok({ ...completo, b2: "NO_RESPONDE", b3: "NO_SABE", c1: "NO_RESPONDE", c2: "NO_RESPONDE", c3: "NO_SABE" })).toBe(true);
+    expect(ok({ ...completo, b1: "NO_SABE" })).toBe(false); // en B1 ya no hay "No sabe": se contesta o se usa "Otro"
     expect(ok({ ...completo, b1: "OTRO" })).toBe(false);
     expect(ok({ ...completo, b1: "OTRO", b1Otro: "Maíz y trigo" })).toBe(true);
     expect(ok({ ...completo, b3: "OTRO", b3Otro: "Cooperativa" })).toBe(true);
@@ -84,6 +85,11 @@ describe("C21 · cuestionarioSchema", () => {
     expect(ok(r)).toBe(true);
     expect(limpiarCondicionales({ b5: "CONOCE_NO_ADHERIDA", b6: ["PRECIO"], b6Otro: "x" }).b6Otro).toBeUndefined();
   });
+  it("'Otro' siempre es la última opción", async () => {
+    const m = await import("./cuestionario.js");
+    for (const l of [m.UBICACION_TIPO, m.INSUMO, m.PROPIEDAD, m.MOTIVO_NO_ADHESION, m.APOYOS, m.MOTIVO_NO_APLICA]) expect(l[l.length - 1].clave).toBe("OTRO");
+  });
+
   it("B8: Ninguno es exclusivo al marcar", () => {
     expect(alternarApoyo(["JCF"], "NINGUNO")).toEqual(["NINGUNO"]);
     expect(alternarApoyo(["NINGUNO"], "JCF")).toEqual(["JCF"]);

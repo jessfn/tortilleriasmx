@@ -40,7 +40,6 @@ export const INSUMO = [
   { clave: "HARINA", texto: "Usa harina de maíz" },
   { clave: "MEZCLA", texto: "Mezcla masa y harina" },
   { clave: "OTRO", texto: "Otro" },
-  { clave: "NO_SABE", texto: "No sabe" },
 ] as const;
 
 export const VOLUMEN_SEMANAL = [
@@ -69,8 +68,8 @@ export const PROPIEDAD = [
   { clave: "FAMILIAR", texto: "De quien atiende o de su familia" },
   { clave: "VARIAS_SUCURSALES", texto: "El dueño tiene varias tortillerías" },
   { clave: "EMPRESA", texto: "Es franquicia o de una empresa" },
-  { clave: "OTRO", texto: "Otro" },
   { clave: "NO_SABE", texto: "No sabe" },
+  { clave: "OTRO", texto: "Otro" },
 ] as const;
 
 export const NUM_TRABAJADORES = [
@@ -97,12 +96,12 @@ export const MOTIVO_NO_ADHESION = [
   { clave: "OTRO", texto: "Otro", col: "b6_otro" },
 ] as const;
 
-/** B8 · `NINGUNO` es exclusivo */
+/** B8 · `NINGUNO` es exclusivo. En todas las preguntas, "Otro" va siempre al final. */
 export const APOYOS = [
   { clave: "JCF", texto: "Jóvenes Construyendo el Futuro", col: "b8_jcf" },
   { clave: "CREDITO", texto: "Crédito (FIRA, FINABIEN u otro)", col: "b8_credito" },
-  { clave: "OTRO", texto: "Otro", col: "b8_otro" },
   { clave: "NINGUNO", texto: "Ninguno", col: "b8_ninguno" },
+  { clave: "OTRO", texto: "Otro", col: "b8_otro" },
 ] as const;
 
 /** B6 solo si B5 = "Lo conoce, pero no está adherida"; B7 si no está adherida (la conozca o no) */
