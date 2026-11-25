@@ -57,9 +57,8 @@ describe("C21 · cuestionarioSchema", () => {
     expect(ok({ ...completo, b8: ["NINGUNO", "JCF"] })).toBe(false);
     expect(ok({ ...completo, b8: ["JCF", "CREDITO"] })).toBe(true);
   });
-  it("ya no acepta 'No sabe' ni 'Prefiere no responder': se contesta, o se usa 'Otro' con su texto", () => {
-    expect(ok({ ...completo, b1: "NO_SABE" })).toBe(false);
-    expect(ok({ ...completo, c1: "NO_RESPONDE" })).toBe(false);
+  it("acepta 'No sabe' y 'Prefiere no responder', y 'Otro' exige su texto en B1 y B3", () => {
+    expect(ok({ ...completo, b1: "NO_SABE", b2: "NO_RESPONDE", b3: "NO_SABE", c1: "NO_RESPONDE", c2: "NO_RESPONDE", c3: "NO_SABE" })).toBe(true);
     expect(ok({ ...completo, b1: "OTRO" })).toBe(false);
     expect(ok({ ...completo, b1: "OTRO", b1Otro: "Maíz y trigo" })).toBe(true);
     expect(ok({ ...completo, b3: "OTRO", b3Otro: "Cooperativa" })).toBe(true);

@@ -143,7 +143,7 @@ export default function PasoCuestionario({
           <Unica opciones={LICENCIA} valor={r.c1} onChange={(v) => setR({ c1: v as Respuestas["c1"] })} />
         </Pregunta>
         <Pregunta id="c2" n="C2" texto={PREGUNTAS.c2} falta={falta.has("c2")}>
-          <Unica opciones={IMSS} valor={r.c2} onChange={(v) => setR({ c2: v as Respuestas["c2"] })} />
+          <Unica opciones={IMSS} valor={r.c2} onChange={(v) => setR({ c2: v as Respuestas["c2"] })} columnas={2} />
         </Pregunta>
         <Pregunta id="c3" n="C3" texto={PREGUNTAS.c3} falta={falta.has("c3")}>
           <Unica opciones={DECLARACION_ANUAL} valor={r.c3} onChange={(v) => setR({ c3: v as Respuestas["c3"] })} columnas={2} />

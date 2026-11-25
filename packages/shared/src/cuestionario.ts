@@ -40,6 +40,7 @@ export const INSUMO = [
   { clave: "HARINA", texto: "Usa harina de maíz" },
   { clave: "MEZCLA", texto: "Mezcla masa y harina" },
   { clave: "OTRO", texto: "Otro" },
+  { clave: "NO_SABE", texto: "No sabe" },
 ] as const;
 
 export const VOLUMEN_SEMANAL = [
@@ -48,6 +49,8 @@ export const VOLUMEN_SEMANAL = [
   { clave: "V_500_1000", texto: "De 500 kg a 1 tonelada" },
   { clave: "V_1000_3000", texto: "De 1 a 3 toneladas" },
   { clave: "V_3000_MAS", texto: "Más de 3 toneladas" },
+  { clave: "NO_SABE", texto: "No sabe" },
+  { clave: "NO_RESPONDE", texto: "Prefiere no responder" },
 ] as const;
 
 /** El texto de B2 cambia según lo que respondió en B1 (las opciones son las mismas) */
@@ -67,6 +70,7 @@ export const PROPIEDAD = [
   { clave: "VARIAS_SUCURSALES", texto: "El dueño tiene varias tortillerías" },
   { clave: "EMPRESA", texto: "Es franquicia o de una empresa" },
   { clave: "OTRO", texto: "Otro" },
+  { clave: "NO_SABE", texto: "No sabe" },
 ] as const;
 
 export const NUM_TRABAJADORES = [
@@ -111,17 +115,21 @@ export const LICENCIA = [
   { clave: "SI_VISIBLE", texto: "Sí, está visible o la mostró" },
   { clave: "SI_NO_MOSTRO", texto: "Dice que sí, pero no la mostró" },
   { clave: "NO", texto: "No tiene" },
+  { clave: "NO_RESPONDE", texto: "Prefiere no responder" },
 ] as const;
 
 export const IMSS = [
   { clave: "TODAS", texto: "Todas" },
   { clave: "ALGUNAS", texto: "Algunas" },
   { clave: "NINGUNA", texto: "Ninguna" },
+  { clave: "NO_RESPONDE", texto: "Prefiere no responder" },
 ] as const;
 
 export const DECLARACION_ANUAL = [
   { clave: "SI", texto: "Sí" },
   { clave: "NO", texto: "No" },
+  { clave: "NO_SABE", texto: "No sabe" },
+  { clave: "NO_RESPONDE", texto: "Prefiere no responder" },
 ] as const;
 
 /* ---------------- "No se pudo aplicar" ---------------- */
@@ -294,6 +302,5 @@ export function diccionarioCuestionario(): { columna: string; pregunta: string; 
   lista("c1_licencia", `C1. ${PREGUNTAS.c1}`, LICENCIA);
   lista("c2_imss", `C2. ${PREGUNTAS.c2}`, IMSS);
   lista("c3_declaracion", `C3. ${PREGUNTAS.c3}`, DECLARACION_ANUAL);
-  for (const [c, t] of Object.entries(CODIGOS_ANTERIORES)) f.push({ columna: "(registros de la primera versión)", pregunta: "Respuesta que ya no se ofrece", codigo: c, texto: t });
   return f;
 }
