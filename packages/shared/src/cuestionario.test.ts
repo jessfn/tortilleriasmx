@@ -90,6 +90,17 @@ describe("C21 · cuestionarioSchema", () => {
     for (const l of [m.UBICACION_TIPO, m.INSUMO, m.PROPIEDAD, m.MOTIVO_NO_ADHESION, m.APOYOS, m.MOTIVO_NO_APLICA]) expect(l[l.length - 1].clave).toBe("OTRO");
   });
 
+  it("higiene: las preguntas se hacen como pregunta y la de plagas se guarda al revés (true = no se ven = buena higiene)", async () => {
+    const { HIGIENE_PUNTOS, respuestaHigiene } = await import("./cuestionario.js");
+    const plagas = HIGIENE_PUNTOS.find((h) => h.clave === "H_PLAGAS")!;
+    expect(plagas.pregunta).toBe("¿Se ven moscas, cucarachas o rastros de roedores?");
+    expect(respuestaHigiene(plagas, true)).toBe(false); // guardado "no se ven" → a la pregunta "¿se ven?" la respuesta es No
+    expect(respuestaHigiene(plagas, undefined)).toBeUndefined();
+    const limpieza = HIGIENE_PUNTOS.find((h) => h.clave === "H_LIMPIEZA")!;
+    expect(respuestaHigiene(limpieza, true)).toBe(true);
+    for (const h of HIGIENE_PUNTOS) expect(h.pregunta).toMatch(/^¿.*\?$/);
+  });
+
   it("B8: Ninguno es exclusivo al marcar", () => {
     expect(alternarApoyo(["JCF"], "NINGUNO")).toEqual(["NINGUNO"]);
     expect(alternarApoyo(["NINGUNO"], "JCF")).toEqual(["JCF"]);

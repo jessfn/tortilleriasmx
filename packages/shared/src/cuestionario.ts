@@ -22,14 +22,19 @@ export const UBICACION_TIPO = [
   { clave: "OTRO", texto: "Otro" },
 ] as const;
 
-/** Cada punto se responde Sí/No. `col` es la columna de la base de datos y de la descarga. */
+/**
+ * Cada punto se responde Sí/No. `texto` es lo que se GUARDA (true = buena higiene) y es la columna de la descarga (`col`);
+ * `pregunta` es como se le pregunta al censador. Si `invertida`, la pregunta es al revés del dato: "¿Se ven moscas…?" Sí → se guarda false.
+ */
 export const HIGIENE_PUNTOS = [
-  { clave: "H_LIMPIEZA", texto: "El área donde se hace la tortilla se ve limpia (piso, paredes, máquina)", col: "limpieza" },
-  { clave: "H_PLAGAS", texto: "No se ven moscas, cucarachas ni rastros de roedores", col: "plagas" },
-  { clave: "H_INSUMOS", texto: "El maíz, la masa o la harina están tapados y no están en el piso", col: "insumos" },
-  { clave: "H_PERSONAL", texto: "El personal trae ropa limpia y no come ni fuma donde trabaja", col: "personal" },
-  { clave: "H_BASURA", texto: "La basura está en botes con tapa", col: "basura" },
+  { clave: "H_LIMPIEZA", texto: "El área donde se hace la tortilla se ve limpia (piso, paredes, máquina)", pregunta: "¿El área donde se hace la tortilla se ve limpia (piso, paredes y máquina)?", invertida: false, col: "limpieza" },
+  { clave: "H_PLAGAS", texto: "No se ven moscas, cucarachas ni rastros de roedores", pregunta: "¿Se ven moscas, cucarachas o rastros de roedores?", invertida: true, col: "plagas" },
+  { clave: "H_INSUMOS", texto: "El maíz, la masa o la harina están tapados y no están en el piso", pregunta: "¿El maíz, la masa o la harina están tapados y fuera del piso?", invertida: false, col: "insumos" },
+  { clave: "H_PERSONAL", texto: "El personal trae ropa limpia y no come ni fuma donde trabaja", pregunta: "¿El personal trae ropa limpia y no come ni fuma donde trabaja?", invertida: false, col: "personal" },
+  { clave: "H_BASURA", texto: "La basura está en botes con tapa", pregunta: "¿La basura está en botes con tapa?", invertida: false, col: "basura" },
 ] as const;
+/** Respuesta a la pregunta tal como se le hizo al censador (Sí/No), a partir del dato guardado */
+export const respuestaHigiene = (h: (typeof HIGIENE_PUNTOS)[number], guardado?: boolean) => (guardado === undefined ? undefined : h.invertida ? !guardado : guardado);
 export type PuntoHigiene = (typeof HIGIENE_PUNTOS)[number]["clave"];
 
 /* ---------------- Bloque B — preguntas al encargado ---------------- */
@@ -285,7 +290,7 @@ export function diccionarioCuestionario(): { columna: string; pregunta: string; 
   lista("motivo_no_aplica", "Motivo por el que no se pudo aplicar", MOTIVO_NO_APLICA);
   lista("a1_ubicacion", `A1. ${PREGUNTAS.a1}`, UBICACION_TIPO);
   f.push({ columna: "a1_otro_texto", pregunta: "A1. Texto de \"Otro\" (dónde está)", codigo: "(texto libre)", texto: "Máximo 100 caracteres" });
-  HIGIENE_PUNTOS.forEach((h) => sino(`a2_h_${h.col}`, `A2. Higiene: ${h.texto}`));
+  HIGIENE_PUNTOS.forEach((h) => sino(`a2_h_${h.col}`, `A2. Higiene (Sí = buena higiene): ${h.texto}`));
   lista("b1_insumo", `B1. ${PREGUNTAS.b1}`, INSUMO);
   f.push({ columna: "b1_otro_texto", pregunta: "B1. Texto de \"Otro\" (con qué hace la tortilla)", codigo: "(texto libre)", texto: "Máximo 100 caracteres" });
   lista("b2_volumen", `B2. ${PREGUNTAS.b2} (el texto cambia según B1: maíz, masa, harina o ambos)`, VOLUMEN_SEMANAL);

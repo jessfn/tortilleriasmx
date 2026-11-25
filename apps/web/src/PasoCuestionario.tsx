@@ -2,7 +2,7 @@ import { type ReactNode } from "react";
 import { Eye, History, Lock, MessageSquare, PencilLine, TriangleAlert } from "lucide-react";
 import {
   alternarApoyo, aplicaB6, aplicaB7, APOYOS, CONOCE_ACUERDO, DECLARACION_ANUAL, HIGIENE_PUNTOS, IMSS, INSUMO, LICENCIA, limpiarCondicionales,
-  MAX_OTRO, MOTIVO_NO_ADHESION, NUM_TRABAJADORES, PREGUNTAS, PROPIEDAD, respuestasSchema, textoB2, textoMotivoNoAplica, UBICACION_TIPO, VOLUMEN_SEMANAL,
+  MAX_OTRO, respuestaHigiene, MOTIVO_NO_ADHESION, NUM_TRABAJADORES, PREGUNTAS, PROPIEDAD, respuestasSchema, textoB2, textoMotivoNoAplica, UBICACION_TIPO, VOLUMEN_SEMANAL,
   type Respuestas,
 } from "@tortillerias/shared";
 import { Aviso } from "./ui";
@@ -89,8 +89,9 @@ export default function PasoCuestionario({
           <div className="space-y-2">
             {HIGIENE_PUNTOS.map((h) => (
               <div key={h.clave} className="rounded-xl bg-stone-50 p-2.5 ring-1 ring-stone-100">
-                <p className="text-[13px] leading-snug text-stone-700">{h.texto}</p>
-                <SiNo valor={r.a2?.[h.clave]} onChange={(v) => setR({ a2: { ...r.a2, [h.clave]: v } })} etiqueta={h.texto} />
+                <p className="text-[13px] font-medium leading-snug text-stone-800">{h.pregunta}</p>
+                {/* la respuesta es a la pregunta tal como se hace; se guarda siempre como "buena higiene" (true) o no */}
+                <SiNo valor={respuestaHigiene(h, r.a2?.[h.clave])} onChange={(v) => setR({ a2: { ...r.a2, [h.clave]: h.invertida ? !v : v } })} etiqueta={h.pregunta} />
               </div>
             ))}
           </div>

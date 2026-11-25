@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ClipboardCheck, ClipboardX, History, Lock, Loader2 } from "lucide-react";
 import {
-  aplicaB6, aplicaB7, APOYOS, CONOCE_ACUERDO, DECLARACION_ANUAL, HIGIENE_PUNTOS, IMSS, INSUMO, LICENCIA, MOTIVO_NO_ADHESION, NUM_TRABAJADORES, PREGUNTAS,
+  aplicaB6, aplicaB7, respuestaHigiene, APOYOS, CONOCE_ACUERDO, DECLARACION_ANUAL, HIGIENE_PUNTOS, IMSS, INSUMO, LICENCIA, MOTIVO_NO_ADHESION, NUM_TRABAJADORES, PREGUNTAS,
   PROPIEDAD, textoB2, textoDe, textoMotivoNoAplica, UBICACION_TIPO, VOLUMEN_SEMANAL, type Respuestas,
 } from "@tortillerias/shared";
 import { api } from "./api";
@@ -98,8 +98,9 @@ function Respuestas({ r }: { r: Respuestas }) {
           <ul className="mt-1 space-y-0.5">
             {HIGIENE_PUNTOS.map((h) => (
               <li key={h.clave} className="flex items-start justify-between gap-2 text-[13px]">
-                <span className="text-stone-700">{h.texto}</span>
-                <b className={`shrink-0 ${r.a2[h.clave] ? "text-emerald-700" : "text-red-700"}`}>{r.a2[h.clave] ? "Sí" : "No"}</b>
+                <span className="text-stone-700">{h.pregunta}</span>
+                {/* verde = buena higiene; la palabra es la respuesta a la pregunta */}
+                <b className={`shrink-0 ${r.a2[h.clave] ? "text-emerald-700" : "text-red-700"}`}>{respuestaHigiene(h, r.a2[h.clave]) ? "Sí" : "No"}</b>
               </li>
             ))}
           </ul>
