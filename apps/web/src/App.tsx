@@ -1,5 +1,5 @@
 import CompletaDatos from "./CompletaDatos";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ES_ADMIN, guardarSesion, leerSesion, type Sesion } from "./api";
 import { borrar, borrarTodo, CLAVES, guardar, leer } from "./persist";
 import Inicio from "./Inicio";
@@ -81,22 +81,44 @@ export default function App() {
     return () => window.removeEventListener("sesion-expirada", expirada);
   }, []);
 
-  // El estado de la cuenta (por autorizar, autorizado, rechazado) y los datos pendientes se piden al servidor al abrir: así una autorización llega sin volver a entrar
+  // El estado de la cuenta (por autorizar, autorizado, rechazado) y los datos pendientes se piden al servidor al abrir: así una autorización llega sin volver a entrar.
+  // Mientras la cuenta NO esté autorizada se vuelve a preguntar cada minuto, al regresar a la app y al recuperar la señal: en cuanto la autorizan, se desbloquea sola.
+  const sesionRef = useRef(sesion);
+  sesionRef.current = sesion;
   useEffect(() => {
     if (!sesion) return;
     let vigente = true;
-    api<Sesion["usuario"] & { creadoEn?: string }>("/auth/me")
-      .then((me) => {
-        if (!vigente) return;
-        const cambio = me.estadoCuenta !== sesion.usuario.estadoCuenta || me.datosCompletos !== sesion.usuario.datosCompletos || me.estadoClave !== sesion.usuario.estadoClave || me.rol !== sesion.usuario.rol;
-        if (!cambio) return;
-        const s = { ...sesion, usuario: { ...sesion.usuario, ...me } };
-        guardarSesion(s);
-        setSesion(s);
-      })
-      .catch(() => {});
-    return () => { vigente = false; };
-  }, [sesion?.usuario.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    const revisar = () => {
+      const actual = sesionRef.current;
+      if (!actual || !navigator.onLine) return;
+      api<Sesion["usuario"] & { creadoEn?: string }>("/auth/me")
+        .then((me) => {
+          if (!vigente) return;
+          const cambio = me.estadoCuenta !== actual.usuario.estadoCuenta || me.datosCompletos !== actual.usuario.datosCompletos || me.estadoClave !== actual.usuario.estadoClave || me.rol !== actual.usuario.rol;
+          if (!cambio) return;
+          const s = { ...actual, usuario: { ...actual.usuario, ...me } };
+          guardarSesion(s);
+          setSesion(s);
+          // recién autorizada: lo que estaba guardado en el teléfono sale de inmediato
+          if (me.estadoCuenta === "autorizado" && actual.usuario.estadoCuenta !== "autorizado") window.dispatchEvent(new Event("sesion-iniciada"));
+        })
+        .catch(() => {});
+    };
+    revisar();
+    const pendiente = (sesion.usuario.estadoCuenta ?? "autorizado") !== "autorizado";
+    const t = pendiente ? window.setInterval(revisar, 60_000) : undefined;
+    const alVolver = () => { if (!document.hidden) revisar(); };
+    if (pendiente) {
+      document.addEventListener("visibilitychange", alVolver);
+      window.addEventListener("online", revisar);
+    }
+    return () => {
+      vigente = false;
+      if (t) window.clearInterval(t);
+      document.removeEventListener("visibilitychange", alVolver);
+      window.removeEventListener("online", revisar);
+    };
+  }, [sesion?.usuario.id, sesion?.usuario.estadoCuenta]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const entrar = (s: Sesion) => {
     setSesion(s);

@@ -1,6 +1,6 @@
 import { AvisoCuenta } from "./AvisoCuenta";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, CheckCircle2, ChevronRight, ClipboardCheck, ClipboardList, ClipboardPen, Clock, Home, MapPin, PackageOpen, Plus, RefreshCw, Store, UserRound, Wheat, XCircle, Layers, Loader2, WifiOff } from "lucide-react";
+import { Check, CheckCircle2, ChevronRight, Lock, ClipboardCheck, ClipboardList, ClipboardPen, Clock, Home, MapPin, PackageOpen, Plus, RefreshCw, Store, UserRound, Wheat, XCircle, Layers, Loader2, WifiOff } from "lucide-react";
 import { textoMotivoNoAplica } from "@tortillerias/shared";
 import { api, ApiError, type Sesion } from "./api";
 import Perfil from "./Perfil";
@@ -79,7 +79,7 @@ async function mezclarBandeja(filas: MiTortilleria[], paquetes: Paquete[]): Prom
 }
 
 /** Una tortillería del censador, con su último precio de cada producto y el botón para actualizarlo */
-function TarjetaTortilleria({ t, alActualizar, alAbrir, alCuestionario }: { t: MiTortilleria; alActualizar: (t: MiTortilleria) => void; alAbrir: (t: MiTortilleria) => void; alCuestionario: (t: MiTortilleria) => void }) {
+function TarjetaTortilleria({ t, alActualizar, alAbrir, alCuestionario, bloqueo }: { t: MiTortilleria; alActualizar: (t: MiTortilleria) => void; alAbrir: (t: MiTortilleria) => void; alCuestionario: (t: MiTortilleria) => void; bloqueo: Bloqueo }) {
   const hoy = t.maiz_hoy && t.masa_hoy;
   const linea = (I: typeof Wheat, texto: string, u: Ultimo, yaHoy: boolean) => (
     <span className="flex items-center gap-1.5 text-stone-600">
@@ -117,41 +117,67 @@ function TarjetaTortilleria({ t, alActualizar, alAbrir, alCuestionario }: { t: M
         {linea(Wheat, "Tortilla", t.ultimo_maiz, t.maiz_hoy)}
         {linea(Layers, "Masa", t.ultima_masa, t.masa_hoy)}
       </div>
-      {t.operacion !== "inactiva" && <EstadoCuestionario t={t} alCuestionario={alCuestionario} />}
-      <Boton onClick={() => alActualizar(t)} disabled={hoy} variante={hoy ? "secundario" : "primario"} icono={hoy ? Check : RefreshCw} className="!min-h-11">
-        {hoy ? "Capturado hoy" : "Actualizar precio"}
-      </Boton>
+      {t.operacion !== "inactiva" && <EstadoCuestionario t={t} alCuestionario={alCuestionario} bloqueo={bloqueo} />}
+      {bloqueo ? (
+        <BotonBloqueado texto={bloqueo.texto} />
+      ) : (
+        <Boton onClick={() => alActualizar(t)} disabled={hoy} variante={hoy ? "secundario" : "primario"} icono={hoy ? Check : RefreshCw} className="!min-h-11">
+          {hoy ? "Precio capturado hoy" : "Actualizar precio"}
+        </Boton>
+      )}
     </Tarjeta>
   );
 }
 
-/** C21: estatus del cuestionario de la tortillería y el botón para aplicarlo o actualizarlo (sin pedir precio) */
-function EstadoCuestionario({ t, alCuestionario }: { t: MiTortilleria; alCuestionario: (t: MiTortilleria) => void }) {
+/** Cuenta que todavía no puede capturar: los botones se ven en gris, con candado y el motivo */
+type Bloqueo = null | { texto: string };
+
+/** Botón gris con candado (la cuenta aún no está autorizada) */
+function BotonBloqueado({ texto, chico }: { texto: string; chico?: boolean }) {
+  return (
+    <button
+      type="button"
+      disabled
+      aria-disabled
+      className={`flex shrink-0 cursor-not-allowed items-center justify-center gap-1.5 rounded-full bg-stone-200 font-semibold text-stone-500 ring-1 ring-stone-300 ${chico ? "px-3 py-1.5 text-xs" : "min-h-11 w-full px-4 text-sm"}`}
+    >
+      <Lock className={chico ? "h-3.5 w-3.5" : "h-4 w-4"} aria-hidden /> {texto}
+    </button>
+  );
+}
+
+/** C21: el CUESTIONARIO DE LA TORTILLERÍA (no el precio): su estatus y el botón para aplicarlo o actualizarlo, sin pedir precio */
+function EstadoCuestionario({ t, alCuestionario, bloqueo }: { t: MiTortilleria; alCuestionario: (t: MiTortilleria) => void; bloqueo: Bloqueo }) {
   const c = t.cuestionario;
   const aplicado = c?.estatus === "aplicado";
   return (
-    <div className={`flex items-center gap-2 rounded-xl px-2.5 py-2 ${aplicado ? "bg-emerald-50 ring-1 ring-emerald-100" : "bg-dorado/10 ring-1 ring-dorado/30"}`}>
-      {aplicado ? <ClipboardCheck className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden /> : <ClipboardPen className="h-4 w-4 shrink-0 text-[#7a5a1f]" aria-hidden />}
-      <span className="min-w-0 flex-1 text-xs leading-tight">
+    <div className={`flex items-center gap-2.5 rounded-2xl px-3 py-2.5 ring-1 ${aplicado ? "bg-emerald-50 ring-emerald-200" : "bg-dorado/10 ring-dorado/30"}`}>
+      <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${aplicado ? "bg-emerald-100 text-emerald-700" : "bg-dorado/20 text-[#7a5a1f]"}`}>
+        {aplicado ? <ClipboardCheck className="h-5 w-5" aria-hidden /> : <ClipboardPen className="h-5 w-5" aria-hidden />}
+      </span>
+      <span className="min-w-0 flex-1 leading-tight">
+        <span className="block text-[10px] font-bold uppercase tracking-wide text-stone-500">Cuestionario de la tortillería</span>
         {aplicado ? (
-          <span className="font-semibold text-emerald-800">Cuestionario aplicado el {fechaDia(c!.fecha)}</span>
+          <span className="block text-xs font-semibold text-emerald-800">Aplicado el {fechaDia(c!.fecha)}</span>
         ) : c?.estatus === "no_aplicado" ? (
-          <>
-            <span className="block font-semibold text-[#7a5a1f]">No se pudo aplicar</span>
-            <span className="block truncate text-stone-500">{textoMotivoNoAplica(c.motivo)} · {fechaDia(c.fecha)}</span>
-          </>
+          <span className="block truncate text-xs font-semibold text-[#7a5a1f]">Pendiente · {textoMotivoNoAplica(c.motivo).toLowerCase()}</span>
         ) : (
-          <span className="font-semibold text-[#7a5a1f]">Falta cuestionario</span>
+          <span className="block text-xs font-semibold text-[#7a5a1f]">Pendiente de aplicar</span>
         )}
       </span>
-      <button
-        type="button"
-        onClick={() => alCuestionario(t)}
-        className={`flex shrink-0 items-center gap-1.5 px-3 py-1.5 text-xs font-bold transition active:scale-95 ${aplicado ? "rounded-full bg-gradient-to-r from-amber-400 to-orange-500 text-white shadow-md shadow-orange-500/30" : "rounded-lg bg-guinda text-white shadow-sm"}`}
-      >
-        {aplicado && <RefreshCw className="h-3.5 w-3.5" aria-hidden />}
-        {aplicado ? "Actualizar cuestionario" : "Aplicar cuestionario"}
-      </button>
+      {bloqueo ? (
+        <BotonBloqueado texto="Bloqueado" chico />
+      ) : (
+        <button
+          type="button"
+          onClick={() => alCuestionario(t)}
+          aria-label={aplicado ? "Actualizar el cuestionario de la tortillería" : "Aplicar el cuestionario de la tortillería"}
+          className={`flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold text-white shadow-md transition active:scale-95 ${aplicado ? "bg-emerald-600 shadow-emerald-600/25 hover:bg-emerald-700" : "bg-guinda shadow-guinda/25"}`}
+        >
+          {aplicado ? <RefreshCw className="h-3.5 w-3.5" aria-hidden /> : <ClipboardPen className="h-3.5 w-3.5" aria-hidden />}
+          {aplicado ? "Actualizar" : "Aplicar"}
+        </button>
+      )}
     </div>
   );
 }
@@ -160,6 +186,8 @@ export default function PanelUsuario({
   sesion, alCapturar, alActualizarPrecio, alAplicarCuestionario, alActualizarSesion, alSalir,
 }: { sesion: Sesion; alCapturar: () => void; alActualizarPrecio: (t: Punto) => void; alAplicarCuestionario: (t: Punto) => void; alActualizarSesion: (s: Sesion) => void; alSalir: () => void }) {
   const estadoCuenta = sesion.usuario.estadoCuenta ?? "autorizado";
+  // Sin autorizar (o rechazada): se ven los botones, en gris y con candado (el servidor también lo impide)
+  const bloqueo: Bloqueo = estadoCuenta === "autorizado" ? null : { texto: estadoCuenta === "rechazado" ? "Cuenta no autorizada" : "Aún no autorizado" };
   const [tab, setTab] = usePersistente(CLAVES.tabUsuario, "inicio");
   const [resumen, setResumen] = useState<Resumen>();
   const [registros, setRegistros] = useState<Registro[]>();
@@ -310,7 +338,7 @@ export default function PanelUsuario({
           ) : tortillerias.length === 0 ? (
             <Vacio icono={Store} titulo="Aún no tienes tortillerías" texto="Registra el precio de tu primera tortillería para empezar." />
           ) : (
-            tortillerias.slice(0, 3).map((t) => <TarjetaTortilleria key={t.id} t={t} alActualizar={actualizar} alAbrir={setDetalle} alCuestionario={cuestionario} />)
+            tortillerias.slice(0, 3).map((t) => <TarjetaTortilleria key={t.id} t={t} alActualizar={actualizar} alAbrir={setDetalle} alCuestionario={cuestionario} bloqueo={bloqueo} />)
           )}
         </>
       )}
@@ -345,11 +373,13 @@ export default function PanelUsuario({
           ) : lista.length === 0 ? (
             <Vacio icono={ClipboardCheck} titulo="¡Todas tienen cuestionario!" texto="Ninguna de tus tortillerías tiene el cuestionario pendiente." />
           ) : (
-            lista.map((t) => <TarjetaTortilleria key={t.id} t={t} alActualizar={actualizar} alAbrir={setDetalle} alCuestionario={cuestionario} />)
+            lista.map((t) => <TarjetaTortilleria key={t.id} t={t} alActualizar={actualizar} alAbrir={setDetalle} alCuestionario={cuestionario} bloqueo={bloqueo} />)
           )}
-          <Boton onClick={alCapturar} icono={Plus} disabled={estadoCuenta !== "autorizado"}>
-            Registrar otra tortillería
-          </Boton>
+          {bloqueo ? <BotonBloqueado texto={`Registrar otra tortillería · ${bloqueo.texto.toLowerCase()}`} /> : (
+            <Boton onClick={alCapturar} icono={Plus}>
+              Registrar otra tortillería
+            </Boton>
+          )}
         </>
       )}
 
@@ -381,10 +411,10 @@ export default function PanelUsuario({
               );
             })}
           </div>
-          {detalle.operacion !== "inactiva" && <EstadoCuestionario t={detalle} alCuestionario={(t) => { setDetalle(undefined); cuestionario(t); }} />}
-          <Boton onClick={() => { const t = detalle; setDetalle(undefined); actualizar(t); }} disabled={detalle.maiz_hoy && detalle.masa_hoy} icono={RefreshCw}>
-            {detalle.maiz_hoy && detalle.masa_hoy ? "Capturado hoy" : "Actualizar precio"}
-          </Boton>
+          {detalle.operacion !== "inactiva" && <EstadoCuestionario t={detalle} bloqueo={bloqueo} alCuestionario={(t) => { setDetalle(undefined); cuestionario(t); }} />}
+          {bloqueo ? <BotonBloqueado texto={bloqueo.texto} /> : <Boton onClick={() => { const t = detalle; setDetalle(undefined); actualizar(t); }} disabled={detalle.maiz_hoy && detalle.masa_hoy} icono={RefreshCw}>
+            {detalle.maiz_hoy && detalle.masa_hoy ? "Precio capturado hoy" : "Actualizar precio"}
+          </Boton>}
         </HojaModal>
       )}
     </PanelShell>
