@@ -4,8 +4,9 @@ import { z } from "zod";
 import { APOYOS, CUESTIONARIO_VERSION, cuestionarioSchema, diccionarioCuestionario, HIGIENE_PUNTOS, MOTIVO_NO_ADHESION, type Respuestas } from "@tortillerias/shared";
 import { auditar, pool } from "../db.js";
 import { MAX_DIAS_ATRASO, TOLERANCIA_FUTURO_MS } from "./precios.js";
-import { calcularRango, consultaSchema } from "../reportes.js";
+import { calcularRango, consultaSchema, rangoTodo } from "../reportes.js";
 import { reporteCuestionarioPdf, reporteCuestionarioXlsx, reunirReporteCuestionario, textosCuestionario } from "../reporte-cuestionario.js";
+import { inicioDeSiempre, reporteCompletoPdf, reporteCompletoXlsx, reunirReporteCompleto, textosCompleto } from "../reporte-completo.js";
 
 /**
  * C21 · Cuestionario de supervisión de tortillerías.
@@ -322,6 +323,41 @@ export function rutasCuestionario(app: FastifyInstance) {
     const t = textosCuestionario(r);
     const cuerpo = p.formato === "pdf" ? await reporteCuestionarioPdf(r) : await reporteCuestionarioXlsx(r);
     await auditar(req.user.sub, "descargar_reporte_cuestionario", "reporte", `${p.rango.periodo}:${p.rango.desde}..${p.rango.hasta}:${p.formato}:${p.estado ?? "nacional"}`);
+    return reply
+      .header("content-type", p.formato === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+      .header("content-disposition", `attachment; filename="${t.nombreArchivo}.${p.formato}"`)
+      .header("cache-control", "no-store")
+      .send(cuerpo);
+  });
+
+  /* ---------- Reporte COMPLETO: precios (Extras) + cuestionario, solo tortillerías de máquina, con portada. Incluye "de siempre". ---------- */
+  const leerCompleto = async (query: unknown, reply: FastifyReply) => {
+    const q = consultaSchema.extend({ periodo: z.enum(["dia", "semana", "mes", "anio", "rango", "todo"]), fecha: consultaSchema.shape.fecha.optional() }).safeParse(query);
+    if (!q.success) return void reply.code(400).send({ error: q.error.issues[0]?.message ?? "Datos inválidos" });
+    if (q.data.periodo === "todo") return { rango: rangoTodo(await inicioDeSiempre()), formato: q.data.formato };
+    if (!q.data.fecha) return void reply.code(400).send({ error: "Elige la fecha" });
+    const rango = calcularRango(q.data.periodo, q.data.fecha, q.data.hasta);
+    if (typeof rango === "string") return void reply.code(400).send({ error: rango });
+    return { rango, formato: q.data.formato };
+  };
+  app.get("/admin/cuestionarios/reporte-completo/vista-previa", { preHandler: soloDgtic, config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {
+    const p = await leerCompleto(req.query, reply);
+    if (!p) return;
+    const r = await reunirReporteCompleto(p.rango);
+    const t = textosCompleto(r);
+    return {
+      titulo: t.titulo, tipo: t.tipo, horario: t.horario, anterior: t.anterior, granularidad: p.rango.granularidad, desde: p.rango.desde, hasta: p.rango.hasta,
+      precios: r.precios.totales, preciosAnterior: r.precios.anterior, cuestionario: r.cuestionario.totales, cuestionarioAnterior: r.cuestionario.anterior,
+      avance: r.cuestionario.avance, universo: r.universo,
+    };
+  });
+  app.get("/admin/cuestionarios/reporte-completo/descargar", { preHandler: soloDgtic, config: limiteDescarga }, async (req, reply) => {
+    const p = await leerCompleto(req.query, reply);
+    if (!p) return;
+    const r = await reunirReporteCompleto(p.rango);
+    const t = textosCompleto(r);
+    const cuerpo = p.formato === "pdf" ? await reporteCompletoPdf(r) : await reporteCompletoXlsx(r);
+    await auditar(req.user.sub, "descargar_reporte_completo", "reporte", `${p.rango.periodo}:${p.rango.desde}..${p.rango.hasta}:${p.formato}:maquina`);
     return reply
       .header("content-type", p.formato === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
       .header("content-disposition", `attachment; filename="${t.nombreArchivo}.${p.formato}"`)

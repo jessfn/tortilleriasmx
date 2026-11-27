@@ -200,7 +200,7 @@ function kpi(doc: Doc, x: number, y: number, w: number, h: number, color: string
   dif(x + 20, y + h - 28, w - 34);
 }
 
-function pPortada(doc: Doc, r: Reporte, nTabla: number) {
+function pPortada(doc: Doc, r: Reporte, nTabla: number, offset = 0) {
   const t = textosRango(r.rango);
   const { totales: a, anterior: p } = r;
   // ---- panel izquierdo: de qué periodo es el reporte
@@ -226,7 +226,7 @@ function pPortada(doc: Doc, r: Reporte, nTabla: number) {
   doc.circle(PX + 54, y + (hh + 22) / 2, 4).fill(O);
   doc.font("Cuerpo-Bold").fontSize(10.5).fillColor("#ffffff").text(t.horario, PX + 70, y + 11, { width: PW - 108 });
   y += hh + 22 + 18;
-  parrafo(doc, "Resumen del trabajo del equipo de campo: cuántas capturas llegaron, qué tortillerías se visitaron y cómo se movió el precio de la tortilla y de la masa. Solo cuentan los precios aprobados de tortillerías validadas.", PX + 36, y, PW - 72, { size: 12, color: "#ecdde2", gap: 4 });
+  parrafo(doc, "Resumen del trabajo del equipo de campo: cuántas capturas llegaron, qué tortillerías se visitaron y cómo se movió el precio de la tortilla y de la masa. Solo cuentan los precios aprobados de tortillerías validadas." + (r.soloMaquina ? " Solo tortillerías que elaboran a máquina." : ""), PX + 36, y, PW - 72, { size: 12, color: "#ecdde2", gap: 4 });
   // contenido del reporte (pegado abajo)
   const items: [number, string][] = [
     [2, `Capturas ${t.porUnidad}`],
@@ -235,7 +235,7 @@ function pPortada(doc: Doc, r: Reporte, nTabla: number) {
     [4 + nTabla, "Avance del censo y calidad"],
     [5 + nTabla, "Bajas y tipo de elaboración"],
     [6 + nTabla, "Evolución del precio"],
-  ];
+  ].map(([n, x]) => [(n as number) + offset, x] as [number, string]);
   const ly = PY + PH - 40 - items.length * 30;
   tx(doc, "EN ESTE REPORTE", PX + 36, ly - 26, { font: "Cuerpo-Bold", size: 9, color: O, spacing: 1.6 });
   items.forEach(([n, texto], i) => {
@@ -635,6 +635,18 @@ function pEvolucion(doc: Doc, r: Reporte) {
   parrafo(doc, "Solo cuentan los precios aprobados de tortillerías validadas. El promedio es entre tortillerías: cada una pesa lo mismo, con su último precio del periodo o de cada " + (r.rango.granularidad === "hora" ? "hora" : r.rango.granularidad === "dia" ? "día" : "mes") + ".\n\nLos días van de 12:00 a. m. a 11:59 p. m., hora de la Ciudad de México. Las capturas hechas sin conexión se cuentan en el momento en que se tomaron.", X + 20, 460, wc - 40, { size: 12, gap: 4 });
 }
 
+/** Todas las páginas del reporte de precios. `offset`: páginas que van antes (para la numeración del índice). */
+export function paginasPrecios(doc: Doc, r: Reporte, primera: boolean, offset: number) {
+  nuevaPagina(doc, primera);
+  pPortada(doc, r, paginasTabla(r.estados.length), offset);
+  pSerie(doc, r);
+  pEstados(doc, r);
+  pTabla(doc, r);
+  pAvance(doc, r);
+  pCatalogo(doc, r);
+  pEvolucion(doc, r);
+}
+
 export async function reportePdf(r: Reporte): Promise<Buffer> {
   const t = textosRango(r.rango);
   const doc = new PDFDocument({ size: [W, H], margin: 0, bufferPages: true, info: { Title: `${t.tipo} · ${t.titulo}`, Author: "TortilleríasMX", Subject: "Precios de la tortilla y la masa" } });
@@ -646,14 +658,7 @@ export async function reportePdf(r: Reporte): Promise<Buffer> {
     doc.pipe(new Writable({ write(c, _e, cb) { trozos.push(c); cb(); }, final(cb) { ok(Buffer.concat(trozos)); cb(); } }));
     doc.on("error", mal);
   });
-  nuevaPagina(doc, true);
-  pPortada(doc, r, paginasTabla(r.estados.length));
-  pSerie(doc, r);
-  pEstados(doc, r);
-  pTabla(doc, r);
-  pAvance(doc, r);
-  pCatalogo(doc, r);
-  pEvolucion(doc, r);
+  paginasPrecios(doc, r, true, 0);
   // pie de página con el número (ya se sabe cuántas hay)
   const rango = doc.bufferedPageRange();
   const generado = new Intl.DateTimeFormat("es-MX", { timeZone: "America/Mexico_City", dateStyle: "long", timeStyle: "short" }).format(new Date(r.generado));
@@ -671,7 +676,7 @@ export type { Totales };
 
 /** Piezas del diseño, para que otros reportes (p. ej. el del cuestionario) se vean igual */
 export const pdfBase = {
-  tx, parrafo, ancho, tarjeta, degradado, triangulo, nuevaPagina, titulo, dona, barrasVerticales, diferencia, kpi, fuente, fmtN, pct,
+  tx, parrafo, ancho, tarjeta, degradado, triangulo, nuevaPagina, titulo, dona, barrasVerticales, diferencia, kpi, fuente, fmtN, pct, money, assets,
   colores: { G, G2, GD, O, V, CREMA, TX, GRIS, LINEA, ARENA }, W, H, MX,
 };
 export type DocPdf = Doc;

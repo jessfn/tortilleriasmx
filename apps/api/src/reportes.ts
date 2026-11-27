@@ -6,7 +6,8 @@ import { pool } from "./db.js";
 
 export const ZONA = "America/Mexico_City";
 export const PERIODOS = ["dia", "semana", "mes", "anio", "rango"] as const;
-export type Periodo = (typeof PERIODOS)[number];
+/** "todo" (de siempre) solo existe en el reporte completo de la vista Cuestionarios */
+export type Periodo = (typeof PERIODOS)[number] | "todo";
 export type Granularidad = "hora" | "dia" | "mes";
 
 export type Rango = {
@@ -82,6 +83,13 @@ export function calcularRango(periodo: Periodo, fecha: string, hasta: string | u
   return { periodo, desde, hasta: fin, hastaExcl: sumar(fin, 1), dias, granularidad, ant };
 }
 
+/** "De siempre": desde el primer registro (`inicio`) hasta hoy, mes por mes. El periodo anterior es el mismo tamaño antes del inicio (vacío). */
+export function rangoTodo(inicio: string | null, hoy = hoyMx()): Rango {
+  const desde = inicio && inicio < hoy ? `${inicio.slice(0, 7)}-01` : `${hoy.slice(0, 7)}-01`;
+  const dias = diasEntre(desde, hoy) + 1;
+  return { periodo: "todo", desde, hasta: hoy, hastaExcl: sumar(hoy, 1), dias, granularidad: dias === 1 ? "hora" : dias > 62 ? "mes" : "dia", ant: { desde: sumar(desde, -dias), hastaExcl: desde } };
+}
+
 const fechaLarga = (s: string, conDia = false) => {
   const d = aFecha(s);
   return `${conDia ? DIAS[d.getUTCDay()] + " " : ""}${d.getUTCDate()} de ${MESES[d.getUTCMonth()]} de ${d.getUTCFullYear()}`;
@@ -111,6 +119,9 @@ export function textosRango(r: Rango) {
   } else if (r.periodo === "anio") {
     tipo = "Reporte anual de precios";
     titulo = `Año ${r.desde.slice(0, 4)}`;
+  } else if (r.periodo === "todo") {
+    tipo = "Reporte histórico de precios";
+    titulo = `Del ${corta(r.desde)} al ${corta(r.hasta)}`;
   } else {
     tipo = "Reporte de precios por rango de fechas";
     titulo = r.dias === 1 ? mayus(fechaLarga(r.desde, true)) : `Del ${corta(r.desde)} al ${corta(r.hasta)}`;
@@ -119,7 +130,7 @@ export function textosRango(r: Rango) {
     r.dias === 1
       ? "12:00 a. m. a 11:59 p. m. · hora de la Ciudad de México"
       : `Del ${corta(r.desde)}, 12:00 a. m. al ${corta(r.hasta)}, 11:59 p. m. · hora de la Ciudad de México`;
-  const anterior = r.periodo === "dia" ? "ayer" : r.periodo === "semana" ? "la semana anterior" : r.periodo === "mes" ? "el mes anterior" : r.periodo === "anio" ? "el año anterior" : "el periodo anterior";
+  const anterior = r.periodo === "dia" ? "ayer" : r.periodo === "semana" ? "la semana anterior" : r.periodo === "mes" ? "el mes anterior" : r.periodo === "anio" ? "el año anterior" : r.periodo === "todo" ? "antes del inicio" : "el periodo anterior";
   const nombreArchivo = `TortilleriasMX_Reporte_${r.periodo}_${r.desde}${r.dias > 1 && r.periodo !== "semana" && r.periodo !== "mes" && r.periodo !== "anio" ? "_a_" + r.hasta : ""}`;
   const porUnidad = r.granularidad === "hora" ? "hora por hora" : r.granularidad === "dia" ? "día por día" : "mes por mes";
   return { titulo, tipo, horario, anterior, nombreArchivo, porUnidad };
@@ -138,6 +149,8 @@ export type Totales = {
 };
 export type Reporte = {
   rango: Rango;
+  /** true: solo tortillerías que elaboran a máquina (reporte completo de Cuestionarios) */
+  soloMaquina?: boolean;
   generado: string;
   totales: Totales;
   anterior: Totales;
@@ -156,18 +169,22 @@ const VENTANA = (desdeP: string, hastaP: string) =>
 const MOMENTO = `(coalesce(p.capturado_en, p.creado_en) AT TIME ZONE '${ZONA}')`;
 const VACIA: Estadistica = { tiendas: 0, promedio: null, minimo: null, maximo: null };
 const est = (r: any): Estadistica => (r ? { tiendas: r.tiendas, promedio: r.prom == null ? null : Math.round(r.prom * 100) / 100, minimo: r.minimo, maximo: r.maximo } : { ...VACIA });
+/** Filtros fijos (sin parámetros del usuario) para quedarse solo con tortillerías de máquina */
+const filtroP = (soloMaquina?: boolean) => (soloMaquina ? " AND p.elaboracion_tortilleria = 'maquina'" : "");
+const filtroT = (soloMaquina?: boolean) => (soloMaquina ? " AND t.elaboracion = 'maquina'" : "");
 
-async function totalesDe(desde: string, hastaExcl: string): Promise<Totales> {
+async function totalesDe(desde: string, hastaExcl: string, soloMaquina?: boolean): Promise<Totales> {
+  const FP = filtroP(soloMaquina), FT = filtroT(soloMaquina);
   const { rows: [t] } = await pool.query(
     `SELECT count(*)::int AS capturas, count(DISTINCT p.tortilleria_id)::int AS visitadas, count(DISTINCT p.capturista_id)::int AS censadores,
             (count(*) FILTER (WHERE p.producto = 'maiz'))::int AS cap_maiz, (count(*) FILTER (WHERE p.producto = 'masa'))::int AS cap_masa,
             (count(*) FILTER (WHERE p.aprobacion = 'manual'))::int AS revisadas
-       FROM precios_que_cuentan p WHERE ${VENTANA("$1", "$2")}`,
+       FROM precios_que_cuentan p WHERE ${VENTANA("$1", "$2")}${FP}`,
     [desde, hastaExcl],
   );
   const { rows: [n] } = await pool.query(
     `SELECT count(*)::int AS n FROM tortillerias t
-      WHERE t.origen = 'nueva' AND t.estatus <> 'rechazada'
+      WHERE t.origen = 'nueva' AND t.estatus <> 'rechazada'${FT}
         AND t.creado_en >= $1::date::timestamp AT TIME ZONE '${ZONA}' AND t.creado_en < $2::date::timestamp AT TIME ZONE '${ZONA}'`,
     [desde, hastaExcl],
   );
@@ -175,7 +192,7 @@ async function totalesDe(desde: string, hastaExcl: string): Promise<Totales> {
   const { rows } = await pool.query(
     `WITH u AS (
        SELECT DISTINCT ON (p.tortilleria_id, p.producto) p.tortilleria_id, p.producto, p.precio_kg::float8 AS precio
-         FROM precios_que_cuentan p WHERE ${VENTANA("$1", "$2")}
+         FROM precios_que_cuentan p WHERE ${VENTANA("$1", "$2")}${FP}
         ORDER BY p.tortilleria_id, p.producto, coalesce(p.capturado_en, p.creado_en) DESC, p.creado_en DESC)
      SELECT producto, count(*)::int AS tiendas, avg(precio) AS prom, min(precio) AS minimo, max(precio) AS maximo FROM u GROUP BY producto`,
     [desde, hastaExcl],
@@ -191,25 +208,27 @@ const pad = (n: number) => String(n).padStart(2, "0");
 export const etiquetaHora = (h: number) => `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? " a. m." : " p. m."}`;
 
 /** Todo lo que lleva el reporte (PDF, Excel y vista previa salen de aquí) */
-export async function reunirReporte(rango: Rango): Promise<Reporte> {
-  const [totales, anterior] = await Promise.all([totalesDe(rango.desde, rango.hastaExcl), totalesDe(rango.ant.desde, rango.ant.hastaExcl)]);
+export async function reunirReporte(rango: Rango, opciones: { soloMaquina?: boolean } = {}): Promise<Reporte> {
+  const { soloMaquina } = opciones;
+  const FP = filtroP(soloMaquina), FT = filtroT(soloMaquina);
+  const [totales, anterior] = await Promise.all([totalesDe(rango.desde, rango.hastaExcl, soloMaquina), totalesDe(rango.ant.desde, rango.ant.hastaExcl, soloMaquina)]);
 
   // Por estado: capturas, tortillerías visitadas, nuevas y promedios
   const porEstado = await pool.query(
     `SELECT p.estado_clave AS clave, count(*)::int AS capturas, count(DISTINCT p.tortilleria_id)::int AS visitadas
-       FROM precios_que_cuentan p WHERE ${VENTANA("$1", "$2")} AND p.estado_clave IS NOT NULL GROUP BY p.estado_clave`,
+       FROM precios_que_cuentan p WHERE ${VENTANA("$1", "$2")}${FP} AND p.estado_clave IS NOT NULL GROUP BY p.estado_clave`,
     [rango.desde, rango.hastaExcl],
   );
   const nuevasEstado = await pool.query(
     `SELECT t.estado_clave AS clave, count(*)::int AS n FROM tortillerias t
-      WHERE t.origen = 'nueva' AND t.estatus <> 'rechazada' AND t.estado_clave IS NOT NULL
+      WHERE t.origen = 'nueva' AND t.estatus <> 'rechazada' AND t.estado_clave IS NOT NULL${FT}
         AND t.creado_en >= $1::date::timestamp AT TIME ZONE '${ZONA}' AND t.creado_en < $2::date::timestamp AT TIME ZONE '${ZONA}' GROUP BY t.estado_clave`,
     [rango.desde, rango.hastaExcl],
   );
   const promEstado = await pool.query(
     `WITH u AS (
        SELECT DISTINCT ON (p.tortilleria_id, p.producto) p.tortilleria_id, p.producto, p.estado_clave, p.precio_kg::float8 AS precio
-         FROM precios_que_cuentan p WHERE ${VENTANA("$1", "$2")}
+         FROM precios_que_cuentan p WHERE ${VENTANA("$1", "$2")}${FP}
         ORDER BY p.tortilleria_id, p.producto, coalesce(p.capturado_en, p.creado_en) DESC, p.creado_en DESC)
      SELECT estado_clave AS clave, producto, count(*)::int AS tiendas, avg(precio) AS prom, min(precio) AS minimo, max(precio) AS maximo
        FROM u WHERE estado_clave IS NOT NULL GROUP BY estado_clave, producto`,
@@ -232,7 +251,7 @@ export async function reunirReporte(rango: Rango): Promise<Reporte> {
   const bucket = rango.granularidad === "hora" ? `extract(hour from ${MOMENTO})::int::text` : rango.granularidad === "dia" ? `to_char(${MOMENTO}, 'YYYY-MM-DD')` : `to_char(${MOMENTO}, 'YYYY-MM')`;
   const sr = await pool.query(
     `WITH b AS (SELECT ${bucket} AS k, p.tortilleria_id, p.producto, p.precio_kg::float8 AS precio, coalesce(p.capturado_en, p.creado_en) AS m
-                  FROM precios_que_cuentan p WHERE ${VENTANA("$1", "$2")}),
+                  FROM precios_que_cuentan p WHERE ${VENTANA("$1", "$2")}${FP}),
           u AS (SELECT DISTINCT ON (k, tortilleria_id, producto) k, producto, precio FROM b ORDER BY k, tortilleria_id, producto, m DESC)
      SELECT 'c' AS t, k, NULL::text AS producto, count(*)::float8 AS v FROM b GROUP BY k
      UNION ALL SELECT 'p', k, producto, avg(precio) FROM u GROUP BY k, producto`,
@@ -259,12 +278,12 @@ export async function reunirReporte(rango: Rango): Promise<Reporte> {
 
   // Avance del censo y motivos por los que no se obtuvieron datos fiscales en el periodo
   // el catálogo y el avance se calculan sin las tortillerías dadas de baja
-  const { rows: [cat] } = await pool.query(`SELECT count(*)::int AS n FROM tortillerias WHERE estatus <> 'rechazada' AND operacion = 'activa'`);
-  const { rows: [con] } = await pool.query(`SELECT count(DISTINCT tortilleria_id)::int AS n FROM precios_que_cuentan p WHERE p.operacion_tortilleria = 'activa' AND coalesce(p.capturado_en, p.creado_en) < $1::date::timestamp AT TIME ZONE '${ZONA}'`, [rango.hastaExcl]);
+  const { rows: [cat] } = await pool.query(`SELECT count(*)::int AS n FROM tortillerias t WHERE t.estatus <> 'rechazada' AND t.operacion = 'activa'${FT}`);
+  const { rows: [con] } = await pool.query(`SELECT count(DISTINCT tortilleria_id)::int AS n FROM precios_que_cuentan p WHERE p.operacion_tortilleria = 'activa'${FP} AND coalesce(p.capturado_en, p.creado_en) < $1::date::timestamp AT TIME ZONE '${ZONA}'`, [rango.hastaExcl]);
   const baj = await pool.query(
     `SELECT b.motivo, t.estado_clave AS clave, count(*)::int AS n
        FROM tortilleria_bajas b JOIN tortillerias t ON t.id = b.tortilleria_id
-      WHERE coalesce(b.capturado_en, b.creado_en) >= $1::date::timestamp AT TIME ZONE '${ZONA}' AND coalesce(b.capturado_en, b.creado_en) < $2::date::timestamp AT TIME ZONE '${ZONA}'
+      WHERE coalesce(b.capturado_en, b.creado_en) >= $1::date::timestamp AT TIME ZONE '${ZONA}' AND coalesce(b.capturado_en, b.creado_en) < $2::date::timestamp AT TIME ZONE '${ZONA}'${FT}
       GROUP BY b.motivo, t.estado_clave`,
     [rango.desde, rango.hastaExcl],
   );
@@ -277,19 +296,19 @@ export async function reunirReporte(rango: Rango): Promise<Reporte> {
   const elab = await pool.query(
     `WITH u AS (
        SELECT DISTINCT ON (p.tortilleria_id) p.tortilleria_id, p.elaboracion_tortilleria AS tipo, p.precio_kg::float8 AS precio
-         FROM precios_que_cuentan p WHERE p.producto = 'maiz' AND ${VENTANA("$1", "$2")}
+         FROM precios_que_cuentan p WHERE p.producto = 'maiz' AND ${VENTANA("$1", "$2")}${FP}
         ORDER BY p.tortilleria_id, coalesce(p.capturado_en, p.creado_en) DESC, p.creado_en DESC)
      SELECT coalesce(tipo, 'sin_dato') AS tipo, count(*)::int AS n, avg(precio) AS prom FROM u GROUP BY coalesce(tipo, 'sin_dato')`,
     [rango.desde, rango.hastaExcl],
   );
-  const ORDEN_ELAB = ["maquina", "mano", "ambas", "sin_dato"];
+  const ORDEN_ELAB = soloMaquina ? ["maquina"] : ["maquina", "mano", "ambas", "sin_dato"];
   const mot = await pool.query(
     `SELECT motivo, count(*)::int AS n FROM fiscal_negativas
       WHERE creado_en >= $1::date::timestamp AT TIME ZONE '${ZONA}' AND creado_en < $2::date::timestamp AT TIME ZONE '${ZONA}' GROUP BY motivo ORDER BY n DESC`,
     [rango.desde, rango.hastaExcl],
   );
   return {
-    rango, generado: new Date().toISOString(), totales, anterior, serie, estados,
+    rango, soloMaquina: !!soloMaquina, generado: new Date().toISOString(), totales, anterior, serie, estados,
     censo: { catalogo: cat.n, conPrecio: con.n },
     motivos: mot.rows.map((m: any) => ({ clave: m.motivo, texto: textoMotivoSinFiscal(m.motivo), n: m.n })),
     bajas: {
@@ -306,14 +325,15 @@ export async function reunirReporte(rango: Rango): Promise<Reporte> {
 
 /** Filas de capturas del periodo para la hoja de detalle del Excel (sin datos personales ni nombres de las tortillerías) */
 export const MAX_FILAS_DETALLE = 50000;
-export async function capturasDelPeriodo(rango: Rango) {
+export async function capturasDelPeriodo(rango: Rango, soloMaquina?: boolean) {
+  const FP = filtroP(soloMaquina);
   const { rows } = await pool.query(
     `SELECT to_char(${MOMENTO}, 'YYYY-MM-DD') AS fecha, to_char(${MOMENTO}, 'HH24:MI') AS hora, e.nombre AS estado, m.nombre AS municipio,
             CASE p.producto WHEN 'maiz' THEN 'Tortilla' ELSE 'Masa' END AS producto, p.precio_kg::float8 AS precio,
             CASE WHEN p.aprobacion = 'manual' THEN 'Revisado' ELSE 'Automática' END AS aprobacion, p.origen_tortilleria AS origen
        FROM precios_que_cuentan p
        LEFT JOIN estados e ON e.clave = p.estado_clave LEFT JOIN municipios m ON m.clave = p.municipio_clave
-      WHERE ${VENTANA("$1", "$2")}
+      WHERE ${VENTANA("$1", "$2")}${FP}
       ORDER BY coalesce(p.capturado_en, p.creado_en) LIMIT ${MAX_FILAS_DETALLE + 1}`,
     [rango.desde, rango.hastaExcl],
   );

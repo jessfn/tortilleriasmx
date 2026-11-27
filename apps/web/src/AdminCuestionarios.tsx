@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, ClipboardCheck, ClipboardList, ClipboardX, FileSpreadsheet, Loader2, Lock, MapPin, Search } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, ClipboardCheck, ClipboardList, ClipboardX, FileSpreadsheet, FileStack, Loader2, Lock, MapPin, Search } from "lucide-react";
 import { CUESTIONARIO_VERSION, textoMotivoNoAplica } from "@tortillerias/shared";
 import { api, apiDescargar } from "./api";
 import { BarraValor, entero, EnVivo, useVivo } from "./AdminVivo";
@@ -31,7 +31,7 @@ export default function AdminCuestionarios() {
   const [abierta, setAbierta] = useState<Fila>();
   const [error, setError] = useState("");
   const [bajando, setBajando] = useState<"" | "datos" | "dic">("");
-  const [seccion, setSeccion] = useState<"seguimiento" | "reportes">("seguimiento");
+  const [seccion, setSeccion] = useState<"seguimiento" | "reportes" | "completo">("seguimiento");
 
   const vivo = useVivo(async () => {
     setInd(await api<Indicadores>(`/admin/cuestionarios/indicadores${estado ? `?estado=${estado.clave}` : ""}`));
@@ -96,15 +96,22 @@ export default function AdminCuestionarios() {
       </p>
       {error && <Aviso>{error}</Aviso>}
 
-      <div role="tablist" aria-label="Sección" className="grid grid-cols-2 gap-1 rounded-2xl bg-stone-200/70 p-1 sm:w-[26rem]">
-        {([["seguimiento", "Seguimiento", ClipboardList], ["reportes", "Reportes PDF y Excel", FileSpreadsheet]] as const).map(([id, t, I]) => (
-          <button key={id} role="tab" aria-selected={seccion === id} onClick={() => setSeccion(id)} className={`flex min-h-10 items-center justify-center gap-2 rounded-xl text-sm font-semibold transition ${seccion === id ? "bg-white text-guinda shadow" : "text-stone-500 hover:text-stone-700"}`}>
-            <I className="h-4 w-4" aria-hidden /> {t}
+      <div role="tablist" aria-label="Sección" className="grid grid-cols-3 gap-1 rounded-2xl bg-stone-200/70 p-1 sm:w-[40rem]">
+        {([["seguimiento", "Seguimiento", ClipboardList], ["reportes", "Reportes PDF y Excel", FileSpreadsheet], ["completo", "Reporte completo", FileStack]] as const).map(([id, t, I]) => (
+          <button key={id} role="tab" aria-selected={seccion === id} onClick={() => setSeccion(id)} className={`flex min-h-10 items-center justify-center gap-2 rounded-xl px-1 text-center text-xs font-semibold leading-tight transition sm:text-sm ${seccion === id ? "bg-white text-guinda shadow" : "text-stone-500 hover:text-stone-700"}`}>
+            <I className="h-4 w-4 shrink-0" aria-hidden /> {t}
           </button>
         ))}
       </div>
 
-      {seccion === "reportes" ? (
+      {seccion === "completo" ? (
+        <>
+          <p className="flex items-start gap-1.5 rounded-xl bg-guinda/5 px-3 py-2 text-xs text-stone-700 ring-1 ring-guinda/15">
+            <FileStack className="mt-0.5 h-3.5 w-3.5 shrink-0 text-guinda" aria-hidden /> Reporte de precios de Extras y reporte del cuestionario juntos en un solo archivo, con portada. Es nacional y solo incluye tortillerías que elaboran a máquina.
+          </p>
+          <AdminExtras modo="completo" />
+        </>
+      ) : seccion === "reportes" ? (
         <AdminExtras modo="cuestionarios" estado={estado ? { clave: estado.clave, nombre: estado.nombre } : undefined} />
       ) : (
       <>

@@ -3,13 +3,19 @@ import { AlertTriangle, CalendarDays, ClipboardCheck, FileDown, FileSpreadsheet,
 import { api, apiDescargar } from "./api";
 import { Aviso, Boton } from "./ui";
 
-type Periodo = "dia" | "semana" | "mes" | "anio" | "rango";
+type Periodo = "dia" | "semana" | "mes" | "anio" | "rango" | "todo";
 type Estad = { tiendas: number; promedio: number | null; minimo: number | null; maximo: number | null };
 type Totales = { capturas: number; visitadas: number; censadores: number; nuevas: number; maiz: Estad; masa: Estad };
 type Vista = { titulo: string; tipo: string; horario: string; anterior: string; dias: number; granularidad: "hora" | "dia" | "mes"; totales: Totales; anteriorTotales: Totales; estados: number };
 /** Reporte del cuestionario (C21) */
 type TotCuest = { tortillerias: number; registros: number; nuevos: number; actualizados: number; censadores: number; estados: number };
 type VistaCuest = { titulo: string; tipo: string; horario: string; anterior: string; ambito: string; granularidad: "hora" | "dia" | "mes"; totales: TotCuest; anteriorTotales: TotCuest; avance: { visitadas: number; conCuestionario: number; porcentaje: number } };
+/** Reporte completo: precios + cuestionario, solo tortillerías de máquina */
+type VistaCompleto = {
+  titulo: string; tipo: string; horario: string; anterior: string; granularidad: "hora" | "dia" | "mes";
+  precios: Totales; preciosAnterior: Totales; cuestionario: TotCuest; cuestionarioAnterior: TotCuest;
+  avance: { visitadas: number; conCuestionario: number; porcentaje: number }; universo: { clave: string; texto: string; n: number }[];
+};
 
 const PERIODOS: { id: Periodo; texto: string }[] = [
   { id: "dia", texto: "Día" },
@@ -18,6 +24,7 @@ const PERIODOS: { id: Periodo; texto: string }[] = [
   { id: "anio", texto: "Año" },
   { id: "rango", texto: "Rango" },
 ];
+const PERIODOS_COMPLETO: { id: Periodo; texto: string }[] = [...PERIODOS, { id: "todo", texto: "De siempre" }];
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 const PRIMER_ANIO = 2024;
 const campo = "min-h-12 w-full rounded-2xl bg-white px-3.5 text-base shadow-sm ring-1 ring-stone-200 focus:outline-none focus:ring-2 focus:ring-guinda/50";
@@ -53,10 +60,12 @@ function Cifra({ icono: Icono, etiqueta, valor, dif }: { icono: typeof Store; et
  * EXTRAS: reportes descargables (PDF con gráficas o Excel) por día, semana, mes, año o rango de fechas.
  * modo "cuestionarios": el mismo selector para el reporte del cuestionario de supervisión (vista Cuestionarios), nacional o de un estado.
  */
-export default function AdminExtras({ modo = "precios", estado }: { modo?: "precios" | "cuestionarios"; estado?: { clave: string; nombre: string } } = {}) {
+export default function AdminExtras({ modo = "precios", estado }: { modo?: "precios" | "cuestionarios" | "completo"; estado?: { clave: string; nombre: string } } = {}) {
+  const esCompleto = modo === "completo";
   const esCuest = modo === "cuestionarios";
-  const base = esCuest ? "/admin/cuestionarios/reporte" : "/admin/reportes";
+  const base = esCompleto ? "/admin/cuestionarios/reporte-completo" : esCuest ? "/admin/cuestionarios/reporte" : "/admin/reportes";
   const deEstado = esCuest && estado ? `&estado=${estado.clave}` : "";
+  const [vistaX, setVistaX] = useState<VistaCompleto>();
   const hoy = useMemo(hoyMx, []);
   const anioHoy = Number(hoy.slice(0, 4));
   const [periodo, setPeriodo] = useState<Periodo>("dia");
@@ -75,7 +84,9 @@ export default function AdminExtras({ modo = "precios", estado }: { modo?: "prec
   const { consulta, problema } = useMemo(() => {
     let f = fecha, h: string | undefined;
     let p = "";
-    if (periodo === "mes") {
+    if (periodo === "todo") {
+      return { consulta: new URLSearchParams({ periodo }).toString(), problema: "" };
+    } else if (periodo === "mes") {
       f = `${anio}-${String(mes).padStart(2, "0")}-01`;
       if (f > hoy) p = "Ese mes aún no llega";
     } else if (periodo === "anio") {
@@ -102,14 +113,15 @@ export default function AdminExtras({ modo = "precios", estado }: { modo?: "prec
     if (problema) {
       setVista(undefined);
       setVistaC(undefined);
+      setVistaX(undefined);
       return;
     }
     let vigente = true;
     setCargando(true);
     const t = window.setTimeout(() => {
-      api<Vista & VistaCuest>(`${base}/vista-previa?${consulta}${deEstado}`)
-        .then((v) => vigente && (esCuest ? setVistaC(v) : setVista(v), setError("")))
-        .catch((e) => vigente && (setVista(undefined), setVistaC(undefined), setError(e instanceof Error ? e.message : "No se pudo preparar la vista previa")))
+      api<Vista & VistaCuest & VistaCompleto>(`${base}/vista-previa?${consulta}${deEstado}`)
+        .then((v) => vigente && (esCompleto ? setVistaX(v) : esCuest ? setVistaC(v) : setVista(v), setError("")))
+        .catch((e) => vigente && (setVista(undefined), setVistaC(undefined), setVistaX(undefined), setError(e instanceof Error ? e.message : "No se pudo preparar la vista previa")))
         .finally(() => vigente && setCargando(false));
     }, 350);
     return () => {
@@ -124,7 +136,7 @@ export default function AdminExtras({ modo = "precios", estado }: { modo?: "prec
     setError("");
     setHecho("");
     try {
-      await apiDescargar(`${base}/descargar?${consulta}&formato=${formato}${deEstado}`, `TortilleriasMX_${esCuest ? "Cuestionario" : "Reporte"}.${formato}`);
+      await apiDescargar(`${base}/descargar?${consulta}&formato=${formato}${deEstado}`, `TortilleriasMX_${esCompleto ? "ReporteCompleto_Maquina" : esCuest ? "Cuestionario" : "Reporte"}.${formato}`);
       setHecho(formato === "pdf" ? "Reporte en PDF descargado" : "Reporte en Excel descargado");
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo descargar el reporte");
@@ -174,8 +186,8 @@ export default function AdminExtras({ modo = "precios", estado }: { modo?: "prec
         <section className="space-y-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-stone-200" aria-label="Elegir el reporte">
           <div>
             <h3 className="text-sm font-bold">Periodo</h3>
-            <div role="radiogroup" aria-label="Periodo del reporte" className="mt-2 grid grid-cols-3 gap-1.5 sm:grid-cols-5 lg:grid-cols-3 xl:grid-cols-5">
-              {PERIODOS.map((x) => (
+            <div role="radiogroup" aria-label="Periodo del reporte" className={`mt-2 grid grid-cols-3 gap-1.5 ${esCompleto ? "sm:grid-cols-6 lg:grid-cols-3 xl:grid-cols-6" : "sm:grid-cols-5 lg:grid-cols-3 xl:grid-cols-5"}`}>
+              {(esCompleto ? PERIODOS_COMPLETO : PERIODOS).map((x) => (
                 <button
                   key={x.id}
                   type="button"
@@ -224,6 +236,7 @@ export default function AdminExtras({ modo = "precios", estado }: { modo?: "prec
               </div>
             )}
             {semana && <p className="flex items-start gap-1.5 text-xs text-stone-500"><CalendarDays className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />{semana}</p>}
+            {periodo === "todo" && <p className="flex items-start gap-1.5 text-xs text-stone-500"><CalendarDays className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />Desde el primer registro de tortillerías de máquina hasta hoy, mes por mes.</p>}
             <p className="text-[11px] leading-snug text-stone-400">
               {periodo === "dia" ? "Va de las 12:00 a. m. a las 11:59 p. m. de ese día." : "Cada día va de las 12:00 a. m. a las 11:59 p. m."} Hora de la Ciudad de México.
             </p>
@@ -242,7 +255,9 @@ export default function AdminExtras({ modo = "precios", estado }: { modo?: "prec
             </Boton>
           </div>
           <p className="text-[11px] leading-snug text-stone-400">
-            {esCuest
+            {esCompleto
+              ? "Un solo archivo con portada, la parte de precios (la de Extras) y la del cuestionario, solo de tortillerías que elaboran a máquina. El PDF es una presentación con gráficas; el Excel trae una portada y las hojas de las dos partes, sin datos personales."
+              : esCuest
               ? `El PDF es una presentación con gráficas de cada bloque del cuestionario (${estado ? estado.nombre : "nacional"}). El Excel trae los totales, el avance por estado, las respuestas pregunta por pregunta y lo que escribieron en "Otro", sin datos personales.`
               : "El PDF es una presentación con gráficas y los logos de Gobierno de México y Agricultura. El Excel trae las tablas y las capturas del periodo, sin datos personales."}
           </p>
@@ -252,14 +267,20 @@ export default function AdminExtras({ modo = "precios", estado }: { modo?: "prec
         <section className="min-w-0 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-stone-200" aria-label="Vista previa del reporte" aria-live="polite">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-[11px] font-bold uppercase tracking-widest text-dorado">{(esCuest ? vistaC?.tipo : vista?.tipo) ?? "Vista previa"}</div>
-              <h3 className="mt-0.5 break-words font-serif text-2xl leading-tight text-guinda sm:text-3xl">{(esCuest ? vistaC?.titulo : vista?.titulo) ?? (problema ? "—" : "Preparando…")}</h3>
-              {esCuest ? vistaC && <p className="mt-1 text-xs text-stone-500">{vistaC.ambito} · {vistaC.horario}</p> : vista && <p className="mt-1 text-xs text-stone-500">{vista.horario}</p>}
+              <div className="text-[11px] font-bold uppercase tracking-widest text-dorado">{(esCompleto ? vistaX?.tipo : esCuest ? vistaC?.tipo : vista?.tipo) ?? "Vista previa"}</div>
+              <h3 className="mt-0.5 break-words font-serif text-2xl leading-tight text-guinda sm:text-3xl">{(esCompleto ? vistaX?.titulo : esCuest ? vistaC?.titulo : vista?.titulo) ?? (problema ? "—" : "Preparando…")}</h3>
+              {esCompleto ? vistaX && <p className="mt-1 text-xs text-stone-500">Solo tortillerías de máquina · {vistaX.horario}</p> : esCuest ? vistaC && <p className="mt-1 text-xs text-stone-500">{vistaC.ambito} · {vistaC.horario}</p> : vista && <p className="mt-1 text-xs text-stone-500">{vista.horario}</p>}
             </div>
             {cargando && <Loader2 className="mt-1 h-5 w-5 shrink-0 animate-spin text-stone-400" aria-label="Cargando" />}
           </div>
 
-          {esCuest ? (
+          {esCompleto ? (
+            vistaX ? (
+              <VistaPreviaCompleto v={vistaX} />
+            ) : (
+              !cargando && <p className="mt-6 rounded-xl bg-stone-50 p-6 text-center text-sm text-stone-500 ring-1 ring-stone-200/70">{problema || error || "Elige un periodo para ver qué incluirá el reporte."}</p>
+            )
+          ) : esCuest ? (
             tc && pc && vistaC ? (
               <>
                 <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
@@ -306,5 +327,59 @@ export default function AdminExtras({ modo = "precios", estado }: { modo?: "prec
         </section>
       </div>
     </div>
+  );
+}
+
+/** Vista previa del reporte completo: universo de máquina, precios y cuestionario del periodo */
+function VistaPreviaCompleto({ v }: { v: VistaCompleto }) {
+  const p = v.precios, pa = v.preciosAnterior, c = v.cuestionario, ca = v.cuestionarioAnterior;
+  const dif = (a: number, b: number): { texto: string; bueno: boolean | null } => {
+    if (b === 0) return { texto: a === 0 ? `Igual que ${v.anterior}` : `Sin datos de ${v.anterior}`, bueno: null };
+    const d = ((a - b) / b) * 100;
+    if (Math.abs(d) < 0.05) return { texto: `Igual que ${v.anterior}`, bueno: null };
+    return { texto: `${d > 0 ? "+" : "−"}${Math.abs(d).toFixed(1)} % vs. ${v.anterior}`, bueno: d > 0 };
+  };
+  const maq = v.universo.find((u) => u.clave === "maquina")?.n ?? 0;
+  const tot = Math.max(1, v.universo.reduce((s, u) => s + u.n, 0));
+  const colores: Record<string, string> = { maquina: "bg-guinda", ambas: "bg-dorado", mano: "bg-stone-400", sin_dato: "bg-stone-200" };
+  const vacio = p.capturas === 0 && c.tortillerias === 0;
+  return (
+    <>
+      <div className="mt-4 rounded-2xl bg-guinda/5 p-3 ring-1 ring-guinda/15">
+        <div className="flex items-baseline justify-between gap-2 text-xs">
+          <span className="font-semibold text-stone-600">Catálogo activo por tipo de elaboración</span>
+          <span className="shrink-0 font-bold text-guinda">{((maq / tot) * 100).toFixed(1)} % a máquina</span>
+        </div>
+        <div className="mt-2 flex h-2.5 overflow-hidden rounded-full bg-stone-100">
+          {v.universo.map((u) => <span key={u.clave} className={colores[u.clave] ?? "bg-stone-300"} style={{ width: `${(u.n / tot) * 100}%` }} />)}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-stone-500">
+          {v.universo.map((u) => (
+            <span key={u.clave} className={`inline-flex items-center gap-1 ${u.clave === "maquina" ? "font-bold text-guinda" : ""}`}>
+              <span className={`h-2 w-2 rounded-sm ${colores[u.clave] ?? "bg-stone-300"}`} />{u.texto} {num(u.n)}{u.clave === "maquina" ? " · incluidas" : ""}
+            </span>
+          ))}
+        </div>
+      </div>
+      <h4 className="mt-4 text-[11px] font-bold uppercase tracking-wide text-stone-500">Parte 1 · Precios</h4>
+      <div className="mt-1.5 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+        <Cifra icono={Sparkles} etiqueta="Capturas" valor={num(p.capturas)} dif={dif(p.capturas, pa.capturas)} />
+        <Cifra icono={Store} etiqueta="Tortillerías visitadas" valor={num(p.visitadas)} dif={dif(p.visitadas, pa.visitadas)} />
+        <Cifra icono={Wheat} etiqueta="Tortilla · promedio" valor={p.maiz.promedio == null ? "—" : `${pesos(p.maiz.promedio)} /kg`} />
+      </div>
+      <h4 className="mt-4 text-[11px] font-bold uppercase tracking-wide text-stone-500">Parte 2 · Cuestionario</h4>
+      <div className="mt-1.5 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+        <Cifra icono={ClipboardCheck} etiqueta="Cuestionarios aplicados" valor={num(c.tortillerias)} dif={dif(c.tortillerias, ca.tortillerias)} />
+        <Cifra icono={Users} etiqueta="Censadores" valor={num(c.censadores)} dif={dif(c.censadores, ca.censadores)} />
+        <Cifra icono={ClipboardCheck} etiqueta="Avance acumulado" valor={`${v.avance.porcentaje} %`} dif={{ texto: `${num(v.avance.conCuestionario)} de ${num(v.avance.visitadas)} visitadas`, bueno: null }} />
+      </div>
+      {vacio ? (
+        <p className="mt-3 flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-800 ring-1 ring-amber-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />No hay capturas ni cuestionarios de tortillerías de máquina en este periodo. El reporte se puede descargar, pero saldrá sin cifras.</p>
+      ) : (
+        <p className="mt-3 text-xs text-stone-500">
+          Incluye una portada con las cifras clave, las capturas y precios {v.granularidad === "hora" ? "hora por hora" : v.granularidad === "dia" ? "día por día" : "mes por mes"}, el precio por estado, el avance del cuestionario y las respuestas de los bloques A, B y C.
+        </p>
+      )}
+    </>
   );
 }

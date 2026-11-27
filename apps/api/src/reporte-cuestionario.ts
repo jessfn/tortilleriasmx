@@ -23,6 +23,8 @@ export type TotalesCuest = { tortillerias: number; registros: number; nuevos: nu
 export type ReporteCuest = {
   rango: Rango;
   estado: { clave: string; nombre: string } | null;
+  /** true: solo tortillerías de máquina (reporte completo) */
+  soloMaquina?: boolean;
   generado: string;
   totales: TotalesCuest;
   anterior: TotalesCuest;
@@ -44,10 +46,13 @@ const VENTANA = (d: string, h: string) =>
 const MOMENTO = `(coalesce(k.capturado_en, k.creado_en) AT TIME ZONE '${ZONA}')`;
 const pad = (n: number) => String(n).padStart(2, "0");
 
-async function totalesDe(desde: string, hastaExcl: string, estado: string | null): Promise<TotalesCuest> {
+/** Filtro fijo para quedarse solo con tortillerías de máquina (reporte completo) */
+const filtroT = (soloMaquina?: boolean) => (soloMaquina ? " AND t.elaboracion = 'maquina'" : "");
+
+async function totalesDe(desde: string, hastaExcl: string, estado: string | null, soloMaquina?: boolean): Promise<TotalesCuest> {
   const { rows: [t] } = await pool.query(
     `WITH r AS (SELECT k.*, t.estado_clave FROM tortilleria_cuestionarios k JOIN tortillerias t ON t.id = k.tortilleria_id
-                 WHERE k.estatus = 'aplicado' AND ${VENTANA("$1", "$2")} AND ($3::text IS NULL OR t.estado_clave = $3))
+                 WHERE k.estatus = 'aplicado' AND ${VENTANA("$1", "$2")} AND ($3::text IS NULL OR t.estado_clave = $3)${filtroT(soloMaquina)})
      SELECT count(*)::int AS registros, count(DISTINCT tortilleria_id)::int AS tortillerias, count(DISTINCT capturista_id)::int AS censadores,
             count(DISTINCT estado_clave)::int AS estados,
             count(DISTINCT tortilleria_id) FILTER (WHERE NOT EXISTS (
@@ -70,8 +75,9 @@ const contar = (lista: readonly Op[], valores: (string | null | undefined)[]): D
 const contarMulti = (lista: readonly Op[], valores: (string[] | null)[]): Distrib => contar(lista, valores.flatMap((v) => v ?? []));
 
 /** Todo lo que lleva el reporte del cuestionario (PDF, Excel y vista previa salen de aquí) */
-export async function reunirReporteCuestionario(rango: Rango, estado: string | null): Promise<ReporteCuest> {
-  const [totales, anterior] = await Promise.all([totalesDe(rango.desde, rango.hastaExcl, estado), totalesDe(rango.ant.desde, rango.ant.hastaExcl, estado)]);
+export async function reunirReporteCuestionario(rango: Rango, estado: string | null, soloMaquina = false): Promise<ReporteCuest> {
+  const FT = filtroT(soloMaquina);
+  const [totales, anterior] = await Promise.all([totalesDe(rango.desde, rango.hastaExcl, estado, soloMaquina), totalesDe(rango.ant.desde, rango.ant.hastaExcl, estado, soloMaquina)]);
   const nombres = new Map<string, string>((await pool.query("SELECT clave, nombre FROM estados")).rows.map((e: any) => [e.clave, e.nombre]));
 
   // Avance acumulado al cierre del periodo: tortillerías visitadas (activas) con un cuestionario aplicado hasta ese momento
@@ -80,12 +86,12 @@ export async function reunirReporteCuestionario(rango: Rango, estado: string | n
      SELECT t.estado_clave AS clave, count(*)::int AS visitadas,
             count(*) FILTER (WHERE EXISTS (SELECT 1 FROM tortilleria_cuestionarios k WHERE k.tortilleria_id = t.id AND k.estatus = 'aplicado'
                                              AND coalesce(k.capturado_en, k.creado_en) < $1::date::timestamp AT TIME ZONE '${ZONA}'))::int AS acumulado
-       FROM tortillerias t JOIN v ON v.id = t.id WHERE t.estado_clave IS NOT NULL GROUP BY t.estado_clave`,
+       FROM tortillerias t JOIN v ON v.id = t.id WHERE t.estado_clave IS NOT NULL${FT} GROUP BY t.estado_clave`,
     [rango.hastaExcl],
   );
   const per = await pool.query(
     `SELECT t.estado_clave AS clave, count(DISTINCT k.tortilleria_id)::int AS n FROM tortilleria_cuestionarios k JOIN tortillerias t ON t.id = k.tortilleria_id
-      WHERE k.estatus = 'aplicado' AND ${VENTANA("$1", "$2")} GROUP BY t.estado_clave`,
+      WHERE k.estatus = 'aplicado' AND ${VENTANA("$1", "$2")}${FT} GROUP BY t.estado_clave`,
     [rango.desde, rango.hastaExcl],
   );
   const estados = [...nombres.keys()]
@@ -102,7 +108,7 @@ export async function reunirReporteCuestionario(rango: Rango, estado: string | n
   const bucket = rango.granularidad === "hora" ? `extract(hour from ${MOMENTO})::int::text` : rango.granularidad === "dia" ? `to_char(${MOMENTO}, 'YYYY-MM-DD')` : `to_char(${MOMENTO}, 'YYYY-MM')`;
   const sr = await pool.query(
     `SELECT ${bucket} AS k, count(*)::int AS v FROM tortilleria_cuestionarios k JOIN tortillerias t ON t.id = k.tortilleria_id
-      WHERE k.estatus = 'aplicado' AND ${VENTANA("$1", "$2")} AND ($3::text IS NULL OR t.estado_clave = $3) GROUP BY 1`,
+      WHERE k.estatus = 'aplicado' AND ${VENTANA("$1", "$2")} AND ($3::text IS NULL OR t.estado_clave = $3)${FT} GROUP BY 1`,
     [rango.desde, rango.hastaExcl, estado],
   );
   const claves: string[] = [];
@@ -122,7 +128,7 @@ export async function reunirReporteCuestionario(rango: Rango, estado: string | n
   // Respuestas: el último cuestionario aplicado de cada tortillería dentro del periodo
   const { rows: u } = await pool.query(
     `SELECT DISTINCT ON (k.tortilleria_id) k.* FROM tortilleria_cuestionarios k JOIN tortillerias t ON t.id = k.tortilleria_id
-      WHERE k.estatus = 'aplicado' AND ${VENTANA("$1", "$2")} AND ($3::text IS NULL OR t.estado_clave = $3)
+      WHERE k.estatus = 'aplicado' AND ${VENTANA("$1", "$2")} AND ($3::text IS NULL OR t.estado_clave = $3)${FT}
       ORDER BY k.tortilleria_id, coalesce(k.capturado_en, k.creado_en) DESC, k.creado_en DESC`,
     [rango.desde, rango.hastaExcl, estado],
   );
@@ -140,7 +146,7 @@ export async function reunirReporteCuestionario(rango: Rango, estado: string | n
   otros.sort((a, b) => b.n - a.n || a.pregunta.localeCompare(b.pregunta));
 
   return {
-    rango, estado: estado ? { clave: estado, nombre: nombres.get(estado) ?? estado } : null, generado: new Date().toISOString(), totales, anterior,
+    rango, estado: estado ? { clave: estado, nombre: nombres.get(estado) ?? estado } : null, soloMaquina, generado: new Date().toISOString(), totales, anterior,
     avance: { visitadas, conCuestionario, porcentaje: visitadas ? Math.round((conCuestionario / visitadas) * 1000) / 10 : 0 },
     serie, estados, base: u.length,
     a1: contar(UBICACION_TIPO, col("a1_ubicacion")),
@@ -208,7 +214,7 @@ function difC(doc: DocPdf, x: number, y: number, actual: number, previo: number,
   diferencia(doc, x, y, actual, previo, "conteo", anterior, w);
 }
 
-function pPortada(doc: DocPdf, r: ReporteCuest) {
+function pPortada(doc: DocPdf, r: ReporteCuest, offset = 0) {
   const t = textosCuestionario(r);
   const a = r.totales, p = r.anterior;
   const PX = MX, PY = 110, PW = 530, PH = 550;
@@ -234,8 +240,9 @@ function pPortada(doc: DocPdf, r: ReporteCuest) {
   doc.circle(PX + 54, y + (hh + 22) / 2, 4).fill(O);
   doc.font("Cuerpo-Bold").fontSize(10.5).fillColor("#ffffff").text(linea, PX + 70, y + 11, { width: PW - 108 });
   y += hh + 22 + 18;
-  parrafo(doc, "Resultados del cuestionario de supervisión que los censadores aplican una sola vez en cada tortillería: dónde está, cómo trabaja, el Acuerdo Maíz-Tortilla, los apoyos y su situación de licencia, IMSS y SAT.", PX + 36, y, PW - 72, { size: 12, color: "#ecdde2", gap: 4 });
-  const items: [number, string][] = [[2, `Cuestionarios ${t.porUnidad}`], [3, "Avance por estado"], [4, "Bloque A · Lo que se observa"], [5, "Bloque B · Insumos y negocio"], [6, "Bloque B · Acuerdo y apoyos"], [7, "Bloque C · Licencia, IMSS y SAT"]];
+  parrafo(doc, "Resultados del cuestionario de supervisión que los censadores aplican una sola vez en cada tortillería: dónde está, cómo trabaja, el Acuerdo Maíz-Tortilla, los apoyos y su situación de licencia, IMSS y SAT." + (r.soloMaquina ? " Solo tortillerías que elaboran a máquina." : ""), PX + 36, y, PW - 72, { size: 12, color: "#ecdde2", gap: 4 });
+  const nEst = Math.max(1, Math.ceil(r.estados.length / 32)) - 1; // páginas extra de la tabla de estados
+  const items: [number, string][] = ([[2, `Cuestionarios ${t.porUnidad}`], [3, "Avance por estado"], [4 + nEst, "Bloque A · Lo que se observa"], [5 + nEst, "Bloque B · Insumos y negocio"], [6 + nEst, "Bloque B · Acuerdo y apoyos"], [7 + nEst, "Bloque C · Licencia, IMSS y SAT"]] as [number, string][]).map(([n, x]) => [n + offset, x]);
   const ly = PY + PH - 40 - items.length * 30;
   tx(doc, "EN ESTE REPORTE", PX + 36, ly - 26, { font: "Cuerpo-Bold", size: 9, color: O, spacing: 1.6 });
   items.forEach(([n, texto], i) => {
@@ -387,6 +394,18 @@ function pBloqueC(doc: DocPdf, r: ReporteCuest) {
   );
 }
 
+/** Todas las páginas del reporte del cuestionario. `offset`: páginas que van antes (para la numeración del índice). */
+export function paginasCuestionario(doc: DocPdf, r: ReporteCuest, primera: boolean, offset: number) {
+  nuevaPagina(doc, primera);
+  pPortada(doc, r, offset);
+  pSerie(doc, r);
+  pEstados(doc, r);
+  pBloqueA(doc, r);
+  pBloqueB1(doc, r);
+  pBloqueB2(doc, r);
+  pBloqueC(doc, r);
+}
+
 export async function reporteCuestionarioPdf(r: ReporteCuest): Promise<Buffer> {
   const t = textosCuestionario(r);
   const doc = new PDFDocument({ size: [1280, 720], margin: 0, bufferPages: true, info: { Title: `${t.tipo} · ${t.titulo}`, Author: "TortilleríasMX", Subject: "Cuestionario de supervisión de tortillerías" } });
@@ -398,14 +417,7 @@ export async function reporteCuestionarioPdf(r: ReporteCuest): Promise<Buffer> {
     doc.pipe(new Writable({ write(c, _e, cb) { trozos.push(c); cb(); }, final(cb) { ok(Buffer.concat(trozos)); cb(); } }));
     doc.on("error", mal);
   });
-  nuevaPagina(doc, true);
-  pPortada(doc, r);
-  pSerie(doc, r);
-  pEstados(doc, r);
-  pBloqueA(doc, r);
-  pBloqueB1(doc, r);
-  pBloqueB2(doc, r);
-  pBloqueC(doc, r);
+  paginasCuestionario(doc, r, true, 0);
   const rango = doc.bufferedPageRange();
   const generado = new Intl.DateTimeFormat("es-MX", { timeZone: ZONA, dateStyle: "long", timeStyle: "short" }).format(new Date(r.generado));
   for (let i = 0; i < rango.count; i++) {
@@ -434,13 +446,19 @@ function encabezado(h: ExcelJS.Row) {
 const porc = '0.0" %"';
 
 export async function reporteCuestionarioXlsx(r: ReporteCuest): Promise<Buffer> {
-  const t = textosCuestionario(r);
   const wb = new ExcelJS.Workbook();
   wb.creator = "TortilleríasMX";
   wb.created = new Date(r.generado);
+  llenarXlsxCuestionario(wb, r);
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+/** Agrega las hojas del reporte del cuestionario a un libro. `prefijo` evita choques de nombres en el reporte completo. */
+export function llenarXlsxCuestionario(wb: ExcelJS.Workbook, r: ReporteCuest, prefijo = "") {
+  const t = textosCuestionario(r);
 
   // ---- Resumen
-  const s1 = wb.addWorksheet("Resumen", { views: [{ showGridLines: false }] });
+  const s1 = wb.addWorksheet(`${prefijo}Resumen`, { views: [{ showGridLines: false }] });
   s1.columns = [{ width: 44 }, { width: 18 }, { width: 18 }, { width: 18 }];
   s1.mergeCells("A1:D1");
   s1.getCell("A1").value = "TortilleríasMX · Cuestionario de supervisión";
@@ -450,7 +468,7 @@ export async function reporteCuestionarioXlsx(r: ReporteCuest): Promise<Buffer> 
   s1.getRow(1).height = 40;
   s1.addImage(wb.addImage({ filename: logoDgtic, extension: "png" }), { tl: { col: 2.35, row: 0.1 }, ext: { width: 119, height: 34 } });
   s1.mergeCells("A2:D2");
-  s1.getCell("A2").value = `${t.tipo}: ${t.titulo} · ${t.ambito}`;
+  s1.getCell("A2").value = `${t.tipo}: ${t.titulo} · ${t.ambito}${r.soloMaquina ? " · solo tortillerías de máquina" : ""}`;
   s1.getCell("A2").font = { bold: true, size: 15, color: { argb: GUINDA } };
   s1.getRow(2).height = 28;
   s1.mergeCells("A3:D3");
@@ -482,14 +500,14 @@ export async function reporteCuestionarioXlsx(r: ReporteCuest): Promise<Buffer> 
   s1.getCell(`A${n0 + 2}`).alignment = { wrapText: true, vertical: "top" };
 
   // ---- Por estado
-  const s2 = wb.addWorksheet("Por estado", { views: [{ state: "frozen", ySplit: 1 }] });
+  const s2 = wb.addWorksheet(`${prefijo}Por estado`, { views: [{ state: "frozen", ySplit: 1 }] });
   s2.columns = [{ header: "Estado", key: "e", width: 30 }, { header: "Tortillerías visitadas", key: "v", width: 20 }, { header: "Con cuestionario (acumulado)", key: "a", width: 26 }, { header: "Avance (%)", key: "p", width: 14 }, { header: "Aplicados en el periodo", key: "n", width: 22 }];
   encabezado(s2.getRow(1));
   for (const e of r.estados) s2.addRow({ e: e.nombre, v: e.visitadas, a: e.acumulado, p: e.porcentaje, n: e.periodo });
   s2.getColumn("p").numFmt = porc;
 
   // ---- Respuestas (pregunta por pregunta)
-  const s3 = wb.addWorksheet("Respuestas", { views: [{ state: "frozen", ySplit: 1 }] });
+  const s3 = wb.addWorksheet(`${prefijo}Respuestas`, { views: [{ state: "frozen", ySplit: 1 }] });
   s3.columns = [{ header: "Bloque", key: "b", width: 10 }, { header: "Pregunta", key: "q", width: 62 }, { header: "Respuesta", key: "r", width: 52 }, { header: "Tortillerías", key: "n", width: 14 }, { header: "%", key: "p", width: 10 }, { header: "Base", key: "base", width: 10 }];
   encabezado(s3.getRow(1));
   const poner = (b: string, q: string, d: Distrib, base: number) => { for (const x of d) s3.addRow({ b, q, r: x.texto, n: x.n, p: base ? Math.round((x.n / base) * 1000) / 10 : 0, base }); };
@@ -513,17 +531,15 @@ export async function reporteCuestionarioXlsx(r: ReporteCuest): Promise<Buffer> 
   s3.getColumn("p").numFmt = porc;
 
   // ---- Respuestas "Otro" (texto libre)
-  const s4 = wb.addWorksheet("Respuestas Otro", { views: [{ state: "frozen", ySplit: 1 }] });
+  const s4 = wb.addWorksheet(`${prefijo}Respuestas Otro`, { views: [{ state: "frozen", ySplit: 1 }] });
   s4.columns = [{ header: "Pregunta", key: "q", width: 36 }, { header: "Lo que escribieron", key: "t", width: 70 }, { header: "Veces", key: "n", width: 10 }];
   encabezado(s4.getRow(1));
   for (const o of r.otros) s4.addRow({ q: o.pregunta, t: o.texto, n: o.n });
   if (!r.otros.length) s4.addRow({ q: "Sin respuestas \"Otro\" en el periodo" });
 
   // ---- Serie
-  const s5 = wb.addWorksheet("Por periodo", { views: [{ state: "frozen", ySplit: 1 }] });
+  const s5 = wb.addWorksheet(`${prefijo}Por periodo`, { views: [{ state: "frozen", ySplit: 1 }] });
   s5.columns = [{ header: r.rango.granularidad === "hora" ? "Hora" : r.rango.granularidad === "dia" ? "Día" : "Mes", key: "k", width: 18 }, { header: "Cuestionarios aplicados", key: "v", width: 24 }];
   encabezado(s5.getRow(1));
   for (const x of r.serie) s5.addRow({ k: x.etiqueta, v: x.v });
-
-  return Buffer.from(await wb.xlsx.writeBuffer());
 }

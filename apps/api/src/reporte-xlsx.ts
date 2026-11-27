@@ -17,13 +17,19 @@ const logoDgtic = fileURLToPath(new URL("../assets/logo-dgtic-blanco.png", impor
 const dinero = '"$"#,##0.00';
 
 export async function reporteXlsx(r: Reporte): Promise<Buffer> {
-  const t = textosRango(r.rango), a = r.totales, p = r.anterior;
   const wb = new ExcelJS.Workbook();
   wb.creator = "TortilleríasMX";
   wb.created = new Date(r.generado);
+  await llenarXlsxPrecios(wb, r);
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+/** Agrega las hojas del reporte de precios a un libro. `prefijo` evita choques de nombres en el reporte completo. */
+export async function llenarXlsxPrecios(wb: ExcelJS.Workbook, r: Reporte, prefijo = "") {
+  const t = textosRango(r.rango), a = r.totales, p = r.anterior;
 
   // ---- Resumen
-  const s1 = wb.addWorksheet("Resumen", { views: [{ showGridLines: false }] });
+  const s1 = wb.addWorksheet(`${prefijo}Resumen`, { views: [{ showGridLines: false }] });
   s1.columns = [{ width: 38 }, { width: 18 }, { width: 18 }, { width: 18 }];
   s1.mergeCells("A1:D1");
   s1.getCell("A1").value = "TortilleríasMX · Secretaría de Agricultura y Desarrollo Rural";
@@ -35,7 +41,7 @@ export async function reporteXlsx(r: Reporte): Promise<Buffer> {
   s1.addImage(logo, { tl: { col: 2.35, row: 0.1 }, ext: { width: 119, height: 34 } });
   s1.getCell("A1").alignment = { vertical: "middle", indent: 1 };
   s1.mergeCells("A2:D2");
-  s1.getCell("A2").value = `${t.tipo}: ${t.titulo}`;
+  s1.getCell("A2").value = `${t.tipo}: ${t.titulo}${r.soloMaquina ? " · solo tortillerías de máquina" : ""}`;
   s1.getCell("A2").font = { bold: true, size: 16, color: { argb: GUINDA } };
   s1.getRow(2).height = 30;
   s1.mergeCells("A3:D3");
@@ -78,7 +84,7 @@ export async function reporteXlsx(r: Reporte): Promise<Buffer> {
   s1.getCell(`A${n0 + 3}`).font = { size: 10, color: { argb: "FF8A7A80" } };
 
   // ---- Por estado
-  const s2 = wb.addWorksheet("Por estado", { views: [{ state: "frozen", ySplit: 1 }] });
+  const s2 = wb.addWorksheet(`${prefijo}Por estado`, { views: [{ state: "frozen", ySplit: 1 }] });
   s2.columns = [
     { header: "Estado", key: "e", width: 26 }, { header: "Capturas", key: "c", width: 12 }, { header: "Tortillerías visitadas", key: "v", width: 14 }, { header: "Nuevas", key: "n", width: 10 },
     { header: "Tortilla · tortillerías con precio", key: "mt", width: 16 }, { header: "Tortilla · promedio", key: "mp", width: 14 }, { header: "Tortilla · mínimo", key: "mm", width: 13 }, { header: "Tortilla · máximo", key: "mx", width: 13 },
@@ -93,7 +99,7 @@ export async function reporteXlsx(r: Reporte): Promise<Buffer> {
   s2.autoFilter = { from: "A1", to: "L1" };
 
   // ---- Por periodo
-  const s3 = wb.addWorksheet(r.rango.granularidad === "hora" ? "Por hora" : r.rango.granularidad === "dia" ? "Por día" : "Por mes", { views: [{ state: "frozen", ySplit: 1 }] });
+  const s3 = wb.addWorksheet(prefijo + (r.rango.granularidad === "hora" ? "Por hora" : r.rango.granularidad === "dia" ? "Por día" : "Por mes"), { views: [{ state: "frozen", ySplit: 1 }] });
   s3.columns = [{ header: r.rango.granularidad === "hora" ? "Hora" : r.rango.granularidad === "dia" ? "Día" : "Mes", key: "k", width: 18 }, { header: "Capturas", key: "c", width: 12 }, { header: "Tortilla · promedio", key: "m", width: 16 }, { header: "Masa · promedio", key: "a", width: 16 }];
   encabezado(s3.getRow(1));
   for (const q of r.serie) s3.addRow({ k: r.rango.granularidad === "dia" ? q.k : q.etiqueta, c: q.capturas, m: q.maiz, a: q.masa });
@@ -101,13 +107,13 @@ export async function reporteXlsx(r: Reporte): Promise<Buffer> {
   s3.getColumn("D").numFmt = dinero;
 
   // ---- Sin datos fiscales
-  const s4 = wb.addWorksheet("Sin datos fiscales");
+  const s4 = wb.addWorksheet(`${prefijo}Sin datos fiscales`);
   s4.columns = [{ header: "Motivo", key: "m", width: 56 }, { header: "Intentos", key: "n", width: 12 }];
   encabezado(s4.getRow(1));
   for (const m of r.motivos) s4.addRow({ m: m.texto, n: m.n });
 
   // ---- Actualización del catálogo (bajas)
-  const s6 = wb.addWorksheet("Bajas");
+  const s6 = wb.addWorksheet(`${prefijo}Bajas`);
   s6.columns = [{ header: "Concepto", key: "c", width: 60 }, { header: "Tortillerías", key: "n", width: 14 }];
   encabezado(s6.getRow(1));
   s6.addRow({ c: "Total dadas de baja en el periodo", n: r.bajas.total }).font = { bold: true };
@@ -119,15 +125,15 @@ export async function reporteXlsx(r: Reporte): Promise<Buffer> {
   for (const e of r.bajas.porEstado) s6.addRow({ c: e.nombre, n: e.n });
 
   // ---- Tipo de elaboración
-  const s7 = wb.addWorksheet("Elaboración");
+  const s7 = wb.addWorksheet(`${prefijo}Elaboración`);
   s7.columns = [{ header: "Tipo de elaboración", key: "t", width: 26 }, { header: "Tortillerías con precio", key: "n", width: 20 }, { header: "Tortilla · promedio por kilo", key: "p", width: 26 }];
   encabezado(s7.getRow(1));
   for (const e of r.elaboracion) s7.addRow({ t: e.texto, n: e.tortillerias, p: e.promedio });
   s7.getColumn("C").numFmt = dinero;
 
   // ---- Detalle de capturas
-  const d = await capturasDelPeriodo(r.rango);
-  const s5 = wb.addWorksheet("Capturas", { views: [{ state: "frozen", ySplit: 1 }] });
+  const d = await capturasDelPeriodo(r.rango, r.soloMaquina);
+  const s5 = wb.addWorksheet(`${prefijo}Capturas`, { views: [{ state: "frozen", ySplit: 1 }] });
   s5.columns = [
     { header: "Fecha", key: "fecha", width: 12 }, { header: "Hora", key: "hora", width: 8 }, { header: "Estado", key: "estado", width: 24 }, { header: "Municipio", key: "municipio", width: 28 },
     { header: "Producto", key: "producto", width: 11 }, { header: "Precio por kilo", key: "precio", width: 14 }, { header: "Aprobación", key: "aprobacion", width: 13 }, { header: "Origen de la tortillería", key: "origen", width: 14 },
@@ -140,5 +146,4 @@ export async function reporteXlsx(r: Reporte): Promise<Buffer> {
     const n = s5.addRow([`Solo se incluyen las primeras ${MAX_FILAS_DETALLE.toLocaleString("es-MX")} capturas; elige un periodo más corto para ver todas.`]);
     n.font = { italic: true, color: { argb: DORADO } };
   }
-  return Buffer.from(await wb.xlsx.writeBuffer());
 }
