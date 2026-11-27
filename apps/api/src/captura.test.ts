@@ -2035,7 +2035,7 @@ describe("C20: alcance por estado, estados de cuenta y fecha de corte", () => {
   });
 
   it("Mi equipo: indicadores y tabla de su estado; no se puede pedir otro estado; exporta CSV sin CURP (menos el nacional)", async () => {
-    await q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, capturista_id, estatus, fecha) VALUES ($1,'masa',25,$2,'validada', current_date)", [T["14"], c14]);
+    await q("INSERT INTO capturas_precio(tortilleria_id, producto, precio_kg, capturista_id, estatus, fecha) VALUES ($1,'masa',25,$2,'validada', (now() AT TIME ZONE 'America/Mexico_City')::date)", [T["14"], c14]);
     const eq = await (await get("/admin/equipo", e14, "estatal")).json();
     expect(eq.censadores.map((c: any) => c.correo)).toEqual(expect.arrayContaining(["c14@correo.com", "ana.nueva@correo.com"]));
     expect(eq.censadores.map((c: any) => c.correo)).not.toContain("c15@correo.com");
@@ -2504,6 +2504,27 @@ describe("C21: cuestionario de supervisión de tortillerías", () => {
     expect(f3[cols.indexOf("a1_ubicacion")]).toBe("");
     expect(f3[cols.indexOf("estatus")]).toBe("no_aplicado");
     expect(await (await get("/admin/exportar/cuestionarios/diccionario", dgtic, "admin")).text()).toMatch(/b8_ninguno/);
+  });
+
+  it("reporte del cuestionario por periodo (PDF y Excel): solo con la vista Cuestionarios, con datos del periodo", async () => {
+    const hoy = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City" }).format(new Date());
+    const vp = await (await get(`/admin/cuestionarios/reporte/vista-previa?periodo=mes&fecha=${hoy}`, dgtic, "admin")).json();
+    expect(vp.tipo).toMatch(/cuestionario/);
+    expect(vp.totales.tortillerias).toBeGreaterThanOrEqual(2);
+    expect(vp.ambito).toBe("Nacional");
+    const est = await (await get(`/admin/cuestionarios/reporte/vista-previa?periodo=dia&fecha=${hoy}&estado=31`, dgtic, "admin")).json();
+    expect(est.ambito).toBe("YUCATAN");
+    const pdf = await get(`/admin/cuestionarios/reporte/descargar?periodo=semana&fecha=${hoy}&formato=pdf`, dgtic, "admin");
+    expect(pdf.status).toBe(200);
+    const buf = Buffer.from(await pdf.arrayBuffer());
+    expect(buf.subarray(0, 4).toString()).toBe("%PDF");
+    if (process.env.GUARDAR_PDF) writeFileSync(process.env.GUARDAR_PDF, buf);
+    const xl = await get(`/admin/cuestionarios/reporte/descargar?periodo=anio&fecha=${hoy}&formato=xlsx`, dgtic, "admin");
+    expect(xl.status).toBe(200);
+    expect(xl.headers.get("content-disposition")).toMatch(/TortilleriasMX_Cuestionario_anio/);
+    expect((await get(`/admin/cuestionarios/reporte/descargar?periodo=dia&fecha=${hoy}`, adm, "admin")).status).toBe(403);
+    expect((await get(`/admin/cuestionarios/reporte/vista-previa?periodo=dia&fecha=${hoy}`, uoteha, "estatal")).status).toBe(403);
+    expect((await get(`/admin/cuestionarios/reporte/vista-previa?periodo=dia&fecha=2099-01-01`, dgtic, "admin")).status).toBe(400);
   });
 
   it("Mis tortillerías, el catálogo del teléfono y /fiscal/existe traen solo el estatus", async () => {

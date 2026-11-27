@@ -4,6 +4,8 @@ import { z } from "zod";
 import { APOYOS, CUESTIONARIO_VERSION, cuestionarioSchema, diccionarioCuestionario, HIGIENE_PUNTOS, MOTIVO_NO_ADHESION, type Respuestas } from "@tortillerias/shared";
 import { auditar, pool } from "../db.js";
 import { MAX_DIAS_ATRASO, TOLERANCIA_FUTURO_MS } from "./precios.js";
+import { calcularRango, consultaSchema } from "../reportes.js";
+import { reporteCuestionarioPdf, reporteCuestionarioXlsx, reunirReporteCuestionario, textosCuestionario } from "../reporte-cuestionario.js";
 
 /**
  * C21 · Cuestionario de supervisión de tortillerías.
@@ -296,6 +298,35 @@ export function rutasCuestionario(app: FastifyInstance) {
       .header("content-disposition", `attachment; filename="cuestionarios-${hoy}.csv"`)
       .header("cache-control", "no-store")
       .send(Readable.from(generar()));
+  });
+
+  /* ---------------- Reporte del cuestionario por periodo (PDF o Excel), igual que Extras ---------------- */
+  const leerReporte = (query: unknown, reply: FastifyReply) => {
+    const q = consultaSchema.extend({ estado: z.string().regex(/^\d{2}$/).optional() }).safeParse(query);
+    if (!q.success) return void reply.code(400).send({ error: q.error.issues[0]?.message ?? "Datos inválidos" });
+    const rango = calcularRango(q.data.periodo, q.data.fecha, q.data.hasta);
+    if (typeof rango === "string") return void reply.code(400).send({ error: rango });
+    return { rango, formato: q.data.formato, estado: q.data.estado ?? null };
+  };
+  app.get("/admin/cuestionarios/reporte/vista-previa", { preHandler: soloDgtic, config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {
+    const p = leerReporte(req.query, reply);
+    if (!p) return;
+    const r = await reunirReporteCuestionario(p.rango, p.estado);
+    const t = textosCuestionario(r);
+    return { titulo: t.titulo, tipo: t.tipo, horario: t.horario, anterior: t.anterior, ambito: t.ambito, granularidad: p.rango.granularidad, totales: r.totales, anteriorTotales: r.anterior, avance: r.avance };
+  });
+  app.get("/admin/cuestionarios/reporte/descargar", { preHandler: soloDgtic, config: limiteDescarga }, async (req, reply) => {
+    const p = leerReporte(req.query, reply);
+    if (!p) return;
+    const r = await reunirReporteCuestionario(p.rango, p.estado);
+    const t = textosCuestionario(r);
+    const cuerpo = p.formato === "pdf" ? await reporteCuestionarioPdf(r) : await reporteCuestionarioXlsx(r);
+    await auditar(req.user.sub, "descargar_reporte_cuestionario", "reporte", `${p.rango.periodo}:${p.rango.desde}..${p.rango.hasta}:${p.formato}:${p.estado ?? "nacional"}`);
+    return reply
+      .header("content-type", p.formato === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+      .header("content-disposition", `attachment; filename="${t.nombreArchivo}.${p.formato}"`)
+      .header("cache-control", "no-store")
+      .send(cuerpo);
   });
 
   // Diccionario de datos: código → texto de cada pregunta y respuesta

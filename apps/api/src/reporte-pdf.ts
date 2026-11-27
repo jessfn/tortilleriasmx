@@ -668,3 +668,10 @@ export async function reportePdf(r: Reporte): Promise<Buffer> {
   return fin;
 }
 export type { Totales };
+
+/** Piezas del diseño, para que otros reportes (p. ej. el del cuestionario) se vean igual */
+export const pdfBase = {
+  tx, parrafo, ancho, tarjeta, degradado, triangulo, nuevaPagina, titulo, dona, barrasVerticales, diferencia, kpi, fuente, fmtN, pct,
+  colores: { G, G2, GD, O, V, CREMA, TX, GRIS, LINEA, ARENA }, W, H, MX,
+};
+export type DocPdf = Doc;

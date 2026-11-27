@@ -4,6 +4,7 @@ import { CUESTIONARIO_VERSION, textoMotivoNoAplica } from "@tortillerias/shared"
 import { api, apiDescargar } from "./api";
 import { BarraValor, entero, EnVivo, useVivo } from "./AdminVivo";
 import CuestionarioAdmin from "./CuestionarioAdmin";
+import AdminExtras from "./AdminExtras";
 import { Aviso, HojaModal, Tarjeta, Vacio } from "./ui";
 
 type Zona = { clave: string; nombre: string; visitadas: number; aplicados: number; porcentaje: number };
@@ -30,6 +31,7 @@ export default function AdminCuestionarios() {
   const [abierta, setAbierta] = useState<Fila>();
   const [error, setError] = useState("");
   const [bajando, setBajando] = useState<"" | "datos" | "dic">("");
+  const [seccion, setSeccion] = useState<"seguimiento" | "reportes">("seguimiento");
 
   const vivo = useVivo(async () => {
     setInd(await api<Indicadores>(`/admin/cuestionarios/indicadores${estado ? `?estado=${estado.clave}` : ""}`));
@@ -94,6 +96,18 @@ export default function AdminCuestionarios() {
       </p>
       {error && <Aviso>{error}</Aviso>}
 
+      <div role="tablist" aria-label="Sección" className="grid grid-cols-2 gap-1 rounded-2xl bg-stone-200/70 p-1 sm:w-[26rem]">
+        {([["seguimiento", "Seguimiento", ClipboardList], ["reportes", "Reportes PDF y Excel", FileSpreadsheet]] as const).map(([id, t, I]) => (
+          <button key={id} role="tab" aria-selected={seccion === id} onClick={() => setSeccion(id)} className={`flex min-h-10 items-center justify-center gap-2 rounded-xl text-sm font-semibold transition ${seccion === id ? "bg-white text-guinda shadow" : "text-stone-500 hover:text-stone-700"}`}>
+            <I className="h-4 w-4" aria-hidden /> {t}
+          </button>
+        ))}
+      </div>
+
+      {seccion === "reportes" ? (
+        <AdminExtras modo="cuestionarios" estado={estado ? { clave: estado.clave, nombre: estado.nombre } : undefined} />
+      ) : (
+      <>
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {[
           ["Con cuestionario", z ? `${z.porcentaje} %` : "–", z ? `${entero(z.aplicados)} de ${entero(z.visitadas)} visitadas` : "", "text-guinda"],
@@ -197,6 +211,9 @@ export default function AdminCuestionarios() {
           )}
         </div>
       </div>
+
+      </>
+      )}
 
       {abierta && (
         <HojaModal titulo={abierta.nombre} alCerrar={() => setAbierta(undefined)}>

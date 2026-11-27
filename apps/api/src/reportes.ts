@@ -23,13 +23,13 @@ export type Rango = {
   ant: { desde: string; hastaExcl: string };
 };
 
-const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+export const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 const DIAS = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
 const MAX_DIAS_RANGO = 366;
 
 const aFecha = (s: string) => new Date(`${s}T00:00:00Z`);
 const aTexto = (d: Date) => d.toISOString().slice(0, 10);
-const sumar = (s: string, dias: number) => aTexto(new Date(aFecha(s).getTime() + dias * 86400000));
+export const sumar = (s: string, dias: number) => aTexto(new Date(aFecha(s).getTime() + dias * 86400000));
 const diasEntre = (a: string, b: string) => Math.round((aFecha(b).getTime() - aFecha(a).getTime()) / 86400000);
 const fechaValida = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && aTexto(aFecha(s)) === s;
 
@@ -188,7 +188,7 @@ async function totalesDe(desde: string, hastaExcl: string): Promise<Totales> {
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
-const etiquetaHora = (h: number) => `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? " a. m." : " p. m."}`;
+export const etiquetaHora = (h: number) => `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? " a. m." : " p. m."}`;
 
 /** Todo lo que lleva el reporte (PDF, Excel y vista previa salen de aquí) */
 export async function reunirReporte(rango: Rango): Promise<Reporte> {
