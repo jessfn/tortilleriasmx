@@ -200,7 +200,7 @@ function kpi(doc: Doc, x: number, y: number, w: number, h: number, color: string
   dif(x + 20, y + h - 28, w - 34);
 }
 
-function pPortada(doc: Doc, r: Reporte, nTabla: number, offset = 0) {
+function pPortada(doc: Doc, r: Reporte, nTabla: number, offset = 0, compacto = false) {
   const t = textosRango(r.rango);
   const { totales: a, anterior: p } = r;
   // ---- panel izquierdo: de qué periodo es el reporte
@@ -228,14 +228,18 @@ function pPortada(doc: Doc, r: Reporte, nTabla: number, offset = 0) {
   y += hh + 22 + 18;
   parrafo(doc, "Resumen del trabajo del equipo de campo: cuántas capturas llegaron, qué tortillerías se visitaron y cómo se movió el precio de la tortilla y de la masa. Solo cuentan los precios aprobados de tortillerías validadas." + (r.soloMaquina ? " Solo tortillerías que elaboran a máquina." : ""), PX + 36, y, PW - 72, { size: 12, color: "#ecdde2", gap: 4 });
   // contenido del reporte (pegado abajo)
-  const items: [number, string][] = [
+  const items: [number, string][] = (compacto ? [
+    [2, "Precio promedio por estado"],
+    [3, "Avance del censo y calidad"],
+    [4, "Bajas y tipo de elaboración"],
+  ] : [
     [2, `Capturas ${t.porUnidad}`],
     [3, "Precio promedio por estado"],
     [4, `Detalle de los ${r.estados.length} estados`],
     [4 + nTabla, "Avance del censo y calidad"],
     [5 + nTabla, "Bajas y tipo de elaboración"],
     [6 + nTabla, "Evolución del precio"],
-  ].map(([n, x]) => [(n as number) + offset, x] as [number, string]);
+  ]).map(([n, x]) => [(n as number) + offset, x] as [number, string]);
   const ly = PY + PH - 40 - items.length * 30;
   tx(doc, "EN ESTE REPORTE", PX + 36, ly - 26, { font: "Cuerpo-Bold", size: 9, color: O, spacing: 1.6 });
   items.forEach(([n, texto], i) => {
@@ -635,16 +639,19 @@ function pEvolucion(doc: Doc, r: Reporte) {
   parrafo(doc, "Solo cuentan los precios aprobados de tortillerías validadas. El promedio es entre tortillerías: cada una pesa lo mismo, con su último precio del periodo o de cada " + (r.rango.granularidad === "hora" ? "hora" : r.rango.granularidad === "dia" ? "día" : "mes") + ".\n\nLos días van de 12:00 a. m. a 11:59 p. m., hora de la Ciudad de México. Las capturas hechas sin conexión se cuentan en el momento en que se tomaron.", X + 20, 460, wc - 40, { size: 12, gap: 4 });
 }
 
-/** Todas las páginas del reporte de precios. `offset`: páginas que van antes (para la numeración del índice). */
-export function paginasPrecios(doc: Doc, r: Reporte, primera: boolean, offset: number) {
+/**
+ * Todas las páginas del reporte de precios. `offset`: páginas que van antes (para la numeración del índice).
+ * `compacto` (reporte completo): sin capturas por periodo, sin la tabla de detalle por estado y sin la evolución del precio.
+ */
+export function paginasPrecios(doc: Doc, r: Reporte, primera: boolean, offset: number, compacto = false) {
   nuevaPagina(doc, primera);
-  pPortada(doc, r, paginasTabla(r.estados.length), offset);
-  pSerie(doc, r);
+  pPortada(doc, r, paginasTabla(r.estados.length), offset, compacto);
+  if (!compacto) pSerie(doc, r);
   pEstados(doc, r);
-  pTabla(doc, r);
+  if (!compacto) pTabla(doc, r);
   pAvance(doc, r);
   pCatalogo(doc, r);
-  pEvolucion(doc, r);
+  if (!compacto) pEvolucion(doc, r);
 }
 
 export async function reportePdf(r: Reporte): Promise<Buffer> {

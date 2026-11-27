@@ -139,8 +139,8 @@ function portada(doc: Doc, r: ReporteCompleto) {
 function indice(doc: Doc, pagPrecios: number, pagCuest: number, total: number, generado: string) {
   const y = 572, w = (W - 2 * MX - 20) / 2;
   const partes: [string, string, string, number][] = [
-    ["PARTE 1", "Precios de la tortilla y la masa", "Capturas, precio por estado, avance del censo, bajas y evolución", pagPrecios],
-    ["PARTE 2", "Cuestionario de supervisión", "Avance por estado y respuestas de los bloques A, B y C", pagCuest],
+    ["PARTE 1", "Precios de la tortilla y la masa", "Precio por estado, avance del censo, bajas y tipo de elaboración", pagPrecios],
+    ["PARTE 2", "Cuestionario de supervisión", "Condiciones sanitarias, negocio, Acuerdo y apoyos, licencia, IMSS y SAT", pagCuest],
   ];
   partes.forEach(([k, titulo_, sub, pag], i) => {
     const x = MX + i * (w + 20);
@@ -168,9 +168,9 @@ export async function reporteCompletoPdf(r: ReporteCompleto): Promise<Buffer> {
     doc.on("error", mal);
   });
   portada(doc, r);
-  paginasPrecios(doc, r.precios, false, 1);
+  paginasPrecios(doc, r.precios, false, 1, true);
   const antesCuest = doc.bufferedPageRange().count;
-  paginasCuestionario(doc, r.cuestionario, false, antesCuest);
+  paginasCuestionario(doc, r.cuestionario, false, antesCuest, true);
   const rango = doc.bufferedPageRange();
   const generado = new Intl.DateTimeFormat("es-MX", { timeZone: ZONA, dateStyle: "long", timeStyle: "short" }).format(new Date(r.generado));
   doc.switchToPage(0);

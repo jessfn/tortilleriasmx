@@ -377,7 +377,7 @@ function VistaPreviaCompleto({ v }: { v: VistaCompleto }) {
         <p className="mt-3 flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-800 ring-1 ring-amber-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />No hay capturas ni cuestionarios de tortillerías de máquina en este periodo. El reporte se puede descargar, pero saldrá sin cifras.</p>
       ) : (
         <p className="mt-3 text-xs text-stone-500">
-          Incluye una portada con las cifras clave, las capturas y precios {v.granularidad === "hora" ? "hora por hora" : v.granularidad === "dia" ? "día por día" : "mes por mes"}, el precio por estado, el avance del cuestionario y las respuestas de los bloques A, B y C.
+          Incluye una portada con las cifras clave; de precios, el precio promedio por estado, el avance del censo, las bajas y el tipo de elaboración; y del cuestionario, las respuestas de los bloques A (ubicación y condiciones sanitarias del establecimiento), B y C.
         </p>
       )}
     </>

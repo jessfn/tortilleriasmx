@@ -264,7 +264,7 @@ function pPortada(doc: DocPdf, r: ReporteCuest, offset = 0) {
   // higiene observada
   const hy = 480, hw = 3 * cw + 2 * gap, hh2 = 180;
   tarjeta(doc, X, hy, hw, hh2);
-  tx(doc, "Higiene observada · tortillerías con buena práctica", X + 20, hy + 14, { font: "Cuerpo-Bold", size: 12, color: G, width: hw - 40 });
+  tx(doc, "Condiciones sanitarias del establecimiento · tortillerías con buena práctica", X + 20, hy + 14, { font: "Cuerpo-Bold", size: 12, color: G, width: hw - 40 });
   const cortos = ["Área limpia", "Sin moscas ni roedores", "Insumos tapados", "Personal limpio", "Basura con tapa"];
   r.higiene.forEach((h, i) => {
     const yy = hy + 40 + i * 26, v = h.total ? (h.buena / h.total) * 100 : 0;
@@ -326,11 +326,11 @@ function pEstados(doc: DocPdf, r: ReporteCuest) {
 
 function pBloqueA(doc: DocPdf, r: ReporteCuest) {
   nuevaPagina(doc);
-  titulo(doc, "Bloque A · Lo que observa el censador", "Ubicación e higiene de la tortillería");
+  titulo(doc, "Bloque A · Lo que observa el censador", "Ubicación y condiciones sanitarias del establecimiento");
   distribucion(doc, MX, 182, 560, 478, `A1. ${PREGUNTAS.a1}`, r.a1, r.base, G2, `${fmtN(r.base)} tortillerías con cuestionario en el periodo`);
   const X = MX + 576, w = W - MX - X;
   tarjeta(doc, X, 182, w, 478);
-  tx(doc, "A2. Higiene — respuestas a cada pregunta", X + 20, 196, { font: "Cuerpo-Bold", size: 12, color: G, width: w - 40 });
+  tx(doc, "A2. Condiciones sanitarias del establecimiento", X + 20, 196, { font: "Cuerpo-Bold", size: 12, color: G, width: w - 40 });
   tx(doc, "Verde: buena práctica · Guinda: hay que atender", X + 20, 214, { size: 9, color: GRIS, width: w - 40 });
   r.higiene.forEach((h, i) => {
     const yy = 244 + i * 82;
@@ -394,8 +394,18 @@ function pBloqueC(doc: DocPdf, r: ReporteCuest) {
   );
 }
 
-/** Todas las páginas del reporte del cuestionario. `offset`: páginas que van antes (para la numeración del índice). */
-export function paginasCuestionario(doc: DocPdf, r: ReporteCuest, primera: boolean, offset: number) {
+/**
+ * Todas las páginas del reporte del cuestionario. `offset`: páginas que van antes (para la numeración del índice).
+ * `compacto` (reporte completo): solo los bloques A, B y C, sin su portada, sin el ritmo de trabajo y sin el avance por estado.
+ */
+export function paginasCuestionario(doc: DocPdf, r: ReporteCuest, primera: boolean, offset: number, compacto = false) {
+  if (compacto) {
+    pBloqueA(doc, r);
+    pBloqueB1(doc, r);
+    pBloqueB2(doc, r);
+    pBloqueC(doc, r);
+    return;
+  }
   nuevaPagina(doc, primera);
   pPortada(doc, r, offset);
   pSerie(doc, r);
